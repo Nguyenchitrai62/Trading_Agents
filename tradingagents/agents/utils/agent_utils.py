@@ -40,6 +40,40 @@ def get_language_instruction() -> str:
     return f" Write your entire response in {lang}."
 
 
+def get_preferred_reference_sources_instruction() -> str:
+    """Return a prompt hint for user-trusted reference sites when configured."""
+    from tradingagents.dataflows.config import get_config
+
+    sources = get_config().get("preferred_reference_sources") or []
+    if not sources:
+        return ""
+
+    lines: list[str] = []
+    for source in sources:
+        if isinstance(source, dict):
+            name = str(source.get("name") or source.get("url") or "Source").strip()
+            url = str(source.get("url") or "").strip()
+            focus = str(source.get("focus") or source.get("description") or "").strip()
+        else:
+            name = str(source).strip()
+            url = ""
+            focus = ""
+
+        line = f"- {name}"
+        if url:
+            line += f" ({url})"
+        if focus:
+            line += f": {focus}"
+        lines.append(line)
+
+    return (
+        " When live browsing or source cross-checking is available through the current model or tools,"
+        " prioritize the following user-trusted reference sites alongside any other credible sources."
+        " You are not restricted to them:\n"
+        + "\n".join(lines)
+    )
+
+
 def build_instrument_context(ticker: str, asset_type: str = "crypto") -> str:
     """Describe the exact instrument so agents preserve exchange-qualified tickers."""
     instrument_label = "asset" if asset_type == "crypto" else "instrument"

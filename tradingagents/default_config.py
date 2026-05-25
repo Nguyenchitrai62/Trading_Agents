@@ -81,6 +81,26 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "news_article_limit": 20,             # max articles per ticker (ticker-news)
     "global_news_article_limit": 10,      # max articles for global/macro news
     "global_news_lookback_days": 7,       # macro news lookback window
+    # Crypto market-data policy: select the densest single timeframe whose
+    # candle count still stays below the hard memory ceiling for the active
+    # lookback window.
+    "crypto_market_lookback_days": 7,
+    "crypto_market_max_candles": 199,
+    # High-trust reference sites that analysts should prioritize when the
+    # current model/runtime has web access or can otherwise cross-check live
+    # market context. This is a preference list, not a whitelist.
+    "preferred_reference_sources": [
+        {
+            "name": "CoinGlass",
+            "url": "https://www.coinglass.com/",
+            "focus": "Crypto derivatives positioning, liquidation data, funding, and market-structure dashboards.",
+        },
+        {
+            "name": "VNWallStreet",
+            "url": "https://vnwallstreet.com/",
+            "focus": "Real-time event flow and market-moving calendar context.",
+        },
+    ],
     # Search queries used by get_global_news for macro headlines. Extend or
     # replace to broaden geographic / sector coverage.
     "global_news_queries": [

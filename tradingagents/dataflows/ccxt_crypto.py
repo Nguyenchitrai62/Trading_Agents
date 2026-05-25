@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
 from typing import Annotated
 
 import pandas as pd
+
+from .config import get_config
 
 
 _EXCHANGE_QUOTE_FALLBACKS = {
@@ -57,6 +60,20 @@ _CRYPTO_INDICATOR_DESCRIPTIONS = {
     "mfi": "Money Flow Index to combine price and volume pressure.",
 }
 
+_CRYPTO_TIMEFRAME_MINUTES = {
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "2h": 120,
+    "4h": 240,
+    "6h": 360,
+    "8h": 480,
+    "12h": 720,
+    "1d": 1440,
+}
+
+_CRYPTO_MARKET_HARD_CANDLE_LIMIT = 199
+
 
 def _resolve_exchange(exchange_name: str):
     try:
@@ -98,7 +115,86 @@ def _normalize_indicator_name(indicator: str) -> str:
     return _CRYPTO_INDICATOR_ALIASES.get(normalized, normalized)
 
 
-def _fetch_ohlcv_frame(symbol: str, timeframe: str, limit: int, exchange_name: str):
+def _coerce_positive_int(value: object, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _select_memory_safe_crypto_window(
+    lookback_days: int,
+    available_timeframes: dict | None,
+    max_candles: int = _CRYPTO_MARKET_HARD_CANDLE_LIMIT,
+) -> dict[str, int | str]:
+    supported = [
+        timeframe
+        for timeframe in _CRYPTO_TIMEFRAME_MINUTES
+        if timeframe in (available_timeframes or {})
+    ]
+    if not supported:
+        raise ValueError("No supported crypto timeframes are available for memory-safe OHLCV fetching.")
+
+    capped_max_candles = min(max(10, max_candles), _CRYPTO_MARKET_HARD_CANDLE_LIMIT)
+    lookback_minutes = max(1, lookback_days) * 24 * 60
+    candidates: list[tuple[int, int, str]] = []
+
+    for timeframe in supported:
+        minutes = _CRYPTO_TIMEFRAME_MINUTES[timeframe]
+        candle_limit = math.ceil(lookback_minutes / minutes)
+        if 10 <= candle_limit <= capped_max_candles:
+            candidates.append((candle_limit, -minutes, timeframe))
+
+    if not candidates:
+        supported_examples = ", ".join(supported)
+        raise ValueError(
+            "Unable to select a memory-safe crypto timeframe under 200 candles "
+            f"for lookback_days={lookback_days}. Supported exchange timeframes: {supported_examples}"
+        )
+
+    candle_limit, negative_minutes, timeframe = max(candidates)
+    return {
+        "lookback_days": lookback_days,
+        "max_candles": capped_max_candles,
+        "timeframe": timeframe,
+        "limit": candle_limit,
+        "minutes": -negative_minutes,
+    }
+
+
+def _resolve_active_crypto_window(available_timeframes: dict | None) -> dict[str, int | str]:
+    config = get_config()
+    lookback_days = _coerce_positive_int(config.get("crypto_market_lookback_days"), 7)
+    max_candles = _coerce_positive_int(
+        config.get("crypto_market_max_candles"),
+        _CRYPTO_MARKET_HARD_CANDLE_LIMIT,
+    )
+    return _select_memory_safe_crypto_window(lookback_days, available_timeframes, max_candles)
+
+
+def _resolve_indicator_fetch_plan(
+    requested: list[str],
+    output_limit: int,
+    analysis_limit: int,
+) -> dict[str, int]:
+    normalized_output_limit = _coerce_positive_int(output_limit, analysis_limit)
+    required_window = max(_CRYPTO_INDICATOR_WINDOWS[item] for item in requested)
+    fetch_limit = max(analysis_limit, normalized_output_limit, required_window)
+    return {
+        "output_limit": normalized_output_limit,
+        "required_window": required_window,
+        "fetch_limit": fetch_limit,
+    }
+
+
+def _fetch_ohlcv_frame(
+    symbol: str,
+    timeframe: str,
+    limit: int,
+    exchange_name: str,
+    fetch_limit: int | None = None,
+):
     exchange_id, exchange = _resolve_exchange(exchange_name)
     try:
         markets = exchange.load_markets()
@@ -121,15 +217,16 @@ def _fetch_ohlcv_frame(symbol: str, timeframe: str, limit: int, exchange_name: s
             )
 
         available_timeframes = exchange.timeframes or {}
-        if timeframe not in available_timeframes:
-            supported = ", ".join(sorted(available_timeframes.keys())[:12])
-            raise ValueError(
-                f"Timeframe '{timeframe}' is not supported on '{exchange_name}'. Supported examples: {supported}"
-            )
+        policy = _resolve_active_crypto_window(available_timeframes)
+        effective_timeframe = str(policy["timeframe"])
+        analysis_limit = int(policy["limit"])
+        effective_limit = max(analysis_limit, _coerce_positive_int(fetch_limit, analysis_limit))
 
-        candles = exchange.fetch_ohlcv(market_symbol, timeframe=timeframe, limit=limit)
+        candles = exchange.fetch_ohlcv(market_symbol, timeframe=effective_timeframe, limit=effective_limit)
         if not candles:
-            raise ValueError(f"No OHLCV data returned for {market_symbol} on {exchange_name} ({timeframe}).")
+            raise ValueError(
+                f"No OHLCV data returned for {market_symbol} on {exchange_name} ({effective_timeframe})."
+            )
 
         frame = pd.DataFrame(
             candles,
@@ -140,7 +237,11 @@ def _fetch_ohlcv_frame(symbol: str, timeframe: str, limit: int, exchange_name: s
         for column in ["open", "high", "low", "close", "volume"]:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
 
-        return exchange, market_symbol, frame
+        policy["analysis_limit"] = analysis_limit
+        policy["fetch_limit"] = effective_limit
+        policy["requested_timeframe"] = timeframe
+        policy["requested_limit"] = limit
+        return exchange, market_symbol, frame, policy
     except Exception:
         close_method = getattr(exchange, "close", None)
         if callable(close_method):
@@ -207,10 +308,10 @@ def get_crypto_ohlcv(
     limit: Annotated[int, "number of candles to fetch"] = 96,
     exchange_name: Annotated[str, "ccxt exchange id such as binance or bybit"] = "binance",
 ) -> str:
-    if limit < 10 or limit > 500:
-        raise ValueError("limit must be between 10 and 500 candles")
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
 
-    exchange, market_symbol, frame = _fetch_ohlcv_frame(symbol, timeframe, limit, exchange_name)
+    exchange, market_symbol, frame, policy = _fetch_ohlcv_frame(symbol, timeframe, limit, exchange_name)
     try:
         price_columns = ["open", "high", "low", "close"]
         frame[price_columns] = frame[price_columns].round(6)
@@ -228,7 +329,13 @@ def get_crypto_ohlcv(
 
         header = [
             f"# Crypto OHLCV for {market_symbol} from {exchange_name}",
-            f"# Timeframe: {timeframe}",
+            (
+                "# Applied analysis window: "
+                f"{policy['timeframe']} x {policy['analysis_limit']} candles "
+                f"for lookback {policy['lookback_days']} day(s)"
+            ),
+            f"# Requested window hint: {timeframe} x {limit}",
+            f"# Timeframe: {policy['timeframe']}",
             f"# Total candles: {len(frame)}",
             f"# Window start: {frame.iloc[0]['timestamp']}",
             f"# Window end: {latest['timestamp']}",
@@ -258,20 +365,32 @@ def get_crypto_indicators(
     exchange_name: Annotated[str, "ccxt exchange id such as binance or bybit"] = "binance",
 ) -> str:
     requested = [_normalize_indicator_name(item) for item in indicator.split(",") if item.strip()]
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
+    if not requested:
+        raise ValueError("At least one crypto indicator is required.")
     unsupported = [item for item in requested if item not in _CRYPTO_INDICATOR_DESCRIPTIONS]
     if unsupported:
         supported = ", ".join(sorted(_CRYPTO_INDICATOR_DESCRIPTIONS))
         raise ValueError(f"Unsupported crypto indicator(s): {', '.join(unsupported)}. Supported indicators: {supported}")
 
-    fetch_limit = max(limit, max(_CRYPTO_INDICATOR_WINDOWS[item] for item in requested))
-    exchange, market_symbol, frame = _fetch_ohlcv_frame(symbol, timeframe, fetch_limit, exchange_name)
+    preflight_plan = _resolve_indicator_fetch_plan(requested, limit, analysis_limit=limit)
+    exchange, market_symbol, frame, policy = _fetch_ohlcv_frame(
+        symbol,
+        timeframe,
+        limit,
+        exchange_name,
+        fetch_limit=preflight_plan["fetch_limit"],
+    )
     try:
+        plan = _resolve_indicator_fetch_plan(requested, limit, int(policy["analysis_limit"]))
+
         enriched = _prepare_indicator_frame(frame)
         enriched["timestamp_label"] = enriched["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
         blocks = []
         for item in requested:
-            tail = enriched[["timestamp_label", item]].tail(limit).copy()
+            tail = enriched[["timestamp_label", item]].tail(plan["output_limit"]).copy()
             tail[item] = pd.to_numeric(tail[item], errors="coerce").round(6)
             latest_row = tail.dropna().tail(1)
             latest_value = "N/A"
@@ -283,7 +402,15 @@ def get_crypto_indicators(
             blocks.append(
                 "\n".join(
                     [
-                        f"## {item} for {market_symbol} on {exchange_name} ({timeframe})",
+                        f"## {item} for {market_symbol} on {exchange_name} ({policy['timeframe']})",
+                        (
+                            "Applied analysis window: "
+                            f"{policy['timeframe']} x {policy['analysis_limit']} candles "
+                            f"for lookback {policy['lookback_days']} day(s)"
+                        ),
+                        f"Indicator computation fetch depth: {policy['fetch_limit']} candles",
+                        f"Indicator output window: {plan['output_limit']} candles",
+                        f"Requested window hint: {timeframe} x {limit}",
                         f"Latest candle: {latest_timestamp}",
                         f"Latest value: {latest_value}",
                         f"Description: {_CRYPTO_INDICATOR_DESCRIPTIONS[item]}",

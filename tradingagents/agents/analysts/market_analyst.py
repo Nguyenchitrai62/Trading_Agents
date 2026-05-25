@@ -4,6 +4,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_crypto_indicators,
     get_crypto_ohlcv,
     get_language_instruction,
+    get_preferred_reference_sources_instruction,
 )
 
 
@@ -19,8 +20,13 @@ def create_market_analyst(llm):
         tools = [get_crypto_ohlcv, get_crypto_indicators]
 
         crypto_tool_instruction = (
-            " Use `get_crypto_ohlcv` for intraday structure and `get_crypto_indicators` for technical signals on timeframes like `15m`, `1h`, `4h`, and `1d`."
-            " Use the exact indicator names from the list above, such as `close_10_ema`, `rsi`, `macd`, `boll`, `atr`, and `vwma`."
+            " Use `get_crypto_ohlcv` for market structure and `get_crypto_indicators` for technical signals."
+            " The backend automatically chooses one memory-safe timeframe and candle limit from the active lookback window,"
+            " for example 1 day -> 15m x 96 candles and 7 days -> 1h x 168 candles."
+            " Do not fan out across multiple timeframes in the same analysis."
+            " For indicators, the backend may fetch extra candles on that same chosen timeframe when a long-window calculation"
+            " needs more history, so long-window signals like `close_200_sma` can still be computed without changing timeframe."
+            " Use the exact indicator names from the list above, such as `close_10_ema`, `close_50_sma`, `close_200_sma`, `rsi`, `macd`, `boll`, `atr`, `vwma`, and `mfi`."
         )
 
         system_message = (
@@ -51,6 +57,7 @@ Volume-Based Indicators:
 - Select indicators that provide diverse and complementary information. Avoid redundancy (e.g., do not select both rsi and stochrsi). Also briefly explain why they are suitable for the given market context. When you tool call, please use the exact name of the indicators provided above as they are defined parameters, otherwise your call will fail. Call get_crypto_ohlcv for market structure and use get_crypto_indicators with the specific indicator names whenever indicator evidence is required. Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
             + crypto_tool_instruction
+            + get_preferred_reference_sources_instruction()
             + get_language_instruction()
         )
 

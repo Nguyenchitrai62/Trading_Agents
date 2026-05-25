@@ -138,7 +138,7 @@ logger = logging.getLogger("tradingagents.app")
 
 
 APP_TITLE = "TradingAgents Analysis API"
-APP_VERSION = "0.0.1"
+APP_VERSION = "0.0.2"
 
 
 DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
@@ -512,6 +512,8 @@ def build_analysis_config(request: AnalysisRequest, settings: dict) -> dict:
             "max_debate_rounds": depth_preset["rounds"],
             "max_risk_discuss_rounds": depth_preset["rounds"],
             "global_news_lookback_days": request.lookback_days,
+            "crypto_market_lookback_days": request.lookback_days,
+            "crypto_market_max_candles": 199,
             "checkpoint_enabled": request.checkpoint_enabled,
         }
     )
