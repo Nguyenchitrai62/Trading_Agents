@@ -8,6 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import AsyncIterator, Callable, List, Literal
 
+from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,15 +17,27 @@ from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field, field_validator
 
-from tradingagents.default_config import DEFAULT_CONFIG
-from tradingagents.graph.analyst_execution import ANALYST_NODE_SPECS
-from tradingagents.graph.checkpointer import (
-    checkpoint_step,
-    clear_checkpoint,
-    get_checkpointer,
-    thread_id,
-)
-from tradingagents.graph.trading_graph import TradingAgentsGraph
+try:
+    from tradingagents.default_config import DEFAULT_CONFIG
+    from tradingagents.graph.analyst_execution import ANALYST_NODE_SPECS
+    from tradingagents.graph.checkpointer import (
+        checkpoint_step,
+        clear_checkpoint,
+        get_checkpointer,
+        thread_id,
+    )
+    from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+    ANALYSIS_RUNTIME_IMPORT_ERROR: ModuleNotFoundError | None = None
+except ModuleNotFoundError as exc:
+    DEFAULT_CONFIG = {}
+    ANALYST_NODE_SPECS = {}
+    checkpoint_step = None
+    clear_checkpoint = None
+    get_checkpointer = None
+    thread_id = None
+    TradingAgentsGraph = None
+    ANALYSIS_RUNTIME_IMPORT_ERROR = exc
 
 ROOT_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = ROOT_DIR / "FE"
@@ -200,6 +213,19 @@ class AnalysisRequest(BaseModel):
         return seen
 
 
+class Message(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: List[Message]
+    model: str = DEFAULT_MODEL
+    max_tokens: int = 128000
+    temperature: float = 1
+    stream: bool = True
+
+
 def resolve_minimax_settings() -> dict:
     base_url_override = os.getenv("MINIMAX_BASE_URL", "").strip()
     global_key = os.getenv("MINIMAX_API_KEY", "").strip()
@@ -229,6 +255,19 @@ def resolve_minimax_settings() -> dict:
     }
 
 
+def ensure_analysis_runtime_available() -> None:
+    if ANALYSIS_RUNTIME_IMPORT_ERROR is None:
+        return
+    missing_name = ANALYSIS_RUNTIME_IMPORT_ERROR.name or "analysis dependency"
+    raise HTTPException(
+        status_code=500,
+        detail=(
+            "Analysis runtime dependencies are unavailable. Install the missing package "
+            f"'{missing_name}' to use /api/analyze."
+        ),
+    )
+
+
 def normalize_ticker_symbol(ticker: str) -> str:
     return ticker.strip().upper()
 
@@ -248,6 +287,154 @@ def filter_analysts_for_asset_type(selected_analysts: List[str], asset_type: str
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def get_minimax_client() -> AsyncAnthropic:
+    settings = resolve_minimax_settings()
+    if not settings["configured"]:
+        raise HTTPException(
+            status_code=500,
+            detail="Set MINIMAX_API_KEY or MINIMAX_CN_API_KEY in .env before using /api/chat.",
+        )
+    return AsyncAnthropic(api_key=settings["api_key"], base_url=settings["base_url"])
+
+
+def build_anthropic_chat_messages(request: ChatRequest) -> list[dict]:
+    anthropic_messages: list[dict] = []
+    for msg in request.messages:
+        anthropic_messages.append(
+            {
+                "role": msg.role,
+                "content": [{"type": "text", "text": msg.content}],
+            }
+        )
+    return anthropic_messages
+
+
+async def generate_chat_stream(request: ChatRequest) -> AsyncIterator[str]:
+    try:
+        start_time = time.time()
+        client = get_minimax_client()
+        system_message = "You are a helpful assistant."
+        anthropic_messages = build_anthropic_chat_messages(request)
+
+        stream = await client.messages.create(
+            model=request.model,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            system=system_message,
+            messages=anthropic_messages,
+            stream=True,
+        )
+
+        text_buffer = ""
+        thinking_buffer = ""
+        first_token_time = None
+        output_tokens = 0
+
+        async for chunk in stream:
+            chunk_type = getattr(chunk, "type", None)
+            if chunk_type is None:
+                continue
+
+            if chunk_type == "message_delta":
+                usage = getattr(chunk, "usage", None)
+                if usage:
+                    output_tokens = getattr(usage, "output_tokens", 0) or 0
+
+            if chunk_type == "content_block_delta":
+                if first_token_time is None:
+                    first_token_time = time.time()
+
+                delta = getattr(chunk, "delta", None)
+                if delta is None:
+                    continue
+
+                delta_type = getattr(delta, "type", None)
+                if delta_type is None and isinstance(delta, dict):
+                    delta_type = delta.get("type")
+
+                if delta_type == "thinking_delta":
+                    thinking = getattr(delta, "thinking", None)
+                    if thinking is None and isinstance(delta, dict):
+                        thinking = delta.get("thinking")
+                    if thinking:
+                        thinking_buffer += thinking
+                        yield _sse("thinking", {"content": thinking})
+
+                elif delta_type == "text_delta":
+                    text = getattr(delta, "text", None)
+                    if text is None and isinstance(delta, dict):
+                        text = delta.get("text")
+                    if text:
+                        text_buffer += text
+                        yield _sse("content", {"content": text})
+
+            elif chunk_type == "message_stop":
+                end_time = time.time()
+                total_time = end_time - start_time
+                generation_time = end_time - first_token_time if first_token_time else total_time
+                estimated_tokens = len(text_buffer) // 4
+                tokens = output_tokens if output_tokens > 0 else estimated_tokens
+                tokens_per_second = tokens / generation_time if generation_time > 0 else 0
+
+                yield _sse(
+                    "complete",
+                    {
+                        "text": text_buffer,
+                        "thinking": thinking_buffer,
+                        "tokens": tokens,
+                        "tokens_estimated": output_tokens == 0,
+                        "tokens_per_second": round(tokens_per_second, 2),
+                        "generation_time": round(generation_time, 2),
+                        "total_time": round(total_time, 2),
+                    },
+                )
+                break
+
+            await asyncio.sleep(0)
+
+    except Exception as exc:
+        yield _sse("error", {"error": str(exc)})
+
+
+async def generate_non_streaming_chat(request: ChatRequest) -> dict:
+    try:
+        client = get_minimax_client()
+        system_message = "You are a helpful assistant."
+        anthropic_messages = build_anthropic_chat_messages(request)
+
+        response = await client.messages.create(
+            model=request.model,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            system=system_message,
+            messages=anthropic_messages,
+            stream=False,
+        )
+
+        text = ""
+        for content_block in response.content:
+            if content_block.type == "text":
+                text += content_block.text
+
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": text,
+                    }
+                }
+            ],
+            "usage": {
+                "prompt_tokens": response.usage.input_tokens,
+                "completion_tokens": response.usage.output_tokens,
+                "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
+            },
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 def build_analysis_config(request: AnalysisRequest, settings: dict) -> dict:
@@ -636,6 +823,7 @@ def emit_snapshot_updates(previous: dict, current: dict, emit: Callable[[str, di
 
 
 def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], None]) -> None:
+    ensure_analysis_runtime_available()
     settings = resolve_minimax_settings()
     if not settings["configured"]:
         raise HTTPException(
@@ -912,8 +1100,22 @@ async def health_check() -> dict:
         "status": "healthy",
         "configured": settings["configured"],
         "provider": settings["provider"],
-        "modes": ["analysis"],
+        "modes": ["analysis", "chat"],
     }
+
+
+@app.post("/api/chat")
+async def chat_completion(request: ChatRequest):
+    if not request.messages:
+        raise HTTPException(status_code=400, detail="Messages cannot be empty")
+
+    if request.stream:
+        return StreamingResponse(
+            generate_chat_stream(request),
+            media_type="text/event-stream",
+        )
+
+    return await generate_non_streaming_chat(request)
 
 
 @app.post("/api/analyze")
