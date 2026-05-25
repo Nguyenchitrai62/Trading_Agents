@@ -7,6 +7,10 @@ from tradingagents.agents.utils.core_stock_tools import (
 from tradingagents.agents.utils.technical_indicators_tools import (
     get_indicators
 )
+from tradingagents.agents.utils.crypto_market_tools import (
+    get_crypto_indicators,
+    get_crypto_ohlcv
+)
 from tradingagents.agents.utils.fundamental_data_tools import (
     get_fundamentals,
     get_balance_sheet,

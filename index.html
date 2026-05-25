@@ -3,47 +3,47 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="tradingagents-api-base-url" content="__BACKEND_BASE_URL__">
     <title>TradingAgents Analysis Deck</title>
+    <link rel="icon" type="image/png" href="./image/LOGO.png">
     <link rel="stylesheet" href="./FE/styles.css">
-    <script src="./FE/runtime-config.js"></script>
+    <script src="./FE/config.js"></script>
 </head>
 <body>
     <div class="backdrop"></div>
 
     <div class="app-shell">
-        <header class="hero">
-            <div class="hero-copy">
-                <div class="eyebrow">TradingAgents • FastAPI • MiniMax • SSE</div>
-                <h1>Multi-Agent Analysis Deck</h1>
-                <p class="hero-text">
-                    Dashboard FE thuần HTML/CSS/JS mô phỏng tinh thần CLI gốc: theo dõi
-                    analyst nào đang chạy, debate đang tiến tới đâu, trader/risk/portfolio
-                    manager kết luận thế nào và report nào đã hoàn thành.
-                </p>
-                <div id="summaryChips" class="chip-row"></div>
+        <header class="topbar">
+            <div class="topbar-brand">
+                <span class="app-mark"><img class="app-logo" src="./image/LOGO.png" alt="TradingAgents logo"></span>
+                <div class="topbar-copy">
+                    <strong>TradingAgents</strong>
+                    <p id="topNoticeText" class="top-notice">Ready to configure analysis.</p>
+                </div>
             </div>
 
-            <div class="hero-side">
-                <div class="headline-stats">
-                    <div class="headline-card">
-                        <span>Run status</span>
-                        <strong id="runStatusBadge">Idle</strong>
-                    </div>
-                    <div class="headline-card">
-                        <span>Current agent</span>
-                        <strong id="currentAgentText">Waiting</strong>
-                    </div>
-                    <div class="headline-card headline-card-wide">
-                        <span>Provider / endpoint</span>
-                        <strong id="endpointText">Loading...</strong>
-                    </div>
-                </div>
+            <div class="topbar-status" aria-live="polite">
+                <span id="runStatusBadge" class="status-pill" data-state="idle">Idle</span>
+                <span id="currentAgentText" class="status-pill status-pill-muted">Waiting</span>
+                <span id="endpointText" class="status-pill status-pill-subtle">API endpoint</span>
+            </div>
 
-                <div class="hero-actions">
-                    <button id="openConfigButton" class="button secondary">Config</button>
-                    <button id="runAnalysisButton" class="button primary">Run analysis</button>
-                </div>
+            <div class="topbar-actions">
+                <button id="openConfigButton" class="toolbar-button" type="button" aria-label="Open config">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 6h16"></path>
+                        <path d="M4 12h16"></path>
+                        <path d="M4 18h16"></path>
+                        <circle cx="9" cy="6" r="2"></circle>
+                        <circle cx="15" cy="12" r="2"></circle>
+                        <circle cx="11" cy="18" r="2"></circle>
+                    </svg>
+                </button>
+                <button id="runAnalysisButton" class="toolbar-button toolbar-button-primary" type="button" aria-label="Run analysis">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9"></circle>
+                        <path d="M10 8.5L16 12l-6 3.5z" fill="currentColor" stroke="none"></path>
+                    </svg>
+                </button>
             </div>
         </header>
 
@@ -84,110 +84,67 @@
             <section class="window report-window">
                 <div class="window-header">
                     <div>
-                        <p class="window-kicker">Analyst team</p>
-                        <h2>Report Windows</h2>
+                        <p class="window-kicker">Streaming focus</p>
+                        <h2>Main View</h2>
                     </div>
-                    <span id="activeReportText" class="window-status">No reports yet</span>
+                    <span id="activeReportText" class="window-status">Awaiting live stream</span>
                 </div>
                 <div id="reportGrid" class="report-grid"></div>
             </section>
 
-            <section class="window chamber-window">
-                <div class="window-header">
-                    <div>
-                        <p class="window-kicker">Research team</p>
-                        <h2>Research Chamber</h2>
+            <aside class="auxiliary-column operations-column" aria-label="Operations rail">
+                <section class="window trace-window" aria-label="Agent trace and tool activity">
+                    <div class="window-header">
+                        <div>
+                            <p class="window-kicker">Operations rail</p>
+                            <h2>Agent Trace</h2>
+                        </div>
+                        <span id="opsStatusText" class="window-status">Watching stream</span>
                     </div>
-                    <span id="researchStatusText" class="window-status">Awaiting analyst reports</span>
-                </div>
-                <div class="panel-grid three-up">
-                    <article class="mini-window detail-trigger" data-detail-key="bullResearch" tabindex="0" role="button" aria-label="Open Bull Researcher detail">
-                        <h3>Bull Researcher</h3>
-                        <div id="bullResearchPanel" class="panel-preview markdown-preview"></div>
-                    </article>
-                    <article class="mini-window detail-trigger" data-detail-key="bearResearch" tabindex="0" role="button" aria-label="Open Bear Researcher detail">
-                        <h3>Bear Researcher</h3>
-                        <div id="bearResearchPanel" class="panel-preview markdown-preview"></div>
-                    </article>
-                    <article class="mini-window accent-window detail-trigger" data-detail-key="researchManager" tabindex="0" role="button" aria-label="Open Research Manager detail">
-                        <h3>Research Manager</h3>
-                        <div id="researchManagerPanel" class="panel-preview markdown-preview"></div>
-                    </article>
-                </div>
-            </section>
+                    <div class="ops-overview">
+                        <article class="ops-stat">
+                            <span>Tool events</span>
+                            <strong id="opsAgentText">Awaiting run</strong>
+                        </article>
+                        <article class="ops-stat">
+                            <span>Logged events</span>
+                            <strong id="opsPhaseText">Idle</strong>
+                        </article>
+                        <article class="ops-stat ops-stat-wide">
+                            <span>Latest output</span>
+                            <strong id="opsLatestText">No updates yet</strong>
+                        </article>
+                    </div>
+                    <div id="toolTraceList" class="tool-trace-list" aria-live="polite"></div>
+                </section>
 
-            <section class="window trader-window detail-trigger" data-detail-key="traderPlan" tabindex="0" role="button" aria-label="Open Trader Desk detail">
-                <div class="window-header">
-                    <div>
-                        <p class="window-kicker">Trading team</p>
-                        <h2>Trader Desk</h2>
+                <section class="window log-window detail-trigger" data-detail-key="eventLog" tabindex="0" role="button" aria-label="Open Event Log detail">
+                    <div class="window-header">
+                        <div>
+                            <p class="window-kicker">Timeline</p>
+                            <h2>Event Log</h2>
+                        </div>
+                        <span id="eventLogStatusText" class="window-status">Recent SSE events</span>
                     </div>
-                    <span class="window-status">Transaction proposal</span>
-                </div>
-                <div id="traderPlanPanel" class="panel-preview markdown-preview trader-pre"></div>
-            </section>
-
-            <section class="window risk-window">
-                <div class="window-header">
-                    <div>
-                        <p class="window-kicker">Risk management</p>
-                        <h2>Risk Room</h2>
-                    </div>
-                    <span id="riskStatusText" class="window-status">Waiting for trader</span>
-                </div>
-                <div class="panel-grid risk-grid">
-                    <article class="mini-window detail-trigger" data-detail-key="aggressiveRisk" tabindex="0" role="button" aria-label="Open Aggressive Analyst detail">
-                        <h3>Aggressive</h3>
-                        <div id="aggressiveRiskPanel" class="panel-preview markdown-preview"></div>
-                    </article>
-                    <article class="mini-window detail-trigger" data-detail-key="conservativeRisk" tabindex="0" role="button" aria-label="Open Conservative Analyst detail">
-                        <h3>Conservative</h3>
-                        <div id="conservativeRiskPanel" class="panel-preview markdown-preview"></div>
-                    </article>
-                    <article class="mini-window detail-trigger" data-detail-key="neutralRisk" tabindex="0" role="button" aria-label="Open Neutral Analyst detail">
-                        <h3>Neutral</h3>
-                        <div id="neutralRiskPanel" class="panel-preview markdown-preview"></div>
-                    </article>
-                </div>
-            </section>
-
-            <section class="window decision-window detail-trigger" data-detail-key="portfolioDecision" tabindex="0" role="button" aria-label="Open Final Decision detail">
-                <div class="window-header">
-                    <div>
-                        <p class="window-kicker">Portfolio management</p>
-                        <h2>Final Decision</h2>
-                    </div>
-                    <span id="signalBadge" class="signal-badge">No signal</span>
-                </div>
-                <div id="portfolioDecisionPanel" class="panel-preview markdown-preview decision-pre"></div>
-            </section>
-
-            <section class="window log-window detail-trigger" data-detail-key="eventLog" tabindex="0" role="button" aria-label="Open Event Log detail">
-                <div class="window-header">
-                    <div>
-                        <p class="window-kicker">Timeline</p>
-                        <h2>Event Log</h2>
-                    </div>
-                    <span class="window-status">SSE events</span>
-                </div>
-                <div id="eventLog" class="event-log"></div>
-            </section>
+                    <div id="eventLog" class="event-log"></div>
+                </section>
+            </aside>
         </main>
     </div>
 
     <div id="configModal" class="modal hidden" aria-hidden="true">
         <div class="modal-backdrop" data-close-modal="true"></div>
-        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="configTitle">
+        <div class="modal-card config-modal-card" role="dialog" aria-modal="true" aria-labelledby="configTitle">
             <div class="modal-header">
                 <div>
                     <p class="window-kicker">Quick config</p>
                     <h2 id="configTitle">Analysis Settings</h2>
                 </div>
-                <button id="closeConfigButton" class="icon-button" type="button" aria-label="Close config">×</button>
+                <button id="closeConfigButton" class="icon-button" type="button" aria-label="Close config">X</button>
             </div>
 
-            <form id="configForm" class="config-form">
-                <div class="config-grid three-up">
+            <form id="configForm" class="config-form compact-config-form">
+                <div class="config-grid four-up compact-grid-primary">
                     <label class="field">
                         <span>Symbol</span>
                         <input id="symbolInput" type="text" placeholder="NVDA">
@@ -195,81 +152,64 @@
                     <label class="field">
                         <span>Asset type</span>
                         <select id="assetTypeSelect"></select>
-                        <small class="field-note">Chọn explicit nếu symbol mơ hồ như BTC hoặc ETH.</small>
                     </label>
                     <label class="field">
                         <span>Analysis date</span>
                         <input id="analysisDateInput" type="date">
                     </label>
-                </div>
-
-                <div class="config-grid two-up">
                     <label class="field">
-                        <span>Analysis window</span>
+                        <span>Window preset</span>
                         <select id="lookbackPresetSelect"></select>
                     </label>
-                    <label class="field">
-                        <span>Lookback window (days)</span>
-                        <input id="lookbackDaysInput" type="number" min="1" max="90" step="1">
-                    </label>
                 </div>
 
-                <div class="config-grid two-up">
+                <div class="config-grid four-up compact-grid-secondary">
                     <label class="field">
-                        <span>Output language</span>
+                        <span>Lookback days</span>
+                        <input id="lookbackDaysInput" type="number" min="1" max="90" step="1">
+                    </label>
+                    <label class="field">
+                        <span>Language</span>
                         <select id="languageSelect"></select>
                     </label>
                     <label id="customLanguageField" class="field hidden">
                         <span>Custom language</span>
                         <input id="customLanguageInput" type="text" placeholder="Vietnamese">
                     </label>
-                </div>
-
-                <div class="config-grid three-up">
-                    <label class="field field-readonly">
-                        <span>Provider</span>
-                        <input id="providerDisplayInput" type="text" readonly>
-                    </label>
                     <label class="field">
                         <span>LLM model</span>
                         <input id="modelInput" type="text" placeholder="MiniMax-M2.7">
                     </label>
-                    <label class="toggle-field">
-                        <span>Checkpoint resume</span>
+                    <label class="toggle-field compact-toggle-field">
+                        <span>Checkpoint</span>
                         <input id="checkpointToggle" type="checkbox">
                     </label>
                 </div>
 
-                <section class="config-section">
-                    <div class="config-section-header config-section-header-split">
-                        <div>
-                            <h3>Analyst team</h3>
-                            <p>Chọn những analyst sẽ tham gia vòng phân tích.</p>
+                <div class="config-grid compact-config-choices">
+                    <section class="config-section compact-config-section">
+                        <div class="config-section-header config-section-header-split compact-section-header">
+                            <div>
+                                <h3>Analyst team</h3>
+                            </div>
+                            <div class="section-actions compact-actions">
+                                <button id="selectAllAnalystsButton" type="button" class="text-button">All</button>
+                                <button id="selectCoreAnalystsButton" type="button" class="text-button">Core</button>
+                                <button id="clearAnalystsButton" type="button" class="text-button">Clear</button>
+                            </div>
                         </div>
-                        <div class="section-actions">
-                            <button id="selectAllAnalystsButton" type="button" class="text-button">All</button>
-                            <button id="selectCoreAnalystsButton" type="button" class="text-button">Core</button>
-                            <button id="clearAnalystsButton" type="button" class="text-button">Clear</button>
+                        <div id="analystOptions" class="checkbox-grid compact-option-grid"></div>
+                    </section>
+
+                    <section class="config-section compact-config-section">
+                        <div class="config-section-header compact-section-header">
+                            <h3>Research depth</h3>
                         </div>
-                    </div>
-                    <div id="analystOptions" class="checkbox-grid"></div>
-                </section>
+                        <div id="depthOptions" class="depth-grid compact-depth-grid"></div>
+                    </section>
+                </div>
 
-                <section class="config-section">
-                    <div class="config-section-header">
-                        <h3>Research depth</h3>
-                        <p>Map trực tiếp vào số vòng debate và risk discussion.</p>
-                    </div>
-                    <div id="depthOptions" class="depth-grid"></div>
-                </section>
-
-                <section class="config-section">
-                    <div class="config-section-header">
-                        <h3>Config preview</h3>
-                        <p>Tóm tắt các tham số sẽ được gửi xuống backend khi chạy.</p>
-                    </div>
-                    <div id="configPreview" class="config-preview"></div>
-                </section>
+                <div id="configPreview" class="config-preview compact-config-preview"></div>
 
                 <div class="modal-actions">
                     <button id="saveConfigButton" type="button" class="button secondary">Apply</button>
@@ -287,7 +227,7 @@
                     <p id="detailSubtitle" class="window-kicker">Analysis detail</p>
                     <h2 id="detailTitle">Panel Detail</h2>
                 </div>
-                <button id="closeDetailButton" class="icon-button" type="button" aria-label="Close detail">×</button>
+                <button id="closeDetailButton" class="icon-button" type="button" aria-label="Close detail">X</button>
             </div>
             <div id="detailBody" class="detail-body markdown-preview"></div>
         </div>

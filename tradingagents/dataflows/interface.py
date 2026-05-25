@@ -22,6 +22,10 @@ from .alpha_vantage import (
     get_news as get_alpha_vantage_news,
     get_global_news as get_alpha_vantage_global_news,
 )
+from .ccxt_crypto import (
+    get_crypto_indicators as get_ccxt_crypto_indicators,
+    get_crypto_ohlcv as get_ccxt_crypto_ohlcv,
+)
 from .alpha_vantage_common import AlphaVantageRateLimitError
 
 # Configuration and routing logic
@@ -33,6 +37,13 @@ TOOLS_CATEGORIES = {
         "description": "OHLCV stock price data",
         "tools": [
             "get_stock_data"
+        ]
+    },
+    "crypto_market_apis": {
+        "description": "Intraday and multi-timeframe crypto OHLCV data",
+        "tools": [
+            "get_crypto_ohlcv",
+            "get_crypto_indicators",
         ]
     },
     "technical_indicators": {
@@ -63,6 +74,7 @@ TOOLS_CATEGORIES = {
 VENDOR_LIST = [
     "yfinance",
     "alpha_vantage",
+    "ccxt",
 ]
 
 # Mapping of methods to their vendor-specific implementations
@@ -71,6 +83,12 @@ VENDOR_METHODS = {
     "get_stock_data": {
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
+    },
+    "get_crypto_ohlcv": {
+        "ccxt": get_ccxt_crypto_ohlcv,
+    },
+    "get_crypto_indicators": {
+        "ccxt": get_ccxt_crypto_indicators,
     },
     # technical_indicators
     "get_indicators": {

@@ -2,6 +2,25 @@ from langchain_core.tools import tool
 from typing import Annotated
 from tradingagents.dataflows.interface import route_to_vendor
 
+
+INDICATOR_ALIASES = {
+    "ema": "close_10_ema",
+    "close_ema": "close_10_ema",
+    "close ema": "close_10_ema",
+    "10ema": "close_10_ema",
+    "10 ema": "close_10_ema",
+    "ema10": "close_10_ema",
+    "50sma": "close_50_sma",
+    "50 sma": "close_50_sma",
+    "200sma": "close_200_sma",
+    "200 sma": "close_200_sma",
+}
+
+
+def normalize_indicator_name(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_")
+    return INDICATOR_ALIASES.get(normalized, normalized.replace(" ", "_"))
+
 @tool
 def get_indicators(
     symbol: Annotated[str, "ticker symbol of the company"],
@@ -22,7 +41,7 @@ def get_indicators(
     """
     # LLMs sometimes pass multiple indicators as a comma-separated string;
     # split and process each individually.
-    indicators = [i.strip().lower() for i in indicator.split(",") if i.strip()]
+    indicators = [normalize_indicator_name(i) for i in indicator.split(",") if i.strip()]
     results = []
     for ind in indicators:
         try:

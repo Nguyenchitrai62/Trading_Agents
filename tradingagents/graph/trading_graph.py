@@ -28,6 +28,8 @@ from tradingagents.dataflows.config import set_config
 
 # Import the new abstract tool methods from agent_utils
 from tradingagents.agents.utils.agent_utils import (
+    get_crypto_indicators,
+    get_crypto_ohlcv,
     get_stock_data,
     get_indicators,
     get_fundamentals,
@@ -162,6 +164,9 @@ class TradingAgentsGraph:
                 [
                     # Core stock data tools
                     get_stock_data,
+                    # Intraday crypto market data
+                    get_crypto_ohlcv,
+                    get_crypto_indicators,
                     # Technical indicators
                     get_indicators,
                 ]

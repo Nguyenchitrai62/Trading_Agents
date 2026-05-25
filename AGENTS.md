@@ -43,12 +43,12 @@ Mục tiêu sản phẩm không phải là giữ nguyên CLI cũ. Mục tiêu l�
 - `/api/analyze` là endpoint chính cho luồng phân tích streaming.
 - `/api/analyze` stream các event như `analysis_meta`, `status_snapshot`, `section_update`, `debate_update`, `warning`, `complete`, `error`.
 - FE đang map các event này vào các panel UI tương ứng.
-- `/api/chat` vẫn còn tồn tại cho MiniMax chat SSE, nhưng trọng tâm sản phẩm là `/api/analyze`.
+- `/api/analyze` là API phân tích chính; endpoint chat thử nghiệm cũ đã được loại bỏ để giảm bề mặt API.
 
 ## Environment And Configuration
 
 - Dùng `.env` cho runtime configuration.
-- `BACKEND_BASE_URL` trong `.env` là nguồn sự thật cho base URL của backend khi FE và BE tách origin.
+- Base URL FE dùng để gọi backend khi chạy tách origin và các default analysis của FE được đặt trong `FE/config.js`.
 - `MINIMAX_API_KEY` hoặc `MINIMAX_CN_API_KEY` phải nằm trong `.env` để backend gọi LLM.
 - `MINIMAX_BASE_URL` dùng để trỏ tới anthropic-compatible MiniMax endpoint.
 - `CORS_ALLOW_ORIGINS` phải được cấu hình theo domain FE thật khi deploy.
@@ -103,7 +103,7 @@ Một thay đổi được xem là đi đúng hướng mục tiêu lớn khi th�
 - FE có thể cấu hình phiên phân tích và gửi request xuống backend.
 - Backend stream tiến trình phân tích liên tục thay vì chỉ trả kết quả cuối.
 - FE cập nhật đúng panel theo từng bước agent/team/report.
-- Cấu hình runtime dùng `.env`, đặc biệt là `BACKEND_BASE_URL` và các API key.
+- Cấu hình runtime giữ API key trong `.env`; riêng base URL FE và default analysis được quản lý trong `FE/config.js`.
 - Thay đổi vẫn phù hợp với mô hình deploy FE trên Vercel và BE trên Render.
 
 ## Guidance For Coding Agents

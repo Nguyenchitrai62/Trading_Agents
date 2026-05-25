@@ -13,11 +13,38 @@ const REPORT_BY_ANALYST = {
     fundamentals: { section: "fundamentals_report", title: "Fundamentals Analysis" },
 };
 
+const REPORT_DETAIL_BY_AGENT = {
+    "Market Analyst": {
+        type: "report",
+        section: REPORT_BY_ANALYST.market.section,
+        title: REPORT_BY_ANALYST.market.title,
+        subtitle: "Market Analyst",
+    },
+    "Sentiment Analyst": {
+        type: "report",
+        section: REPORT_BY_ANALYST.social.section,
+        title: REPORT_BY_ANALYST.social.title,
+        subtitle: "Sentiment Analyst",
+    },
+    "News Analyst": {
+        type: "report",
+        section: REPORT_BY_ANALYST.news.section,
+        title: REPORT_BY_ANALYST.news.title,
+        subtitle: "News Analyst",
+    },
+    "Fundamentals Analyst": {
+        type: "report",
+        section: REPORT_BY_ANALYST.fundamentals.section,
+        title: REPORT_BY_ANALYST.fundamentals.title,
+        subtitle: "Fundamentals Analyst",
+    },
+};
+
 const CORE_ANALYSTS = ["market", "social", "news"];
 const CRYPTO_SUFFIXES = ["-USD", "-USDT", "-USDC", "-BTC", "-ETH"];
 const CUSTOM_LOOKBACK_VALUE = "__custom__";
-const API_BASE_STORAGE_KEY = "tradingagents.apiBaseUrl";
-const DEV_API_BASE_CANDIDATES = ["http://127.0.0.1:8000", "http://localhost:8000"];
+const TRACE_DISPLAY_LIMIT = 14;
+const LOG_DISPLAY_LIMIT = 12;
 
 const DETAIL_PANEL_META = {
     bullResearch: { title: "Bull Researcher", subtitle: "Research Chamber" },
@@ -28,7 +55,7 @@ const DETAIL_PANEL_META = {
     conservativeRisk: { title: "Conservative Analyst", subtitle: "Risk Room" },
     neutralRisk: { title: "Neutral Analyst", subtitle: "Risk Room" },
     portfolioDecision: { title: "Final Decision", subtitle: "Portfolio Management" },
-    eventLog: { title: "Event Log", subtitle: "SSE Timeline", mode: "text" },
+    eventLog: { title: "Event Log", subtitle: "SSE Timeline", mode: "markdown" },
 };
 
 const state = {
@@ -44,7 +71,7 @@ const elements = {
     runStatusBadge: document.getElementById("runStatusBadge"),
     currentAgentText: document.getElementById("currentAgentText"),
     endpointText: document.getElementById("endpointText"),
-    summaryChips: document.getElementById("summaryChips"),
+    topNoticeText: document.getElementById("topNoticeText"),
     phaseText: document.getElementById("phaseText"),
     progressText: document.getElementById("progressText"),
     progressFill: document.getElementById("progressFill"),
@@ -66,6 +93,12 @@ const elements = {
     signalBadge: document.getElementById("signalBadge"),
     portfolioDecisionPanel: document.getElementById("portfolioDecisionPanel"),
     eventLog: document.getElementById("eventLog"),
+    opsStatusText: document.getElementById("opsStatusText"),
+    opsAgentText: document.getElementById("opsAgentText"),
+    opsPhaseText: document.getElementById("opsPhaseText"),
+    opsLatestText: document.getElementById("opsLatestText"),
+    toolTraceList: document.getElementById("toolTraceList"),
+    eventLogStatusText: document.getElementById("eventLogStatusText"),
     openConfigButton: document.getElementById("openConfigButton"),
     closeConfigButton: document.getElementById("closeConfigButton"),
     runAnalysisButton: document.getElementById("runAnalysisButton"),
@@ -92,7 +125,6 @@ const elements = {
     selectCoreAnalystsButton: document.getElementById("selectCoreAnalystsButton"),
     clearAnalystsButton: document.getElementById("clearAnalystsButton"),
     depthOptions: document.getElementById("depthOptions"),
-    providerDisplayInput: document.getElementById("providerDisplayInput"),
     modelInput: document.getElementById("modelInput"),
     checkpointToggle: document.getElementById("checkpointToggle"),
     configPreview: document.getElementById("configPreview"),
@@ -108,12 +140,20 @@ function createEmptyRunState() {
         complete: null,
         warnings: [],
         logs: [],
+        logEntries: [],
+        agentTrace: {},
+        traceFeed: [],
+        streamFeed: [],
+        seenLogFingerprints: new Set(),
+        seenStreamFingerprints: new Set(),
+        seenTraceFingerprints: new Set(),
+        lastTrackedAgent: null,
         latestReportTitle: null,
     };
 }
 
 function escapeHtml(value = "") {
-    return value
+    return String(value)
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
         .replaceAll(">", "&gt;")
@@ -123,12 +163,77 @@ function escapeHtml(value = "") {
 
 function renderInlineMarkdown(value = "") {
     return escapeHtml(value)
+        .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1" loading="lazy">')
         .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
         .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/~~([^~]+)~~/g, "<del>$1</del>")
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         .replace(/__([^_]+)__/g, "<strong>$1</strong>")
         .replace(/\*([^*]+)\*/g, "<em>$1</em>")
         .replace(/_([^_]+)_/g, "<em>$1</em>");
+}
+
+function splitMarkdownTableRow(line = "") {
+    const trimmed = line.trim();
+    const withoutLeadingPipe = trimmed.startsWith("|") ? trimmed.slice(1) : trimmed;
+    const withoutTrailingPipe = withoutLeadingPipe.endsWith("|") ? withoutLeadingPipe.slice(0, -1) : withoutLeadingPipe;
+    return withoutTrailingPipe.split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparator(line = "") {
+    const cells = splitMarkdownTableRow(line);
+    return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function isMarkdownTableStart(lines, index) {
+    if (index + 1 >= lines.length || !lines[index].includes("|")) {
+        return false;
+    }
+    return splitMarkdownTableRow(lines[index]).length > 1 && isMarkdownTableSeparator(lines[index + 1]);
+}
+
+function renderMarkdownTable(lines, startIndex) {
+    const headers = splitMarkdownTableRow(lines[startIndex]);
+    const separators = splitMarkdownTableRow(lines[startIndex + 1]);
+    const alignments = separators.map((cell) => {
+        const left = cell.startsWith(":");
+        const right = cell.endsWith(":");
+        if (left && right) {
+            return "center";
+        }
+        return right ? "right" : "left";
+    });
+
+    const rows = [];
+    let nextIndex = startIndex + 2;
+    while (nextIndex < lines.length) {
+        const trimmed = lines[nextIndex].trim();
+        if (!trimmed || trimmed.startsWith("```") || !trimmed.includes("|")) {
+            break;
+        }
+        rows.push(splitMarkdownTableRow(trimmed));
+        nextIndex += 1;
+    }
+
+    const renderCell = (tag, cell, index) => {
+        const align = alignments[index] || "left";
+        return `<${tag} style="text-align:${align}">${renderInlineMarkdown(cell || "")}</${tag}>`;
+    };
+
+    const table = `
+        <div class="markdown-table-wrap">
+            <table>
+                <thead><tr>${headers.map((cell, index) => renderCell("th", cell, index)).join("")}</tr></thead>
+                <tbody>
+                    ${rows
+                        .map((row) => `<tr>${headers.map((_, index) => renderCell("td", row[index] || "", index)).join("")}</tr>`)
+                        .join("")}
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    return { table, nextIndex };
 }
 
 function renderMarkdown(content, fallback = "No content yet.") {
@@ -138,6 +243,15 @@ function renderMarkdown(content, fallback = "No content yet.") {
     let activeList = null;
     let inCodeBlock = false;
     let codeLines = [];
+    let paragraphLines = [];
+
+    const flushParagraph = () => {
+        if (!paragraphLines.length) {
+            return;
+        }
+        htmlParts.push(`<p>${renderInlineMarkdown(paragraphLines.join(" "))}</p>`);
+        paragraphLines = [];
+    };
 
     const closeList = () => {
         if (activeList) {
@@ -154,7 +268,8 @@ function renderMarkdown(content, fallback = "No content yet.") {
         }
     };
 
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
         const trimmed = line.trim();
         if (trimmed.startsWith("```")) {
             if (inCodeBlock) {
@@ -162,6 +277,7 @@ function renderMarkdown(content, fallback = "No content yet.") {
                 codeLines = [];
                 inCodeBlock = false;
             } else {
+                flushParagraph();
                 closeList();
                 inCodeBlock = true;
             }
@@ -174,20 +290,32 @@ function renderMarkdown(content, fallback = "No content yet.") {
         }
 
         if (!trimmed) {
+            flushParagraph();
             closeList();
+            continue;
+        }
+
+        if (isMarkdownTableStart(lines, index)) {
+            flushParagraph();
+            closeList();
+            const rendered = renderMarkdownTable(lines, index);
+            htmlParts.push(rendered.table);
+            index = rendered.nextIndex - 1;
             continue;
         }
 
         const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
         if (heading) {
+            flushParagraph();
             closeList();
-            const level = Math.min(heading[1].length + 1, 6);
+            const level = Math.min(heading[1].length, 6);
             htmlParts.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
             continue;
         }
 
         const unordered = trimmed.match(/^[-*+]\s+(.+)$/);
         if (unordered) {
+            flushParagraph();
             openList("ul");
             htmlParts.push(`<li>${renderInlineMarkdown(unordered[1])}</li>`);
             continue;
@@ -195,6 +323,7 @@ function renderMarkdown(content, fallback = "No content yet.") {
 
         const ordered = trimmed.match(/^\d+[.)]\s+(.+)$/);
         if (ordered) {
+            flushParagraph();
             openList("ol");
             htmlParts.push(`<li>${renderInlineMarkdown(ordered[1])}</li>`);
             continue;
@@ -202,24 +331,27 @@ function renderMarkdown(content, fallback = "No content yet.") {
 
         const quote = trimmed.match(/^>\s?(.+)$/);
         if (quote) {
+            flushParagraph();
             closeList();
             htmlParts.push(`<blockquote>${renderInlineMarkdown(quote[1])}</blockquote>`);
             continue;
         }
 
         if (/^[-*_]{3,}$/.test(trimmed)) {
+            flushParagraph();
             closeList();
             htmlParts.push("<hr>");
             continue;
         }
 
         closeList();
-        htmlParts.push(`<p>${renderInlineMarkdown(trimmed)}</p>`);
+        paragraphLines.push(trimmed);
     }
 
     if (inCodeBlock) {
         htmlParts.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
     }
+    flushParagraph();
     closeList();
     return htmlParts.join("");
 }
@@ -227,6 +359,31 @@ function renderMarkdown(content, fallback = "No content yet.") {
 function setMarkdownPreview(element, content, fallback) {
     const hasContent = Boolean(content && content.trim());
     element.innerHTML = renderMarkdown(content, fallback);
+    element.classList.remove("compact-preview");
+    element.classList.toggle("is-empty", !hasContent);
+}
+
+function stripMarkdownToPlainText(content = "") {
+    return String(content)
+        .replace(/```[\s\S]*?```/g, " ")
+        .replace(/`([^`]+)`/g, "$1")
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+        .replace(/^#{1,6}\s+/gm, "")
+        .replace(/^>\s?/gm, "")
+        .replace(/^[-*+]\s+/gm, "")
+        .replace(/^\d+[.)]\s+/gm, "")
+        .replace(/[*_~]/g, "")
+        .replace(/\r?\n+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function setCompactPreview(element, content, fallback, maxLength = 180) {
+    const hasContent = Boolean(content && content.trim());
+    const source = hasContent ? content : fallback;
+    const text = compactText(stripMarkdownToPlainText(source), maxLength) || fallback;
+    element.textContent = text;
+    element.classList.add("compact-preview");
     element.classList.toggle("is-empty", !hasContent);
 }
 
@@ -243,28 +400,13 @@ function getQueryParamApiBaseUrl() {
     return normalizeApiBaseUrl(params.get("api_base_url") || params.get("apiBaseUrl") || "");
 }
 
-function getRuntimeConfigApiBaseUrl() {
-    return normalizeApiBaseUrl(window.TRADINGAGENTS_RUNTIME_CONFIG?.apiBaseUrl || "");
+function getFrontendConfigSource() {
+    return window.TRADINGAGENTS_CONFIG || {};
 }
 
-function getStoredApiBaseUrl() {
-    try {
-        return normalizeApiBaseUrl(window.localStorage.getItem(API_BASE_STORAGE_KEY) || "");
-    } catch {
-        return "";
-    }
-}
-
-function storeApiBaseUrl(value) {
-    const normalized = normalizeApiBaseUrl(value);
-    if (!normalized) {
-        return;
-    }
-    try {
-        window.localStorage.setItem(API_BASE_STORAGE_KEY, normalized);
-    } catch {
-        // Ignore storage failures in restricted browser contexts.
-    }
+function getFrontendConfigApiBaseUrl() {
+    const config = getFrontendConfigSource();
+    return normalizeApiBaseUrl(config.apiBaseUrl || config.api_base_url || "");
 }
 
 function getSameOriginApiBaseUrl() {
@@ -275,16 +417,67 @@ function getSameOriginApiBaseUrl() {
 }
 
 function getConfiguredApiBaseUrl() {
-    const meta = document.querySelector('meta[name="tradingagents-api-base-url"]');
-    const configured = normalizeApiBaseUrl(meta?.getAttribute("content") || "");
     const candidates = [
         getQueryParamApiBaseUrl(),
-        configured,
-        getRuntimeConfigApiBaseUrl(),
-        getStoredApiBaseUrl(),
+        getFrontendConfigApiBaseUrl(),
+        getSameOriginApiBaseUrl(),
     ];
 
     return candidates.find((candidate) => candidate && !isPlaceholderApiBaseUrl(candidate)) || "";
+}
+
+function todayIsoDate() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeFrontendConfig() {
+    const source = getFrontendConfigSource();
+    const defaults = source.analysisDefaults || source.analysis_defaults || {};
+    const options = source.analysisOptions || source.analysis_options || {};
+    const defaultModel = source.defaultModel || source.default_model || defaults.model || "MiniMax-M2.7";
+
+    return {
+        configured: true,
+        provider: source.provider || "minimax",
+        api_base_url: getConfiguredApiBaseUrl(),
+        default_model: defaultModel,
+        analysis_defaults: {
+            symbol: String(defaults.symbol || "BTC").trim().toUpperCase(),
+            asset_type: defaults.assetType || defaults.asset_type || "auto",
+            analysis_date: defaults.analysisDate || defaults.analysis_date || todayIsoDate(),
+            lookback_days: Number(defaults.lookbackDays || defaults.lookback_days || 7),
+            output_language: defaults.outputLanguage || defaults.output_language || "Vietnamese",
+            selected_analysts: defaults.selectedAnalysts || defaults.selected_analysts || ["market", "social", "news", "fundamentals"],
+            research_depth: defaults.researchDepth || defaults.research_depth || "medium",
+            model: defaultModel,
+            checkpoint_enabled: Boolean(defaults.checkpointEnabled ?? defaults.checkpoint_enabled ?? false),
+        },
+        analysis_options: {
+            analysts: options.analysts || [
+                { value: "market", label: "Market Analyst" },
+                { value: "social", label: "Sentiment Analyst" },
+                { value: "news", label: "News Analyst" },
+                { value: "fundamentals", label: "Fundamentals Analyst" },
+            ],
+            asset_types: options.assetTypes || options.asset_types || [
+                { value: "auto", label: "Auto detect" },
+                { value: "stock", label: "Stock" },
+                { value: "crypto", label: "Crypto" },
+            ],
+            lookback_presets: options.lookbackPresets || options.lookback_presets || [
+                { value: "7", label: "7 days", days: 7 },
+                { value: "14", label: "14 days", days: 14 },
+                { value: "30", label: "30 days", days: 30 },
+                { value: "90", label: "90 days", days: 90 },
+            ],
+            output_languages: options.outputLanguages || options.output_languages || ["Vietnamese", "English"],
+            research_depths: options.researchDepths || options.research_depths || [
+                { value: "quick", label: "Quick", rounds: 1, description: "Fast scan with minimal debate." },
+                { value: "medium", label: "Medium", rounds: 3, description: "Balanced research depth for regular analysis." },
+                { value: "deep", label: "Deep", rounds: 5, description: "More debate rounds before the final decision." },
+            ],
+        },
+    };
 }
 
 function buildApiUrlFromBase(baseUrl, path) {
@@ -294,6 +487,21 @@ function buildApiUrlFromBase(baseUrl, path) {
 
 function buildApiUrl(path) {
     return buildApiUrlFromBase(state.apiBaseUrl, path);
+}
+
+function formatApiBaseLabel(value = "") {
+    const normalized = normalizeApiBaseUrl(value);
+    if (!normalized) {
+        return "API unresolved";
+    }
+
+    try {
+        const parsed = new URL(normalized);
+        const path = parsed.pathname && parsed.pathname !== "/" ? parsed.pathname.replace(/\/$/, "") : "";
+        return `API ${parsed.host}${path}`;
+    } catch {
+        return `API ${normalized}`;
+    }
 }
 
 function detectAssetTypeFromSymbol(symbol) {
@@ -323,21 +531,481 @@ function collectConfigDraft() {
     };
 }
 
+function getConfigSnapshot() {
+    if (!state.config) {
+        return null;
+    }
+
+    try {
+        return collectConfigDraft();
+    } catch {
+        return {
+            symbol: state.config.analysis_defaults.symbol,
+            asset_type: state.config.analysis_defaults.asset_type,
+            analysis_date: state.config.analysis_defaults.analysis_date,
+            lookback_days: state.config.analysis_defaults.lookback_days,
+            output_language: state.config.analysis_defaults.output_language,
+            selected_analysts: state.config.analysis_defaults.selected_analysts,
+            research_depth: state.config.analysis_defaults.research_depth,
+            model: state.config.analysis_defaults.model,
+            checkpoint_enabled: Boolean(state.config.analysis_defaults.checkpoint_enabled),
+        };
+    }
+}
+
+function compactText(value = "", maxLength = 220) {
+    const normalized = String(value).replace(/\s+/g, " ").trim();
+    if (!normalized) {
+        return "";
+    }
+    return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
+function buildContentFingerprint(...parts) {
+    return parts
+        .map((part) => stripMarkdownToPlainText(String(part || "")).toLowerCase())
+        .join("|")
+        .replace(/\belapsed=\d+(?:\.\d+)?s\b/g, "elapsed=*s")
+        .replace(/\b\d+(?:\.\d+)?\s*s\b/g, "*s")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function formatStatusLabel(status = "pending") {
+    return status.replaceAll("_", " ");
+}
+
+function formatTracePhaseLabel(phase = "analysis") {
+    const normalized = String(phase || "analysis").replaceAll("_", " ").trim();
+    return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : "Analysis";
+}
+
+function formatStructuredValue(payload) {
+    if (typeof payload === "string") {
+        return payload.trim();
+    }
+    if (payload == null) {
+        return "";
+    }
+    if (typeof payload === "number" || typeof payload === "boolean") {
+        return String(payload);
+    }
+    if (Array.isArray(payload)) {
+        return payload.map((item) => formatStructuredValue(item)).filter(Boolean).join("\n");
+    }
+    if (typeof payload === "object") {
+        const preferredKeys = ["message", "content", "title", "signal", "phase", "error"];
+        for (const key of preferredKeys) {
+            const value = payload[key];
+            if (typeof value === "string" && value.trim()) {
+                return value.trim();
+            }
+        }
+        try {
+            return JSON.stringify(payload, null, 2);
+        } catch {
+            return String(payload);
+        }
+    }
+    return String(payload);
+}
+
+function buildLogEntry(label, payload) {
+    const backendLine = payload && typeof payload === "object" && typeof payload.log_line === "string"
+        ? payload.log_line.trim()
+        : "";
+    const message = payload && typeof payload === "object" && typeof payload.message === "string"
+        ? payload.message.trim()
+        : "";
+    const timestamp = new Date().toLocaleTimeString();
+    const detail = backendLine || message || formatStructuredValue(payload) || label;
+    const summary = compactText(stripMarkdownToPlainText(message || backendLine || formatStructuredValue(payload) || detail), 220) || label;
+    return {
+        timestamp,
+        label: String(label || "event"),
+        summary,
+        detail,
+    };
+}
+
+function getTraceEntryById(traceId) {
+    return state.run.traceFeed.find((entry) => entry.id === traceId) || null;
+}
+
+function preserveScrollPosition(element, updateFn) {
+    if (!(element instanceof HTMLElement)) {
+        updateFn();
+        return;
+    }
+
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    updateFn();
+
+    if (distanceFromBottom <= 32) {
+        element.scrollTop = element.scrollHeight;
+        return;
+    }
+
+    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight - distanceFromBottom);
+}
+
+function getFocusIdentity(focus) {
+    if (focus.detail?.type === "report") {
+        return `report:${focus.detail.section}`;
+    }
+    if (focus.detail?.key) {
+        return `panel:${focus.detail.key}`;
+    }
+    return `focus:${focus.title}:${focus.subtitle || ""}`;
+}
+
+function pushStreamFeed(entry) {
+    const fingerprint = buildContentFingerprint(entry.title, entry.content);
+    if (fingerprint && state.run.seenStreamFingerprints.has(fingerprint)) {
+        return;
+    }
+    if (fingerprint) {
+        state.run.seenStreamFingerprints.add(fingerprint);
+    }
+
+    state.run.streamFeed.unshift({
+        timestamp: new Date().toLocaleTimeString(),
+        tone: "progress",
+        ...entry,
+    });
+    state.run.streamFeed = state.run.streamFeed.slice(0, 24);
+}
+
+function getFeedToneForPhase(phase = "progress") {
+    if (phase === "tool_result" || phase === "analysis") {
+        return "live";
+    }
+    if (phase === "warning") {
+        return "warning";
+    }
+    if (phase === "completed") {
+        return "completed";
+    }
+    return "progress";
+}
+
+function pushAgentTrace(trace) {
+    const agent = trace.agent || state.run.status?.current_agent || "Agent";
+    const phase = trace.phase || "analysis";
+    const content = String(trace.content || "").trim();
+    const fingerprint = buildContentFingerprint(agent, phase, trace.title || agent, content);
+    if (!content || (fingerprint && state.run.seenTraceFingerprints.has(fingerprint))) {
+        return;
+    }
+    if (fingerprint) {
+        state.run.seenTraceFingerprints.add(fingerprint);
+    }
+
+    const entry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: new Date().toLocaleTimeString(),
+        agent,
+        phase,
+        tone: getFeedToneForPhase(phase),
+        title: trace.title || agent,
+        content,
+    };
+
+    state.run.agentTrace[agent] = [entry, ...(state.run.agentTrace[agent] || [])].slice(0, 12);
+    state.run.traceFeed = [entry, ...state.run.traceFeed].slice(0, 40);
+    pushStreamFeed({
+        title: `${agent} - ${entry.title}`,
+        content: compactText(entry.content, 260),
+        tone: entry.tone,
+    });
+}
+
+function getAgentTraceEntries(agent, limit = 6, allowedPhases = null) {
+    if (!agent) {
+        return [];
+    }
+    const entries = state.run.agentTrace[agent] || [];
+    const filtered = Array.isArray(allowedPhases)
+        ? entries.filter((entry) => allowedPhases.includes(entry.phase))
+        : entries;
+    return filtered.slice(0, limit);
+}
+
+function getAgentTraceMarkdown(agent, limit = 6, allowedPhases = null) {
+    const entries = getAgentTraceEntries(agent, limit, allowedPhases);
+    if (!entries.length) {
+        return "";
+    }
+    return entries
+        .map((entry) => `### ${formatTracePhaseLabel(entry.phase)} - ${entry.title}\n${entry.content}`)
+        .join("\n\n");
+}
+
+function getAgentNarrativeMarkdown(agent, limit = 5) {
+    return getAgentTraceMarkdown(agent, limit, ["analysis"]);
+}
+
+function getFallbackStatusGroups() {
+    const fallbackAnalysts = state.config?.analysis_defaults?.selected_analysts || [];
+    return {
+        analysts: fallbackAnalysts.map((key) => ({
+            key,
+            label: REPORT_BY_ANALYST[key]?.title?.replace(" Analysis", " Analyst") || key,
+            status: "pending",
+        })),
+        research: [
+            { key: "bull", label: "Bull Researcher", status: "pending" },
+            { key: "bear", label: "Bear Researcher", status: "pending" },
+            { key: "manager", label: "Research Manager", status: "pending" },
+        ],
+        trading: [{ key: "trader", label: "Trader", status: "pending" }],
+        risk: [
+            { key: "aggressive", label: "Aggressive Analyst", status: "pending" },
+            { key: "conservative", label: "Conservative Analyst", status: "pending" },
+            { key: "neutral", label: "Neutral Analyst", status: "pending" },
+        ],
+        portfolio: [{ key: "portfolio_manager", label: "Portfolio Manager", status: "pending" }],
+    };
+}
+
+function getStatusGroups() {
+    return state.run.status?.groups || getFallbackStatusGroups();
+}
+
+function getTaskDetailDescriptor(groupKey, item) {
+    if (groupKey === "analysts") {
+        const report = REPORT_BY_ANALYST[item.key];
+        if (!report) {
+            return null;
+        }
+        return {
+            type: "report",
+            section: report.section,
+            title: report.title,
+            subtitle: item.label,
+        };
+    }
+
+    const keyMap = {
+        research: {
+            bull: { key: "bullResearch" },
+            bear: { key: "bearResearch" },
+            manager: { key: "researchManager" },
+        },
+        trading: {
+            trader: { key: "traderPlan" },
+        },
+        risk: {
+            aggressive: { key: "aggressiveRisk" },
+            conservative: { key: "conservativeRisk" },
+            neutral: { key: "neutralRisk" },
+        },
+        portfolio: {
+            portfolio_manager: { key: "portfolioDecision" },
+            portfolio: { key: "portfolioDecision" },
+        },
+    };
+
+    return keyMap[groupKey]?.[item.key] || null;
+}
+
+function buildDetailDataset(detail) {
+    if (!detail) {
+        return "";
+    }
+    if (detail.type === "report") {
+        return `data-detail-section="${escapeHtml(detail.section)}" data-detail-title="${escapeHtml(detail.title)}" data-detail-subtitle="${escapeHtml(detail.subtitle || detail.title)}"`;
+    }
+    if (detail.key) {
+        return `data-detail-key="${escapeHtml(detail.key)}"`;
+    }
+    return "";
+}
+
+function getRecentStreamMarkdown(limit = 6) {
+    const items = getVisibleStreamFeed(limit);
+    if (!items.length) {
+        return "";
+    }
+    return items
+        .map((item) => `- **${item.title}**: ${compactText(item.content, 180)}`)
+        .join("\n");
+}
+
+function getCurrentLivePanel() {
+    if (state.run.complete?.signal && state.run.sections.final_trade_decision) {
+        return {
+            title: "Final Decision",
+            subtitle: state.run.complete.signal,
+            content: state.run.sections.final_trade_decision,
+            fallback: "The Portfolio Manager has not finalized a decision yet.",
+            detail: { key: "portfolioDecision" },
+            tone: "completed",
+            badge: "Complete",
+        };
+    }
+
+    const currentAgent = state.run.status?.current_agent;
+    const currentAgentNarrative = getAgentNarrativeMarkdown(currentAgent, 5);
+    const waitingMessage = currentAgent
+        ? `${currentAgent} is calling tools or preparing a response.`
+        : "Waiting for the next SSE event from the backend.";
+
+    if (!currentAgent) {
+        return {
+            title: "Awaiting analysis",
+            subtitle: "No active agent",
+            content: "",
+            fallback: "Run analysis to start the live frontend stream.",
+            detail: null,
+            tone: "idle",
+            badge: "Ready",
+        };
+    }
+
+    if (currentAgent === "Bull Researcher") {
+        return {
+            title: currentAgent,
+            subtitle: "Research debate is live",
+            content: state.run.research.current_response || state.run.research.bull_history || "",
+            fallback: "The Bull Researcher has not responded yet.",
+            detail: { key: "bullResearch" },
+            tone: "live",
+            badge: "Live",
+        };
+    }
+
+    if (currentAgent === "Bear Researcher") {
+        return {
+            title: currentAgent,
+            subtitle: "Research debate is live",
+            content: state.run.research.current_response || state.run.research.bear_history || "",
+            fallback: "The Bear Researcher has not responded yet.",
+            detail: { key: "bearResearch" },
+            tone: "live",
+            badge: "Live",
+        };
+    }
+
+    if (currentAgent === "Research Manager") {
+        return {
+            title: currentAgent,
+            subtitle: "Synthesizing the research plan",
+            content: state.run.research.judge_decision || state.run.sections.investment_plan || "",
+            fallback: "The Research Manager has not synthesized a plan yet.",
+            detail: { key: "researchManager" },
+            tone: "progress",
+            badge: "Live",
+        };
+    }
+
+    if (currentAgent === "Trader") {
+        return {
+            title: currentAgent,
+            subtitle: "Building the trading proposal",
+            content: state.run.sections.trader_investment_plan || currentAgentNarrative || "",
+            fallback: "The Trader is analyzing the proposal.",
+            detail: { key: "traderPlan" },
+            tone: "progress",
+            badge: "Live",
+        };
+    }
+
+    if (currentAgent === "Aggressive Analyst") {
+        return {
+            title: currentAgent,
+            subtitle: "Risk debate is live",
+            content: state.run.risk.current_aggressive_response || state.run.risk.aggressive_history || "",
+            fallback: "The Aggressive Analyst has not responded yet.",
+            detail: { key: "aggressiveRisk" },
+            tone: "live",
+            badge: "Live",
+        };
+    }
+
+    if (currentAgent === "Conservative Analyst") {
+        return {
+            title: currentAgent,
+            subtitle: "Risk debate is live",
+            content: state.run.risk.current_conservative_response || state.run.risk.conservative_history || "",
+            fallback: "The Conservative Analyst has not responded yet.",
+            detail: { key: "conservativeRisk" },
+            tone: "live",
+            badge: "Live",
+        };
+    }
+
+    if (currentAgent === "Neutral Analyst") {
+        return {
+            title: currentAgent,
+            subtitle: "Risk debate is live",
+            content: state.run.risk.current_neutral_response || state.run.risk.neutral_history || "",
+            fallback: "The Neutral Analyst has not responded yet.",
+            detail: { key: "neutralRisk" },
+            tone: "live",
+            badge: "Live",
+        };
+    }
+
+    if (currentAgent === "Portfolio Manager") {
+        return {
+            title: currentAgent,
+            subtitle: "Evaluating final portfolio action",
+            content: state.run.sections.final_trade_decision || state.run.risk.judge_decision || currentAgentNarrative || "",
+            fallback: "The Portfolio Manager is finalizing the decision.",
+            detail: { key: "portfolioDecision" },
+            tone: "progress",
+            badge: "Live",
+        };
+    }
+
+    const reportDetail = REPORT_DETAIL_BY_AGENT[currentAgent] || null;
+    return {
+        title: currentAgent,
+        subtitle: "Streaming narrative",
+        content: currentAgentNarrative || "",
+        fallback: waitingMessage,
+        detail: reportDetail,
+        tone: currentAgentNarrative ? "live" : "progress",
+        badge: "Live",
+    };
+}
+
+function getVisibleStreamFeed(limit = 12) {
+    return state.run.streamFeed
+        .filter((item) => {
+            const title = String(item.title || "").toLowerCase();
+            const content = String(item.content || "").toLowerCase();
+            return !title.startsWith("heartbeat") && !content.includes("active graph node");
+        })
+        .slice(0, limit);
+}
+
 function formatBlock(content, fallback = "No content yet.") {
     return renderMarkdown(content, fallback);
 }
 
-function appendLog(label, payload) {
-    const timestamp = new Date().toLocaleTimeString();
-    const hasMessagePayload = payload && typeof payload === "object" && "message" in payload;
-    const text = typeof payload === "string"
-        ? payload
-        : hasMessagePayload
-        ? `${payload.message} ${JSON.stringify({ ...payload, message: undefined })}`
-        : JSON.stringify(payload);
-    state.run.logs.unshift(`[${timestamp}] ${label}: ${text}`);
+function appendLog(label, payload, options = {}) {
+    if (payload && typeof payload === "object" && payload.phase === "heartbeat") {
+        return;
+    }
+
+    const entry = buildLogEntry(label, payload);
+    if ((options.source || "frontend") !== "backend") {
+        return;
+    }
+    const fingerprint = buildContentFingerprint(entry.label, entry.summary);
+    if (fingerprint && state.run.seenLogFingerprints.has(fingerprint)) {
+        return;
+    }
+    if (fingerprint) {
+        state.run.seenLogFingerprints.add(fingerprint);
+    }
+
+    state.run.logEntries.unshift(entry);
+    state.run.logEntries = state.run.logEntries.slice(0, 120);
+    state.run.logs.unshift(entry.detail);
     state.run.logs = state.run.logs.slice(0, 120);
-    elements.eventLog.textContent = state.run.logs.join("\n");
     if (state.activeDetail?.key === "eventLog") {
         renderActiveDetail();
     }
@@ -438,42 +1106,41 @@ function renderConfigPreview() {
     );
     const analystNames = payload.selected_analysts.map((key) => analystLabelMap[key] || key);
     const resolvedAssetType = getResolvedAssetType();
-    const rows = [
-        ["Resolved asset", assetTypeMap[resolvedAssetType] || resolvedAssetType],
-        ["Window", `${payload.lookback_days || 0} day(s)`],
+    const chips = [
+        ["Symbol", payload.symbol || "-"],
+        ["Asset", assetTypeMap[resolvedAssetType] || resolvedAssetType],
+        ["Window", `${payload.lookback_days || 0}d`],
         ["Language", payload.output_language || "-"],
         ["Depth", depthMap[payload.research_depth] || payload.research_depth],
+        ["Model", payload.model || "-"],
+        ["Analysts", analystNames.length ? analystNames.join(" / ") : "None selected"],
+        ["Checkpoint", payload.checkpoint_enabled ? "On" : "Off"],
         ["Provider", state.config.provider || "minimax"],
-        ["Analysts", analystNames.length ? analystNames.join(", ") : "None selected"],
     ];
 
     const notes = [];
     if (payload.asset_type === "auto") {
-        notes.push("Asset type đang ở chế độ auto detect.");
+        notes.push("Auto asset detect is on.");
     }
     if (resolvedAssetType === "crypto") {
-        notes.push("Crypto mode sẽ tự bỏ Fundamentals Analyst để tránh request không hợp lệ.");
+        notes.push("Crypto mode removes Fundamentals Analyst automatically.");
     }
     if (!analystNames.length) {
-        notes.push("Cần chọn ít nhất một analyst trước khi chạy.");
+        notes.push("Select at least one analyst before running.");
     }
 
     elements.configPreview.innerHTML = `
-        <div class="config-preview-grid">
-            ${rows
-                .map(
-                    ([label, value]) => `
-                        <article class="config-preview-card">
-                            <span>${escapeHtml(label)}</span>
-                            <strong>${escapeHtml(value)}</strong>
-                        </article>
-                    `,
-                )
-                .join("")}
-        </div>
-        <ul class="config-preview-notes">
-            ${notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}
-        </ul>
+        ${chips
+            .map(
+                ([label, value]) => `
+                    <article class="config-summary-chip" title="${escapeHtml(`${label}: ${value}`)}">
+                        <span>${escapeHtml(label)}</span>
+                        <strong>${escapeHtml(value)}</strong>
+                    </article>
+                `,
+            )
+            .join("")}
+        ${notes[0] ? `<p class="config-summary-note">${escapeHtml(notes[0])}</p>` : ""}
     `;
 }
 
@@ -481,94 +1148,77 @@ function refreshConfigUi() {
     syncLanguageControls();
     syncLookbackPreset();
     syncAnalystAvailability();
-    renderSummaryChips();
+    renderTopNotice();
     renderConfigPreview();
 }
 
-function renderSummaryChips() {
-    if (!state.config) {
-        elements.summaryChips.innerHTML = "";
+function renderTopNotice() {
+    const warningText = state.run.warnings[0];
+    if (warningText) {
+        elements.topNoticeText.textContent = warningText;
+        elements.topNoticeText.title = warningText;
         return;
     }
 
-    let payload;
-    try {
-        payload = collectConfigDraft();
-    } catch {
-        payload = {
-            symbol: state.config.analysis_defaults.symbol,
-            asset_type: state.config.analysis_defaults.asset_type,
-            analysis_date: state.config.analysis_defaults.analysis_date,
-            lookback_days: state.config.analysis_defaults.lookback_days,
-            output_language: state.config.analysis_defaults.output_language,
-            selected_analysts: state.config.analysis_defaults.selected_analysts,
-            research_depth: state.config.analysis_defaults.research_depth,
-            model: state.config.analysis_defaults.model,
-        };
+    if (!state.config) {
+        const fallbackNotice = "Loading backend configuration.";
+        elements.topNoticeText.textContent = fallbackNotice;
+        elements.topNoticeText.title = fallbackNotice;
+        return;
     }
 
+    const payload = getConfigSnapshot();
     const assetTypeMap = Object.fromEntries(
         (state.config.analysis_options.asset_types || []).map((item) => [item.value, item.label]),
     );
-    const analystLabelMap = Object.fromEntries(
-        state.config.analysis_options.analysts.map((item) => [item.value, item.label]),
-    );
-    const depthMap = Object.fromEntries(
-        state.config.analysis_options.research_depths.map((item) => [item.value, item.label]),
-    );
-    const chips = [
-        `Symbol: ${payload.symbol || "-"}`,
-        `Asset: ${assetTypeMap[getResolvedAssetType()] || getResolvedAssetType()}`,
-        `Date: ${payload.analysis_date || "-"}`,
-        `Window: ${payload.lookback_days || "-"}d`,
-        `Language: ${payload.output_language || "-"}`,
-        `Depth: ${depthMap[payload.research_depth] || payload.research_depth}`,
-        `Model: ${payload.model || "-"}`,
-        `Analysts: ${payload.selected_analysts.map((key) => analystLabelMap[key] || key).join(", ")}`,
-    ];
 
-    elements.summaryChips.innerHTML = chips
-        .map((chip) => `<span class="chip">${escapeHtml(chip)}</span>`)
-        .join("");
+    let notice = "Ready to run analysis.";
+    if (state.isBusy) {
+        const progress = state.run.status?.progress || { completed: 0, total: 0 };
+        const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
+        const assetType = state.run.meta?.asset_type || getResolvedAssetType();
+        const depth = state.run.meta?.research_depth || payload?.research_depth || state.config.analysis_defaults.research_depth;
+        const lookback = state.run.meta?.lookback_days || payload?.lookback_days || state.config.analysis_defaults.lookback_days;
+        notice = `${symbol} - ${assetType} - ${lookback}d - ${depth} depth - ${progress.completed}/${progress.total} tasks`;
+    } else if (state.run.complete) {
+        const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
+        const signal = state.run.complete.signal || "analysis completed";
+        const elapsed = state.run.complete.elapsed_seconds ? ` - ${state.run.complete.elapsed_seconds}s` : "";
+        notice = `${symbol} - ${signal}${elapsed}`;
+    } else if (payload) {
+        const resolvedAssetType = getResolvedAssetType();
+        const assetLabel = assetTypeMap[resolvedAssetType] || resolvedAssetType;
+        notice = `${payload.symbol || "-"} - ${assetLabel} - ${payload.lookback_days || "-"}d - ${payload.output_language || "-"} - ${payload.selected_analysts.length} analysts`;
+    }
+
+    elements.topNoticeText.textContent = notice;
+    elements.topNoticeText.title = notice;
 }
 
 function renderTeamStatusGrid() {
-    const fallbackAnalysts = state.config?.analysis_defaults?.selected_analysts || [];
-    const groups = state.run.status?.groups || {
-        analysts: fallbackAnalysts.map((key) => ({
-            key,
-            label: REPORT_BY_ANALYST[key]?.title?.replace(" Analysis", " Analyst") || key,
-            status: "pending",
-        })),
-        research: [
-            { key: "bull", label: "Bull Researcher", status: "pending" },
-            { key: "bear", label: "Bear Researcher", status: "pending" },
-            { key: "manager", label: "Research Manager", status: "pending" },
-        ],
-        trading: [{ key: "trader", label: "Trader", status: "pending" }],
-        risk: [
-            { key: "aggressive", label: "Aggressive Analyst", status: "pending" },
-            { key: "conservative", label: "Conservative Analyst", status: "pending" },
-            { key: "neutral", label: "Neutral Analyst", status: "pending" },
-        ],
-        portfolio: [{ key: "portfolio", label: "Portfolio Manager", status: "pending" }],
-    };
+    const groups = getStatusGroups();
 
     elements.teamStatusGrid.innerHTML = Object.entries(groups)
         .map(([groupKey, items]) => `
-            <section class="status-cluster">
-                <header>
-                    <h3>${escapeHtml(GROUP_LABELS[groupKey] || groupKey)}</h3>
-                </header>
-                <div class="status-card-list">
+            <section class="task-row">
+                <p class="task-row-label">${escapeHtml(GROUP_LABELS[groupKey] || groupKey)}</p>
+                <div class="task-inline-list">
                     ${items
                         .map(
-                            (item) => `
-                                <article class="status-card status-${item.status}">
-                                    <span class="status-label">${escapeHtml(item.label)}</span>
-                                    <strong>${escapeHtml(item.status.replaceAll("_", " "))}</strong>
+                            (item) => {
+                                const detail = getTaskDetailDescriptor(groupKey, item);
+                                const interactive = Boolean(detail) && item.status === "completed";
+                                const dataset = interactive ? buildDetailDataset(detail) : "";
+                                return `
+                                <article class="task-chip status-${item.status} ${interactive ? "detail-trigger" : ""}"
+                                    ${interactive ? 'tabindex="0" role="button"' : ""}
+                                    ${dataset}
+                                    aria-label="${interactive ? `Open ${escapeHtml(item.label)} detail` : escapeHtml(item.label)}">
+                                    <span class="task-state-icon" aria-hidden="true"></span>
+                                    <span class="task-chip-label">${escapeHtml(item.label)}</span>
                                 </article>
-                            `,
+                            `;
+                            },
                         )
                         .join("")}
                 </div>
@@ -579,18 +1229,24 @@ function renderTeamStatusGrid() {
 
 function renderProgress() {
     const progress = state.run.status?.progress || { completed: 0, total: 0, percent: 0 };
-    elements.progressText.textContent = `${progress.completed} / ${progress.total}`;
-    elements.progressPercentText.textContent = `${progress.percent || 0}%`;
-    elements.progressFill.style.width = `${progress.percent || 0}%`;
-    elements.phaseText.textContent = state.run.status?.phase || "idle";
-    elements.currentAgentText.textContent = state.run.status?.current_agent || "Waiting";
-    elements.runStatusBadge.textContent = state.isBusy
+    const runStatus = state.isBusy
         ? "Running"
         : state.run.complete
         ? "Completed"
         : state.run.warnings.length
         ? "Attention"
         : "Idle";
+
+    elements.progressText.textContent = `${progress.completed} / ${progress.total}`;
+    elements.progressPercentText.textContent = `${progress.percent || 0}%`;
+    elements.progressFill.style.width = `${progress.percent || 0}%`;
+    elements.phaseText.textContent = state.run.status?.phase || "idle";
+    elements.currentAgentText.textContent = state.run.status?.current_agent || "Waiting";
+    elements.currentAgentText.title = elements.currentAgentText.textContent;
+    elements.runStatusBadge.textContent = runStatus;
+    elements.runStatusBadge.dataset.state = runStatus.toLowerCase();
+    elements.endpointText.textContent = formatApiBaseLabel(state.apiBaseUrl);
+    elements.endpointText.title = state.apiBaseUrl || "API unresolved";
     if (state.run.complete?.elapsed_seconds) {
         elements.elapsedText.textContent = `${state.run.complete.elapsed_seconds} s total`;
     } else {
@@ -599,46 +1255,159 @@ function renderProgress() {
 }
 
 function renderReportGrid() {
-    const selectedAnalysts = state.run.meta?.selected_analysts || state.config?.analysis_defaults?.selected_analysts || [];
-    const analystOptions = Object.fromEntries(
-        (state.config?.analysis_options?.analysts || []).map((item) => [item.value, item.label]),
-    );
+    const focus = getCurrentLivePanel();
+    const focusDataset = buildDetailDataset(focus.detail);
+    const focusInteractive = Boolean(focus.detail);
 
-    elements.reportGrid.innerHTML = selectedAnalysts
-        .map((key) => {
-            const report = REPORT_BY_ANALYST[key];
-            const content = state.run.sections[report.section] || "";
-            return `
-                <article class="report-card detail-trigger ${state.run.latestReportTitle === report.title ? "report-card-active" : ""}"
-                    data-detail-section="${escapeHtml(report.section)}"
-                    data-detail-title="${escapeHtml(analystOptions[key] || report.title)}"
-                    data-detail-subtitle="${escapeHtml(report.title)}"
-                    tabindex="0"
-                    role="button"
-                    aria-label="Open ${escapeHtml(report.title)} detail">
-                    <header>
-                        <h3>${escapeHtml(analystOptions[key] || report.title)}</h3>
-                        <span>${escapeHtml(report.title)}</span>
-                    </header>
-                    <div class="panel-preview markdown-preview ${content ? "" : "is-empty"}">
-                        ${formatBlock(content, "Report chưa có dữ liệu. Khi agent hoàn thành, phần này sẽ được cập nhật ngay.")}
+    const focusId = getFocusIdentity(focus);
+    let card = elements.reportGrid.querySelector(".live-focus-card");
+    if (!(card instanceof HTMLElement) || card.dataset.focusId !== focusId) {
+        elements.reportGrid.innerHTML = `
+            <div class="live-layout live-layout-single">
+                <article class="live-focus-card live-focus-card-expanded">
+                    <div class="live-focus-topline">
+                        <span class="live-chip"></span>
+                        <span class="live-focus-status"></span>
                     </div>
+                    <h3 class="live-focus-title"></h3>
+                    <div class="live-focus-body markdown-preview"></div>
                 </article>
-            `;
-        })
-        .join("");
+            </div>
+        `;
+        card = elements.reportGrid.querySelector(".live-focus-card");
+    }
 
-    elements.activeReportText.textContent = state.run.latestReportTitle || "No reports yet";
+    if (!(card instanceof HTMLElement)) {
+        return;
+    }
+
+    const liveChip = card.querySelector(".live-chip");
+    const liveStatus = card.querySelector(".live-focus-status");
+    const liveTitle = card.querySelector(".live-focus-title");
+    const liveBody = card.querySelector(".live-focus-body");
+    const tone = focus.tone || "idle";
+    const bodyMarkup = formatBlock(focus.content, focus.fallback);
+    const bodyFingerprint = `${focusId}:${focus.content || ""}:${focus.fallback}`;
+
+    card.dataset.focusId = focusId;
+    card.className = `live-focus-card live-focus-card-expanded live-tone-${tone}${focusInteractive ? " detail-trigger" : ""}`;
+    if (focusInteractive) {
+        card.setAttribute("tabindex", "0");
+        card.setAttribute("role", "button");
+        card.setAttribute("aria-label", `Open ${focus.title} detail`);
+    } else {
+        card.removeAttribute("tabindex");
+        card.removeAttribute("role");
+        card.setAttribute("aria-label", focus.title);
+    }
+    card.removeAttribute("data-detail-key");
+    card.removeAttribute("data-detail-section");
+    card.removeAttribute("data-detail-title");
+    card.removeAttribute("data-detail-subtitle");
+    if (focus.detail?.type === "report") {
+        card.dataset.detailSection = focus.detail.section;
+        card.dataset.detailTitle = focus.detail.title;
+        card.dataset.detailSubtitle = focus.detail.subtitle || focus.detail.title;
+    } else if (focus.detail?.key) {
+        card.dataset.detailKey = focus.detail.key;
+    }
+
+    if (liveChip instanceof HTMLElement) {
+        liveChip.className = `live-chip live-chip-${tone}`;
+        liveChip.textContent = focus.badge || "Live";
+    }
+    if (liveStatus instanceof HTMLElement) {
+        liveStatus.textContent = focus.subtitle || "";
+    }
+    if (liveTitle instanceof HTMLElement) {
+        liveTitle.textContent = focus.title;
+    }
+    if (liveBody instanceof HTMLElement && liveBody.dataset.fingerprint !== bodyFingerprint) {
+        preserveScrollPosition(liveBody, () => {
+            liveBody.innerHTML = bodyMarkup;
+            liveBody.classList.toggle("is-empty", !focus.content);
+            liveBody.dataset.fingerprint = bodyFingerprint;
+        });
+    }
+
+    elements.activeReportText.textContent = state.isBusy
+        ? "Live markdown stream"
+        : state.run.complete?.signal || "Awaiting live stream";
+}
+
+function renderOperationsRail() {
+    const feed = state.run.traceFeed
+        .filter((item) => item.phase === "tool_call" || item.phase === "tool_result")
+        .slice(0, TRACE_DISPLAY_LIMIT);
+    const latestUpdate = state.run.latestReportTitle || state.run.complete?.signal || feed[0]?.title || "No updates yet";
+    const totalToolEvents = state.run.traceFeed.filter((item) => item.phase === "tool_call" || item.phase === "tool_result").length;
+    const totalLogEvents = state.run.logEntries.length;
+
+    elements.opsStatusText.textContent = state.isBusy
+        ? `${feed.length} live updates`
+        : state.run.complete
+        ? "Run completed"
+        : "Watching stream";
+    elements.opsAgentText.textContent = totalToolEvents ? `${totalToolEvents} captured` : "No tool events";
+    elements.opsAgentText.title = elements.opsAgentText.textContent;
+    elements.opsPhaseText.textContent = totalLogEvents ? `${totalLogEvents} unique` : "No log events";
+    elements.opsPhaseText.title = elements.opsPhaseText.textContent;
+    elements.opsLatestText.textContent = latestUpdate;
+    elements.opsLatestText.title = latestUpdate;
+    elements.eventLogStatusText.textContent = state.run.logEntries.length
+        ? `${Math.min(state.run.logEntries.length, LOG_DISPLAY_LIMIT)} recent events`
+        : "Recent SSE events";
+    elements.eventLog.innerHTML = state.run.logEntries.length
+        ? state.run.logEntries.slice(0, LOG_DISPLAY_LIMIT)
+              .map(
+                  (item) => `
+                    <article class="event-log-item">
+                        <div class="event-log-topline">
+                            <strong class="event-log-label">${escapeHtml(item.label)}</strong>
+                            <span>${escapeHtml(item.timestamp)}</span>
+                        </div>
+                        <p class="event-log-message">${escapeHtml(item.summary)}</p>
+                    </article>
+                `,
+              )
+              .join("")
+        : '<div class="event-log-empty">No SSE events yet. Run analysis to start the backend stream.</div>';
+
+    elements.toolTraceList.innerHTML = feed.length
+        ? feed
+              .map(
+                  (item) => `
+                    <article class="tool-trace-item trace-tone-${escapeHtml(item.tone || "progress")} detail-trigger"
+                        tabindex="0"
+                        role="button"
+                        data-detail-trace-id="${escapeHtml(item.id || "")}"
+                        data-detail-title="${escapeHtml(`${item.agent || "Agent"} - ${formatTracePhaseLabel(item.phase)}`)}"
+                        data-detail-subtitle="${escapeHtml(item.title || "Trace detail") }"
+                        data-detail-mode="markdown">
+                        <div class="tool-trace-topline">
+                            <strong>${escapeHtml(item.agent || item.title || "Live update")}</strong>
+                            <span>${escapeHtml(item.timestamp || "")}</span>
+                        </div>
+                        <div class="tool-trace-meta">
+                            <span class="trace-phase-badge">${escapeHtml(formatTracePhaseLabel(item.phase))}</span>
+                            <span>${escapeHtml(item.title || "Live update")}</span>
+                        </div>
+                        <p>${escapeHtml(compactText(item.content || "", 320))}</p>
+                    </article>
+                `,
+              )
+              .join("")
+        : '<div class="tool-trace-empty">Agent tool calls and reasoning traces will appear here when the backend stream starts.</div>';
 }
 
 function renderResearchRoom() {
     const research = state.run.research || {};
-    setMarkdownPreview(elements.bullResearchPanel, research.bull_history, "Bull Researcher chưa phát biểu.");
-    setMarkdownPreview(elements.bearResearchPanel, research.bear_history, "Bear Researcher chưa phản biện.");
-    setMarkdownPreview(
+    setCompactPreview(elements.bullResearchPanel, research.bull_history, "The Bull Researcher has not responded yet.");
+    setCompactPreview(elements.bearResearchPanel, research.bear_history, "The Bear Researcher has not responded yet.");
+    setCompactPreview(
         elements.researchManagerPanel,
         state.run.sections.investment_plan || research.judge_decision,
-        "Research Manager chưa tổng hợp kế hoạch.",
+        "The Research Manager has not synthesized a plan yet.",
     );
 
     elements.researchStatusText.textContent = state.run.sections.investment_plan
@@ -649,18 +1418,18 @@ function renderResearchRoom() {
 }
 
 function renderTraderDesk() {
-    setMarkdownPreview(
+    setCompactPreview(
         elements.traderPlanPanel,
         state.run.sections.trader_investment_plan,
-        "Trader chưa đưa ra transaction proposal.",
+        "The Trader has not produced a transaction proposal yet.",
     );
 }
 
 function renderRiskRoom() {
     const risk = state.run.risk || {};
-    setMarkdownPreview(elements.aggressiveRiskPanel, risk.aggressive_history, "Aggressive Analyst chưa có lập luận.");
-    setMarkdownPreview(elements.conservativeRiskPanel, risk.conservative_history, "Conservative Analyst chưa có lập luận.");
-    setMarkdownPreview(elements.neutralRiskPanel, risk.neutral_history, "Neutral Analyst chưa có lập luận.");
+    setCompactPreview(elements.aggressiveRiskPanel, risk.aggressive_history, "The Aggressive Analyst has not responded yet.");
+    setCompactPreview(elements.conservativeRiskPanel, risk.conservative_history, "The Conservative Analyst has not responded yet.");
+    setCompactPreview(elements.neutralRiskPanel, risk.neutral_history, "The Neutral Analyst has not responded yet.");
     elements.riskStatusText.textContent = state.run.sections.final_trade_decision
         ? "Risk loop completed"
         : risk.history
@@ -669,8 +1438,8 @@ function renderRiskRoom() {
 }
 
 function renderFinalDecision() {
-    const decision = state.run.sections.final_trade_decision || "Portfolio Manager chưa chốt quyết định.";
-    setMarkdownPreview(elements.portfolioDecisionPanel, state.run.sections.final_trade_decision, decision);
+    const decision = state.run.sections.final_trade_decision || "The Portfolio Manager has not finalized a decision yet.";
+    setCompactPreview(elements.portfolioDecisionPanel, state.run.sections.final_trade_decision, decision, 200);
     elements.signalBadge.textContent = state.run.complete?.signal || "No signal";
 }
 
@@ -693,7 +1462,7 @@ function renderSmartNotes() {
     }
 
     if (notes.length === 0) {
-        notes.push("Mở Config để chỉnh symbol/date/language/analysts/depth rồi bấm Run analysis.");
+        notes.push("Open Config to adjust symbol, date, language, analysts, and depth before running analysis.");
     }
 
     elements.smartNotes.innerHTML = notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("");
@@ -706,35 +1475,74 @@ function getDetailContent(detail) {
     if (detail?.type === "report") {
         return {
             content: state.run.sections[detail.section] || "",
-            fallback: "Report chưa có dữ liệu. Khi agent hoàn thành, phần này sẽ được cập nhật ngay.",
+            fallback: "This report has no data yet. It will update when the agent completes.",
+        };
+    }
+
+    if (detail?.type === "trace") {
+        const entry = getTraceEntryById(detail.traceId);
+        return {
+            content: formatTraceDetailMarkdown(entry),
+            fallback: "This trace is no longer available in the live feed.",
         };
     }
 
     switch (detail?.key) {
         case "bullResearch":
-            return { content: research.bull_history || "", fallback: "Bull Researcher chưa phát biểu." };
+            return { content: research.bull_history || "", fallback: "The Bull Researcher has not responded yet." };
         case "bearResearch":
-            return { content: research.bear_history || "", fallback: "Bear Researcher chưa phản biện." };
+            return { content: research.bear_history || "", fallback: "The Bear Researcher has not responded yet." };
         case "researchManager":
             return {
                 content: state.run.sections.investment_plan || research.judge_decision || "",
-                fallback: "Research Manager chưa tổng hợp kế hoạch.",
+                fallback: "The Research Manager has not synthesized a plan yet.",
             };
         case "traderPlan":
-            return { content: state.run.sections.trader_investment_plan || "", fallback: "Trader chưa đưa ra transaction proposal." };
+            return { content: state.run.sections.trader_investment_plan || "", fallback: "The Trader has not produced a transaction proposal yet." };
         case "aggressiveRisk":
-            return { content: risk.aggressive_history || "", fallback: "Aggressive Analyst chưa có lập luận." };
+            return { content: risk.aggressive_history || "", fallback: "The Aggressive Analyst has not responded yet." };
         case "conservativeRisk":
-            return { content: risk.conservative_history || "", fallback: "Conservative Analyst chưa có lập luận." };
+            return { content: risk.conservative_history || "", fallback: "The Conservative Analyst has not responded yet." };
         case "neutralRisk":
-            return { content: risk.neutral_history || "", fallback: "Neutral Analyst chưa có lập luận." };
+            return { content: risk.neutral_history || "", fallback: "The Neutral Analyst has not responded yet." };
         case "portfolioDecision":
-            return { content: state.run.sections.final_trade_decision || "", fallback: "Portfolio Manager chưa chốt quyết định." };
+            return { content: state.run.sections.final_trade_decision || "", fallback: "The Portfolio Manager has not finalized a decision yet." };
         case "eventLog":
-            return { content: state.run.logs.join("\n"), fallback: "Chưa có SSE event nào." };
+            return { content: formatEventLogMarkdown(), fallback: "No SSE events yet." };
         default:
-            return { content: "", fallback: "Chưa có dữ liệu." };
+            return { content: "", fallback: "No data yet." };
     }
+}
+
+function formatTraceDetailMarkdown(entry) {
+    if (!entry) {
+        return "";
+    }
+
+    const content = String(entry.content || "").trim();
+    const looksStructured = /^[\[{]/.test(content) || /^analysis\s/.test(content);
+    const body = looksStructured ? `\`\`\`text\n${content}\n\`\`\`` : content;
+    return [
+        `**Agent:** ${entry.agent || "Agent"}`,
+        `**Phase:** ${formatTracePhaseLabel(entry.phase)}`,
+        `**Time:** ${entry.timestamp || "-"}`,
+        body,
+    ]
+        .filter(Boolean)
+        .join("\n\n");
+}
+
+function formatEventLogMarkdown(limit = 80) {
+    const entries = state.run.logEntries.slice(0, limit);
+    if (!entries.length) {
+        return "";
+    }
+
+    return entries
+        .map(
+            (entry) => `### ${entry.label}\n- **Time:** ${entry.timestamp}\n- **Summary:** ${entry.summary}`,
+        )
+        .join("\n\n");
 }
 
 function renderActiveDetail() {
@@ -743,9 +1551,9 @@ function renderActiveDetail() {
         return;
     }
 
-    const meta = detail.type === "report" ? detail : DETAIL_PANEL_META[detail.key] || {};
+    const meta = detail.type === "report" || detail.type === "trace" ? detail : DETAIL_PANEL_META[detail.key] || {};
     const { content, fallback } = getDetailContent(detail);
-    const mode = meta.mode || "markdown";
+    const mode = detail.mode || meta.mode || "markdown";
     elements.detailTitle.textContent = meta.title || "Panel Detail";
     elements.detailSubtitle.textContent = meta.subtitle || "Analysis detail";
     elements.detailBody.classList.toggle("plain-log", mode === "text");
@@ -783,6 +1591,18 @@ function openDetailFromTrigger(trigger) {
         return;
     }
 
+    const traceId = trigger.dataset.detailTraceId;
+    if (traceId) {
+        openDetailModal({
+            type: "trace",
+            traceId,
+            title: trigger.dataset.detailTitle || "Tool Detail",
+            subtitle: trigger.dataset.detailSubtitle || "Agent tool trace",
+            mode: trigger.dataset.detailMode || "markdown",
+        });
+        return;
+    }
+
     const key = trigger.dataset.detailKey;
     if (key) {
         openDetailModal({ key });
@@ -790,14 +1610,11 @@ function openDetailFromTrigger(trigger) {
 }
 
 function renderAll() {
-    renderSummaryChips();
+    renderTopNotice();
     renderProgress();
     renderTeamStatusGrid();
     renderReportGrid();
-    renderResearchRoom();
-    renderTraderDesk();
-    renderRiskRoom();
-    renderFinalDecision();
+    renderOperationsRail();
     renderSmartNotes();
     renderActiveDetail();
 }
@@ -857,13 +1674,26 @@ function handleServerEvent(event, data) {
         state.run = createEmptyRunState();
         state.run.meta = data;
         state.run.status = data.initial_status || null;
-        appendLog(event, data);
+        state.run.lastTrackedAgent = data.initial_status?.current_agent || null;
+        pushStreamFeed({
+            title: "Analysis initialized",
+            content: compactText(`${data.symbol} - ${data.asset_type} - ${data.research_depth} depth - ${data.model}`),
+            tone: "progress",
+        });
         renderAll();
         return;
     }
 
     if (event === "status_snapshot") {
         state.run.status = data;
+        if (data.current_agent && data.current_agent !== state.run.lastTrackedAgent) {
+            state.run.lastTrackedAgent = data.current_agent;
+            pushStreamFeed({
+                title: data.current_agent,
+                content: compactText(`${data.phase} phase started.`),
+                tone: "progress",
+            });
+        }
         renderAll();
         return;
     }
@@ -871,7 +1701,11 @@ function handleServerEvent(event, data) {
     if (event === "section_update") {
         state.run.sections[data.section] = data.content;
         state.run.latestReportTitle = data.title;
-        appendLog(`${data.agent}`, data.title);
+        pushStreamFeed({
+            title: data.title,
+            content: compactText(`${data.agent} completed. Click the task in Execution Board to review the full output.`),
+            tone: "completed",
+        });
         renderAll();
         return;
     }
@@ -882,21 +1716,48 @@ function handleServerEvent(event, data) {
         } else if (data.team === "risk") {
             state.run.risk = data.state || {};
         }
-        appendLog(`${data.team}-${data.speaker}`, "updated");
+        pushStreamFeed({
+            title: data.speaker,
+            content: compactText(data.content, 260),
+            tone: "live",
+        });
         renderAll();
         return;
     }
 
     if (event === "warning") {
         state.run.warnings.unshift(data.message || "Unknown warning");
-        appendLog(event, data.message || data);
+        pushStreamFeed({
+            title: "Warning",
+            content: compactText(data.message || data, 220),
+            tone: "warning",
+        });
         renderAll();
         return;
     }
 
     if (event === "analysis_log") {
-        appendLog(data.phase || event, data);
+        if (data.phase !== "heartbeat") {
+            pushStreamFeed({
+                title: data.phase || "stream",
+                content: compactText(data.message || JSON.stringify(data), 220),
+                tone: "progress",
+            });
+        }
+        appendLog(data.phase || event, data, { source: "backend" });
+        renderTopNotice();
         renderProgress();
+        renderReportGrid();
+        renderOperationsRail();
+        return;
+    }
+
+    if (event === "agent_trace") {
+        pushAgentTrace(data);
+        renderTopNotice();
+        renderProgress();
+        renderReportGrid();
+        renderOperationsRail();
         return;
     }
 
@@ -906,19 +1767,26 @@ function handleServerEvent(event, data) {
         state.run.research = data.research || state.run.research;
         state.run.risk = data.risk || state.run.risk;
         state.run.status = data.status || state.run.status;
-        appendLog(event, { signal: data.signal, elapsed_seconds: data.elapsed_seconds });
+        pushStreamFeed({
+            title: "Final Decision",
+            content: compactText(`${data.signal || "Completed"} - ${data.elapsed_seconds || 0}s`),
+            tone: "completed",
+        });
         renderAll();
         return;
     }
 
     if (event === "error") {
         state.run.warnings.unshift(data.error || "Unknown error");
-        appendLog(event, data.error || data);
+        pushStreamFeed({
+            title: "Error",
+            content: compactText(data.error || data, 220),
+            tone: "warning",
+        });
+        appendLog(event, { log_line: String(data.error || data) }, { source: "backend" });
         renderAll();
         throw new Error(data.error || "Unknown SSE error");
     }
-
-    appendLog(event, data);
 }
 
 function populateLanguageOptions(config) {
@@ -978,10 +1846,10 @@ function populateDepthOptions(config) {
     elements.depthOptions.innerHTML = config.analysis_options.research_depths
         .map(
             (depth) => `
-                <label class="depth-card">
+                <label class="depth-card" title="${escapeHtml(depth.description)}">
                     <input type="radio" name="researchDepth" value="${escapeHtml(depth.value)}" ${depth.value === current ? "checked" : ""}>
                     <span class="depth-title">${escapeHtml(depth.label)}</span>
-                    <small>${escapeHtml(depth.description)}</small>
+                    <small>${escapeHtml(compactText(depth.description, 52))}</small>
                 </label>
             `,
         )
@@ -1026,48 +1894,15 @@ function setAnalystSelection(values) {
 }
 
 async function loadConfig() {
-    const candidateBases = [
-        getQueryParamApiBaseUrl(),
-        getSameOriginApiBaseUrl(),
-        ...DEV_API_BASE_CANDIDATES,
-        state.apiBaseUrl,
-        getStoredApiBaseUrl(),
-        getRuntimeConfigApiBaseUrl(),
-    ].filter((value, index, array) => value && !isPlaceholderApiBaseUrl(value) && array.indexOf(value) === index);
-
-    let response = null;
-    let lastError = null;
-    for (const baseUrl of candidateBases) {
-        try {
-            const attempt = await fetch(buildApiUrlFromBase(baseUrl, "/api/config"));
-            if (!attempt.ok) {
-                lastError = new Error(`Failed to load config: ${attempt.status}`);
-                continue;
-            }
-            response = attempt;
-            state.apiBaseUrl = baseUrl || state.apiBaseUrl;
-            break;
-        } catch (error) {
-            lastError = error;
-        }
-    }
-
-    if (!response) {
-        throw lastError || new Error("Failed to load config");
-    }
-
-    const config = await response.json();
+    const config = normalizeFrontendConfig();
     state.config = config;
     state.apiBaseUrl = normalizeApiBaseUrl(config.api_base_url || state.apiBaseUrl);
-    storeApiBaseUrl(state.apiBaseUrl);
 
-    elements.endpointText.textContent = `${config.provider || "minimax"} • ${config.base_url || "Unknown"}`;
     elements.symbolInput.value = config.analysis_defaults.symbol;
     populateAssetTypeOptions(config);
     elements.analysisDateInput.value = config.analysis_defaults.analysis_date;
     populateLookbackPresets(config);
     elements.lookbackDaysInput.value = config.analysis_defaults.lookback_days;
-    elements.providerDisplayInput.value = `${config.provider || "minimax"} • ${config.base_url || "Unknown"}`;
     elements.modelInput.value = config.analysis_defaults.model;
     elements.checkpointToggle.checked = Boolean(config.analysis_defaults.checkpoint_enabled);
     populateLanguageOptions(config);
@@ -1076,11 +1911,6 @@ async function loadConfig() {
     bindConfigInputListeners();
     refreshConfigUi();
     renderAll();
-    appendLog("config", {
-        provider: config.provider,
-        base_url: config.base_url,
-        configured: config.configured,
-    });
 }
 
 async function runAnalysis() {

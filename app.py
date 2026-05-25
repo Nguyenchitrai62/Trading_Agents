@@ -1,5 +1,4 @@
 import asyncio
-import html
 import json
 import logging
 import os
@@ -9,12 +8,12 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import AsyncIterator, Callable, List, Literal
 
-from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field, field_validator
 
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -29,56 +28,25 @@ from tradingagents.graph.trading_graph import TradingAgentsGraph
 
 ROOT_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = ROOT_DIR / "FE"
+IMAGE_DIR = ROOT_DIR / "image"
 INDEX_FILE = ROOT_DIR / "index.html"
 CRYPTO_SUFFIXES = ("-USD", "-USDT", "-USDC", "-BTC", "-ETH")
 DEFAULT_ANALYSTS = ["market", "social", "news", "fundamentals"]
-ASSET_TYPE_OPTIONS = [
-    {
-        "value": "auto",
-        "label": "Auto detect",
-        "description": "Tự suy luận từ symbol khi có hậu tố rõ ràng như -USD hoặc -USDT.",
-    },
-    {
-        "value": "stock",
-        "label": "Stock",
-        "description": "Dùng pipeline phân tích cho cổ phiếu.",
-    },
-    {
-        "value": "crypto",
-        "label": "Crypto",
-        "description": "Dùng pipeline phân tích cho crypto và bỏ fundamentals khi cần.",
-    },
-]
-LOOKBACK_PRESET_OPTIONS = [7, 14, 30, 90, 180, 365]
-LANGUAGE_OPTIONS = [
-    "Vietnamese",
-    "English",
-    "Chinese",
-    "Japanese",
-    "Korean",
-    "Hindi",
-    "Spanish",
-    "Portuguese",
-    "French",
-    "German",
-    "Arabic",
-    "Russian",
-]
 RESEARCH_DEPTH_OPTIONS = {
     "quick": {
-        "label": "Nhanh",
+        "label": "Quick",
         "rounds": 1,
-        "description": "Quick research, ít vòng tranh luận và ra quyết định nhanh.",
+        "description": "Fast scan with minimal debate.",
     },
     "medium": {
-        "label": "Vừa",
+        "label": "Medium",
         "rounds": 3,
-        "description": "Cân bằng giữa tốc độ và độ sâu, gần với cấu hình mặc định của CLI.",
+        "description": "Balanced research depth for regular analysis.",
     },
     "deep": {
-        "label": "Chuyên sâu",
+        "label": "Deep",
         "rounds": 5,
-        "description": "Nhiều vòng debate và phản biện sâu hơn trước khi chốt quyết định.",
+        "description": "More debate rounds before the final decision.",
     },
 }
 SECTION_META = {
@@ -143,20 +111,6 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name, "").strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on"}
-
-
-def _env_csv(name: str) -> list[str]:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return []
-    return [item.strip() for item in raw.split(",") if item.strip()]
-
-
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -165,54 +119,14 @@ logging.basicConfig(
 logger = logging.getLogger("tradingagents.app")
 
 
-def _resolve_default_selected_analysts() -> list[str]:
-    selected = []
-    for analyst in _env_csv("ANALYSIS_DEFAULT_ANALYSTS"):
-        if analyst in DEFAULT_ANALYSTS and analyst not in selected:
-            selected.append(analyst)
-    return selected or DEFAULT_ANALYSTS.copy()
-
-
-def _resolve_default_research_depth() -> str:
-    configured = os.getenv("ANALYSIS_DEFAULT_RESEARCH_DEPTH", "").strip().lower()
-    if configured in RESEARCH_DEPTH_OPTIONS:
-        return configured
-    return "medium"
-
-
-def _resolve_default_asset_type() -> str:
-    configured = os.getenv("ANALYSIS_DEFAULT_ASSET_TYPE", "").strip().lower()
-    if configured in {"auto", "stock", "crypto"}:
-        return configured
-    return "auto"
-
-
 DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
-DEFAULT_MAX_TOKENS = _env_int("MINIMAX_MAX_TOKENS", 8192)
-DEFAULT_TEMPERATURE = _env_float("MINIMAX_TEMPERATURE", 1.0)
-DEFAULT_SYSTEM_PROMPT = (
-    os.getenv("MINIMAX_SYSTEM_PROMPT", "").strip()
-    or "You are a helpful assistant."
-)
-DEFAULT_ANALYSIS_SYMBOL = os.getenv("ANALYSIS_DEFAULT_SYMBOL", "").strip().upper() or "NVDA"
-DEFAULT_ANALYSIS_LOOKBACK_DAYS = _env_int(
-    "ANALYSIS_DEFAULT_LOOKBACK_DAYS",
-    DEFAULT_CONFIG.get("global_news_lookback_days", 7),
-)
-DEFAULT_ASSET_TYPE = _resolve_default_asset_type()
-DEFAULT_OUTPUT_LANGUAGE = (
-    os.getenv("ANALYSIS_DEFAULT_OUTPUT_LANGUAGE", "").strip()
-    or os.getenv("TRADINGAGENTS_OUTPUT_LANGUAGE", "").strip()
-    or "Vietnamese"
-)
-DEFAULT_RESEARCH_DEPTH = _resolve_default_research_depth()
-DEFAULT_SELECTED_ANALYSTS = _resolve_default_selected_analysts()
-DEFAULT_CHECKPOINT_ENABLED = _env_bool(
-    "ANALYSIS_DEFAULT_CHECKPOINT_ENABLED",
-    bool(DEFAULT_CONFIG.get("checkpoint_enabled", False)),
-)
+DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
+DEFAULT_ASSET_TYPE = "auto"
+DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
+DEFAULT_RESEARCH_DEPTH = "medium"
+DEFAULT_SELECTED_ANALYSTS = DEFAULT_ANALYSTS.copy()
+DEFAULT_CHECKPOINT_ENABLED = False
 STREAM_HEARTBEAT_SECONDS = max(1.0, _env_float("ANALYSIS_STREAM_HEARTBEAT_SECONDS", 2.0))
-BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "").strip().rstrip("/")
 CORS_ALLOW_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")
@@ -231,20 +145,8 @@ app.add_middleware(
 )
 
 app.mount("/FE", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
-
-
-class Message(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str = Field(min_length=1)
-
-
-class ChatRequest(BaseModel):
-    messages: List[Message] = Field(min_length=1)
-    system_prompt: str | None = None
-    model: str = DEFAULT_MODEL
-    max_tokens: int = Field(default=DEFAULT_MAX_TOKENS, gt=0, le=128000)
-    temperature: float = Field(default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0)
-    stream: bool = True
+if IMAGE_DIR.exists():
+    app.mount("/image", StaticFiles(directory=str(IMAGE_DIR)), name="image")
 
 
 class AnalysisRequest(BaseModel):
@@ -327,19 +229,6 @@ def resolve_minimax_settings() -> dict:
     }
 
 
-def get_minimax_client() -> AsyncAnthropic:
-    settings = resolve_minimax_settings()
-    if not settings["configured"]:
-        raise HTTPException(
-            status_code=500,
-            detail="Set MINIMAX_API_KEY or MINIMAX_CN_API_KEY in .env before calling the API.",
-        )
-    return AsyncAnthropic(
-        api_key=settings["api_key"],
-        base_url=settings["base_url"],
-    )
-
-
 def normalize_ticker_symbol(ticker: str) -> str:
     return ticker.strip().upper()
 
@@ -357,104 +246,8 @@ def filter_analysts_for_asset_type(selected_analysts: List[str], asset_type: str
     return [analyst for analyst in selected_analysts if analyst != "fundamentals"]
 
 
-def build_anthropic_messages(request: ChatRequest) -> tuple[str, list[dict]]:
-    system_parts = []
-    if request.system_prompt and request.system_prompt.strip():
-        system_parts.append(request.system_prompt.strip())
-
-    anthropic_messages: list[dict] = []
-    for message in request.messages:
-        content = message.content.strip()
-        if not content:
-            continue
-        if message.role == "system":
-            system_parts.append(content)
-            continue
-        anthropic_messages.append(
-            {
-                "role": message.role,
-                "content": [{"type": "text", "text": content}],
-            }
-        )
-
-    if not anthropic_messages:
-        raise HTTPException(
-            status_code=400,
-            detail="At least one user or assistant message is required.",
-        )
-
-    system_prompt = "\n\n".join(system_parts) if system_parts else DEFAULT_SYSTEM_PROMPT
-    return system_prompt, anthropic_messages
-
-
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def resolve_backend_base_url(request: Request | None = None) -> str:
-    if BACKEND_BASE_URL:
-        return BACKEND_BASE_URL
-    if request is None:
-        return ""
-    return str(request.base_url).rstrip("/")
-
-
-def render_frontend_html(request: Request) -> str:
-    api_base_url = html.escape(resolve_backend_base_url(request), quote=True)
-    return INDEX_FILE.read_text(encoding="utf-8").replace(
-        "__BACKEND_BASE_URL__",
-        api_base_url,
-    )
-
-
-def frontend_config_payload(request: Request | None = None) -> dict:
-    settings = resolve_minimax_settings()
-    return {
-        "configured": settings["configured"],
-        "provider": settings["provider"],
-        "base_url": settings["base_url"],
-        "api_base_url": resolve_backend_base_url(request),
-        "default_model": DEFAULT_MODEL,
-        "default_max_tokens": DEFAULT_MAX_TOKENS,
-        "default_temperature": DEFAULT_TEMPERATURE,
-        "default_system_prompt": DEFAULT_SYSTEM_PROMPT,
-        "analysis_defaults": {
-            "symbol": DEFAULT_ANALYSIS_SYMBOL,
-            "asset_type": DEFAULT_ASSET_TYPE,
-            "analysis_date": date.today().isoformat(),
-            "lookback_days": DEFAULT_ANALYSIS_LOOKBACK_DAYS,
-            "output_language": DEFAULT_OUTPUT_LANGUAGE,
-            "selected_analysts": DEFAULT_SELECTED_ANALYSTS.copy(),
-            "research_depth": DEFAULT_RESEARCH_DEPTH,
-            "model": DEFAULT_MODEL,
-            "checkpoint_enabled": DEFAULT_CHECKPOINT_ENABLED,
-        },
-        "analysis_options": {
-            "analysts": [
-                {"value": key, "label": ANALYST_NODE_SPECS[key].agent_node}
-                for key in DEFAULT_ANALYSTS
-            ],
-            "asset_types": ASSET_TYPE_OPTIONS,
-            "lookback_presets": [
-                {
-                    "value": str(days),
-                    "label": f"{days} days",
-                    "days": days,
-                }
-                for days in LOOKBACK_PRESET_OPTIONS
-            ],
-            "output_languages": LANGUAGE_OPTIONS,
-            "research_depths": [
-                {
-                    "value": key,
-                    "label": value["label"],
-                    "rounds": value["rounds"],
-                    "description": value["description"],
-                }
-                for key, value in RESEARCH_DEPTH_OPTIONS.items()
-            ],
-        },
-    }
 
 
 def build_analysis_config(request: AnalysisRequest, settings: dict) -> dict:
@@ -504,6 +297,108 @@ def extract_runtime_snapshot(state: dict) -> dict:
             "count": risk_state.get("count", 0) or 0,
         },
     }
+
+
+def _normalize_message_content(content: object) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text") or block.get("content") or block.get("thinking")
+                if text:
+                    parts.append(str(text).strip())
+            elif block:
+                parts.append(str(block).strip())
+        return "\n".join(part for part in parts if part).strip()
+    if content is None:
+        return ""
+    return str(content).strip()
+
+
+def _tool_call_summary(tool_call: dict) -> str:
+    name = str(tool_call.get("name") or "tool")
+    args = tool_call.get("args") or {}
+    if not args:
+        return name
+    if isinstance(args, dict):
+        items = ", ".join(f"{key}={value}" for key, value in list(args.items())[:4])
+        return f"{name}({items})"
+    return f"{name}({args})"
+
+
+def _build_message_signature(message: object) -> str:
+    if hasattr(message, "id") and getattr(message, "id"):
+        return str(getattr(message, "id"))
+    return json.dumps(
+        {
+            "type": message.__class__.__name__,
+            "name": getattr(message, "name", ""),
+            "content": _normalize_message_content(getattr(message, "content", "")),
+            "tool_calls": getattr(message, "tool_calls", []),
+            "tool_call_id": getattr(message, "tool_call_id", ""),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+
+
+def emit_message_progress_updates(
+    messages: list[object],
+    current_agent: str | None,
+    seen_signatures: set[str],
+    emit: Callable[[str, dict], None],
+) -> None:
+    for message in messages:
+        signature = _build_message_signature(message)
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+
+        if isinstance(message, HumanMessage):
+            continue
+
+        if isinstance(message, ToolMessage):
+            tool_name = getattr(message, "name", None) or getattr(message, "tool_call_id", None) or "tool"
+            content = _normalize_message_content(getattr(message, "content", ""))
+            if not content:
+                continue
+            emit(
+                "agent_trace",
+                {
+                    "agent": current_agent or "Tool Runner",
+                    "phase": "tool_result",
+                    "title": str(tool_name),
+                    "content": content,
+                },
+            )
+            continue
+
+        if isinstance(message, AIMessage):
+            tool_calls = getattr(message, "tool_calls", []) or []
+            if tool_calls:
+                emit(
+                    "agent_trace",
+                    {
+                        "agent": current_agent or "Analyst",
+                        "phase": "tool_call",
+                        "title": current_agent or "Tool call",
+                        "content": "\n".join(_tool_call_summary(tool_call) for tool_call in tool_calls),
+                    },
+                )
+            content = _normalize_message_content(getattr(message, "content", ""))
+            if content:
+                emit(
+                    "agent_trace",
+                    {
+                        "agent": current_agent or "Analyst",
+                        "phase": "analysis",
+                        "title": current_agent or "Analysis",
+                        "content": content,
+                    },
+                )
 
 
 def detect_current_agent(previous: dict, current: dict) -> str | None:
@@ -759,6 +654,11 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
             "elapsed_seconds": round(time.time() - run_started_at, 2),
             **extra,
         }
+        extra_json = json.dumps(extra, ensure_ascii=False, default=str) if extra else "{}"
+        payload["log_line"] = (
+            f"analysis symbol={symbol} phase={phase} elapsed={payload['elapsed_seconds']}s "
+            f"message={message} extra={extra_json}"
+        )
         log_method = logger.warning if level == "warning" else logger.info
         log_method(
             "analysis symbol=%s phase=%s elapsed=%ss message=%s extra=%s",
@@ -857,6 +757,7 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
     final_state: dict = {}
     previous_snapshot = initial_snapshot
     previous_status = initial_status
+    seen_message_signatures: set[str] = set()
     try:
         emit_analysis_log("Loading past context from memory log.", "memory")
         past_context = graph.memory_log.get_past_context(symbol)
@@ -888,6 +789,12 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
                 current_agent=current_agent,
                 updated_keys=sorted(chunk.keys()),
                 progress=current_status["progress"],
+            )
+            emit_message_progress_updates(
+                final_state.get("messages", []),
+                current_agent,
+                seen_message_signatures,
+                emit,
             )
             emit_snapshot_updates(previous_snapshot, current_snapshot, emit)
             if current_status != previous_status:
@@ -962,13 +869,19 @@ async def generate_analysis_stream(request: AnalysisRequest) -> AsyncIterator[st
             except asyncio.TimeoutError:
                 if worker_task.done():
                     break
+                heartbeat_elapsed = round(time.time() - stream_started_at, 2)
                 yield _sse(
                     "analysis_log",
                     {
                         "level": "debug",
                         "phase": "heartbeat",
                         "message": "Backend is still processing the active graph node.",
-                        "elapsed_seconds": round(time.time() - stream_started_at, 2),
+                        "elapsed_seconds": heartbeat_elapsed,
+                        "log_line": (
+                            "analysis symbol="
+                            f"{request.symbol} phase=heartbeat elapsed={heartbeat_elapsed}s "
+                            "message=Backend is still processing the active graph node. extra={}"
+                        ),
                     },
                 )
                 continue
@@ -980,12 +893,15 @@ async def generate_analysis_stream(request: AnalysisRequest) -> AsyncIterator[st
 
 
 @app.get("/", response_class=HTMLResponse)
-async def serve_index(request: Request) -> HTMLResponse:
-    return HTMLResponse(render_frontend_html(request))
+async def serve_index() -> HTMLResponse:
+    return HTMLResponse(INDEX_FILE.read_text(encoding="utf-8"))
 
 
 @app.get("/favicon.ico")
 async def favicon() -> Response:
+    logo_file = IMAGE_DIR / "LOGO.png"
+    if logo_file.exists():
+        return FileResponse(logo_file, media_type="image/png")
     return Response(status_code=204)
 
 
@@ -996,13 +912,8 @@ async def health_check() -> dict:
         "status": "healthy",
         "configured": settings["configured"],
         "provider": settings["provider"],
-        "modes": ["chat", "analysis"],
+        "modes": ["analysis"],
     }
-
-
-@app.get("/api/config")
-async def get_frontend_config(request: Request) -> dict:
-    return frontend_config_payload(request)
 
 
 @app.post("/api/analyze")
@@ -1016,164 +927,6 @@ async def analyze_trading_agents(request: AnalysisRequest):
             "X-Accel-Buffering": "no",
         },
     )
-
-
-@app.post("/api/chat")
-async def chat_completion(request: ChatRequest):
-    if request.stream:
-        return StreamingResponse(
-            generate_chat_stream(request),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-    return await generate_non_streaming(request)
-
-
-async def generate_chat_stream(request: ChatRequest) -> AsyncIterator[str]:
-    client = get_minimax_client()
-    system_prompt, anthropic_messages = build_anthropic_messages(request)
-    start_time = time.time()
-    text_buffer = ""
-    thinking_buffer = ""
-    first_token_time = None
-    output_tokens = 0
-    completed = False
-
-    yield _sse(
-        "status",
-        {
-            "phase": "started",
-            "model": request.model,
-            "provider": resolve_minimax_settings()["provider"],
-        },
-    )
-
-    try:
-        stream = await client.messages.create(
-            model=request.model,
-            max_tokens=request.max_tokens,
-            temperature=request.temperature,
-            system=system_prompt,
-            messages=anthropic_messages,
-            stream=True,
-        )
-
-        async for chunk in stream:
-            chunk_type = getattr(chunk, "type", None)
-            if chunk_type is None:
-                continue
-
-            if chunk_type == "message_delta":
-                usage = getattr(chunk, "usage", None)
-                if usage:
-                    output_tokens = getattr(usage, "output_tokens", 0) or output_tokens
-
-            if chunk_type == "content_block_delta":
-                if first_token_time is None:
-                    first_token_time = time.time()
-
-                delta = getattr(chunk, "delta", None)
-                if delta is None:
-                    continue
-
-                delta_type = getattr(delta, "type", None)
-                if delta_type is None and isinstance(delta, dict):
-                    delta_type = delta.get("type")
-
-                if delta_type == "thinking_delta":
-                    thinking = getattr(delta, "thinking", None)
-                    if thinking is None and isinstance(delta, dict):
-                        thinking = delta.get("thinking")
-                    if thinking:
-                        thinking_buffer += thinking
-                        yield _sse("thinking", {"content": thinking})
-
-                if delta_type == "text_delta":
-                    text = getattr(delta, "text", None)
-                    if text is None and isinstance(delta, dict):
-                        text = delta.get("text")
-                    if text:
-                        text_buffer += text
-                        yield _sse("content", {"content": text})
-
-            if chunk_type == "message_stop":
-                completed = True
-                break
-
-            await asyncio.sleep(0)
-
-        end_time = time.time()
-        total_time = end_time - start_time
-        generation_time = end_time - first_token_time if first_token_time else total_time
-        estimated_tokens = len(text_buffer) // 4
-        final_tokens = output_tokens or estimated_tokens
-        tokens_per_second = final_tokens / generation_time if generation_time > 0 else 0
-
-        yield _sse(
-            "complete",
-            {
-                "text": text_buffer,
-                "thinking": thinking_buffer,
-                "tokens": final_tokens,
-                "tokens_estimated": output_tokens == 0,
-                "tokens_per_second": round(tokens_per_second, 2),
-                "generation_time": round(generation_time, 2),
-                "total_time": round(total_time, 2),
-                "completed": completed,
-            },
-        )
-    except HTTPException as exc:
-        yield _sse("error", {"error": exc.detail})
-    except Exception as exc:
-        yield _sse("error", {"error": str(exc)})
-
-
-async def generate_non_streaming(request: ChatRequest) -> dict:
-    client = get_minimax_client()
-    system_prompt, anthropic_messages = build_anthropic_messages(request)
-
-    try:
-        response = await client.messages.create(
-            model=request.model,
-            max_tokens=request.max_tokens,
-            temperature=request.temperature,
-            system=system_prompt,
-            messages=anthropic_messages,
-            stream=False,
-        )
-
-        text = ""
-        thinking = ""
-        for content_block in response.content:
-            if content_block.type == "text":
-                text += content_block.text
-            if content_block.type == "thinking":
-                thinking += content_block.thinking
-
-        return {
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": text,
-                    }
-                }
-            ],
-            "thinking": thinking,
-            "usage": {
-                "prompt_tokens": response.usage.input_tokens,
-                "completion_tokens": response.usage.output_tokens,
-                "total_tokens": response.usage.input_tokens + response.usage.output_tokens,
-            },
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":

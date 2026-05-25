@@ -2,6 +2,7 @@
 # does not unexpectedly miss libraries; explicit runtime imports that were
 # previously only transitive are also included.
 anthropic>=0.57.0
+ccxt>=4.4.90
 fastapi>=0.115.0
 langchain-core>=0.3.81
 backtrader>=1.9.78.123
