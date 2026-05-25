@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="tradingagents-api-base-url" content="__BACKEND_BASE_URL__">
     <title>TradingAgents Analysis Deck</title>
-    <link rel="stylesheet" href="/FE/styles.css">
+    <link rel="stylesheet" href="./FE/styles.css">
+    <script src="./FE/runtime-config.js"></script>
 </head>
 <body>
     <div class="backdrop"></div>
@@ -99,22 +101,22 @@
                     <span id="researchStatusText" class="window-status">Awaiting analyst reports</span>
                 </div>
                 <div class="panel-grid three-up">
-                    <article class="mini-window">
+                    <article class="mini-window detail-trigger" data-detail-key="bullResearch" tabindex="0" role="button" aria-label="Open Bull Researcher detail">
                         <h3>Bull Researcher</h3>
-                        <pre id="bullResearchPanel" class="panel-pre"></pre>
+                        <div id="bullResearchPanel" class="panel-preview markdown-preview"></div>
                     </article>
-                    <article class="mini-window">
+                    <article class="mini-window detail-trigger" data-detail-key="bearResearch" tabindex="0" role="button" aria-label="Open Bear Researcher detail">
                         <h3>Bear Researcher</h3>
-                        <pre id="bearResearchPanel" class="panel-pre"></pre>
+                        <div id="bearResearchPanel" class="panel-preview markdown-preview"></div>
                     </article>
-                    <article class="mini-window accent-window">
+                    <article class="mini-window accent-window detail-trigger" data-detail-key="researchManager" tabindex="0" role="button" aria-label="Open Research Manager detail">
                         <h3>Research Manager</h3>
-                        <pre id="researchManagerPanel" class="panel-pre"></pre>
+                        <div id="researchManagerPanel" class="panel-preview markdown-preview"></div>
                     </article>
                 </div>
             </section>
 
-            <section class="window trader-window">
+            <section class="window trader-window detail-trigger" data-detail-key="traderPlan" tabindex="0" role="button" aria-label="Open Trader Desk detail">
                 <div class="window-header">
                     <div>
                         <p class="window-kicker">Trading team</p>
@@ -122,7 +124,7 @@
                     </div>
                     <span class="window-status">Transaction proposal</span>
                 </div>
-                <pre id="traderPlanPanel" class="panel-pre trader-pre"></pre>
+                <div id="traderPlanPanel" class="panel-preview markdown-preview trader-pre"></div>
             </section>
 
             <section class="window risk-window">
@@ -134,22 +136,22 @@
                     <span id="riskStatusText" class="window-status">Waiting for trader</span>
                 </div>
                 <div class="panel-grid risk-grid">
-                    <article class="mini-window">
+                    <article class="mini-window detail-trigger" data-detail-key="aggressiveRisk" tabindex="0" role="button" aria-label="Open Aggressive Analyst detail">
                         <h3>Aggressive</h3>
-                        <pre id="aggressiveRiskPanel" class="panel-pre"></pre>
+                        <div id="aggressiveRiskPanel" class="panel-preview markdown-preview"></div>
                     </article>
-                    <article class="mini-window">
+                    <article class="mini-window detail-trigger" data-detail-key="conservativeRisk" tabindex="0" role="button" aria-label="Open Conservative Analyst detail">
                         <h3>Conservative</h3>
-                        <pre id="conservativeRiskPanel" class="panel-pre"></pre>
+                        <div id="conservativeRiskPanel" class="panel-preview markdown-preview"></div>
                     </article>
-                    <article class="mini-window">
+                    <article class="mini-window detail-trigger" data-detail-key="neutralRisk" tabindex="0" role="button" aria-label="Open Neutral Analyst detail">
                         <h3>Neutral</h3>
-                        <pre id="neutralRiskPanel" class="panel-pre"></pre>
+                        <div id="neutralRiskPanel" class="panel-preview markdown-preview"></div>
                     </article>
                 </div>
             </section>
 
-            <section class="window decision-window">
+            <section class="window decision-window detail-trigger" data-detail-key="portfolioDecision" tabindex="0" role="button" aria-label="Open Final Decision detail">
                 <div class="window-header">
                     <div>
                         <p class="window-kicker">Portfolio management</p>
@@ -157,10 +159,10 @@
                     </div>
                     <span id="signalBadge" class="signal-badge">No signal</span>
                 </div>
-                <pre id="portfolioDecisionPanel" class="panel-pre decision-pre"></pre>
+                <div id="portfolioDecisionPanel" class="panel-preview markdown-preview decision-pre"></div>
             </section>
 
-            <section class="window log-window">
+            <section class="window log-window detail-trigger" data-detail-key="eventLog" tabindex="0" role="button" aria-label="Open Event Log detail">
                 <div class="window-header">
                     <div>
                         <p class="window-kicker">Timeline</p>
@@ -168,7 +170,7 @@
                     </div>
                     <span class="window-status">SSE events</span>
                 </div>
-                <pre id="eventLog" class="event-log"></pre>
+                <div id="eventLog" class="event-log"></div>
             </section>
         </main>
     </div>
@@ -185,14 +187,30 @@
             </div>
 
             <form id="configForm" class="config-form">
-                <div class="config-grid two-up">
+                <div class="config-grid three-up">
                     <label class="field">
                         <span>Symbol</span>
                         <input id="symbolInput" type="text" placeholder="NVDA">
                     </label>
                     <label class="field">
+                        <span>Asset type</span>
+                        <select id="assetTypeSelect"></select>
+                        <small class="field-note">Chọn explicit nếu symbol mơ hồ như BTC hoặc ETH.</small>
+                    </label>
+                    <label class="field">
                         <span>Analysis date</span>
                         <input id="analysisDateInput" type="date">
+                    </label>
+                </div>
+
+                <div class="config-grid two-up">
+                    <label class="field">
+                        <span>Analysis window</span>
+                        <select id="lookbackPresetSelect"></select>
+                    </label>
+                    <label class="field">
+                        <span>Lookback window (days)</span>
+                        <input id="lookbackDaysInput" type="number" min="1" max="90" step="1">
                     </label>
                 </div>
 
@@ -207,7 +225,11 @@
                     </label>
                 </div>
 
-                <div class="config-grid two-up">
+                <div class="config-grid three-up">
+                    <label class="field field-readonly">
+                        <span>Provider</span>
+                        <input id="providerDisplayInput" type="text" readonly>
+                    </label>
                     <label class="field">
                         <span>LLM model</span>
                         <input id="modelInput" type="text" placeholder="MiniMax-M2.7">
@@ -219,9 +241,16 @@
                 </div>
 
                 <section class="config-section">
-                    <div class="config-section-header">
-                        <h3>Analyst team</h3>
-                        <p>Chọn những analyst sẽ tham gia vòng phân tích.</p>
+                    <div class="config-section-header config-section-header-split">
+                        <div>
+                            <h3>Analyst team</h3>
+                            <p>Chọn những analyst sẽ tham gia vòng phân tích.</p>
+                        </div>
+                        <div class="section-actions">
+                            <button id="selectAllAnalystsButton" type="button" class="text-button">All</button>
+                            <button id="selectCoreAnalystsButton" type="button" class="text-button">Core</button>
+                            <button id="clearAnalystsButton" type="button" class="text-button">Clear</button>
+                        </div>
                     </div>
                     <div id="analystOptions" class="checkbox-grid"></div>
                 </section>
@@ -234,6 +263,14 @@
                     <div id="depthOptions" class="depth-grid"></div>
                 </section>
 
+                <section class="config-section">
+                    <div class="config-section-header">
+                        <h3>Config preview</h3>
+                        <p>Tóm tắt các tham số sẽ được gửi xuống backend khi chạy.</p>
+                    </div>
+                    <div id="configPreview" class="config-preview"></div>
+                </section>
+
                 <div class="modal-actions">
                     <button id="saveConfigButton" type="button" class="button secondary">Apply</button>
                     <button id="runFromModalButton" type="submit" class="button primary">Apply & Run</button>
@@ -242,6 +279,20 @@
         </div>
     </div>
 
-    <script type="module" src="/FE/app.js"></script>
+    <div id="detailModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-backdrop" data-close-detail="true"></div>
+        <div class="modal-card detail-modal-card" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+            <div class="modal-header">
+                <div>
+                    <p id="detailSubtitle" class="window-kicker">Analysis detail</p>
+                    <h2 id="detailTitle">Panel Detail</h2>
+                </div>
+                <button id="closeDetailButton" class="icon-button" type="button" aria-label="Close detail">×</button>
+            </div>
+            <div id="detailBody" class="detail-body markdown-preview"></div>
+        </div>
+    </div>
+
+    <script type="module" src="./FE/app.js"></script>
 </body>
 </html>

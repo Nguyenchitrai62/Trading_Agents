@@ -1,5 +1,7 @@
 import asyncio
+import html
 import json
+import logging
 import os
 import time
 from copy import deepcopy
@@ -9,9 +11,9 @@ from typing import AsyncIterator, Callable, List, Literal
 
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -30,7 +32,26 @@ FRONTEND_DIR = ROOT_DIR / "FE"
 INDEX_FILE = ROOT_DIR / "index.html"
 CRYPTO_SUFFIXES = ("-USD", "-USDT", "-USDC", "-BTC", "-ETH")
 DEFAULT_ANALYSTS = ["market", "social", "news", "fundamentals"]
+ASSET_TYPE_OPTIONS = [
+    {
+        "value": "auto",
+        "label": "Auto detect",
+        "description": "Tự suy luận từ symbol khi có hậu tố rõ ràng như -USD hoặc -USDT.",
+    },
+    {
+        "value": "stock",
+        "label": "Stock",
+        "description": "Dùng pipeline phân tích cho cổ phiếu.",
+    },
+    {
+        "value": "crypto",
+        "label": "Crypto",
+        "description": "Dùng pipeline phân tích cho crypto và bỏ fundamentals khi cần.",
+    },
+]
+LOOKBACK_PRESET_OPTIONS = [7, 14, 30, 90, 180, 365]
 LANGUAGE_OPTIONS = [
+    "Vietnamese",
     "English",
     "Chinese",
     "Japanese",
@@ -122,6 +143,50 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _env_csv(name: str) -> list[str]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+)
+logger = logging.getLogger("tradingagents.app")
+
+
+def _resolve_default_selected_analysts() -> list[str]:
+    selected = []
+    for analyst in _env_csv("ANALYSIS_DEFAULT_ANALYSTS"):
+        if analyst in DEFAULT_ANALYSTS and analyst not in selected:
+            selected.append(analyst)
+    return selected or DEFAULT_ANALYSTS.copy()
+
+
+def _resolve_default_research_depth() -> str:
+    configured = os.getenv("ANALYSIS_DEFAULT_RESEARCH_DEPTH", "").strip().lower()
+    if configured in RESEARCH_DEPTH_OPTIONS:
+        return configured
+    return "medium"
+
+
+def _resolve_default_asset_type() -> str:
+    configured = os.getenv("ANALYSIS_DEFAULT_ASSET_TYPE", "").strip().lower()
+    if configured in {"auto", "stock", "crypto"}:
+        return configured
+    return "auto"
+
+
 DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
 DEFAULT_MAX_TOKENS = _env_int("MINIMAX_MAX_TOKENS", 8192)
 DEFAULT_TEMPERATURE = _env_float("MINIMAX_TEMPERATURE", 1.0)
@@ -129,6 +194,25 @@ DEFAULT_SYSTEM_PROMPT = (
     os.getenv("MINIMAX_SYSTEM_PROMPT", "").strip()
     or "You are a helpful assistant."
 )
+DEFAULT_ANALYSIS_SYMBOL = os.getenv("ANALYSIS_DEFAULT_SYMBOL", "").strip().upper() or "NVDA"
+DEFAULT_ANALYSIS_LOOKBACK_DAYS = _env_int(
+    "ANALYSIS_DEFAULT_LOOKBACK_DAYS",
+    DEFAULT_CONFIG.get("global_news_lookback_days", 7),
+)
+DEFAULT_ASSET_TYPE = _resolve_default_asset_type()
+DEFAULT_OUTPUT_LANGUAGE = (
+    os.getenv("ANALYSIS_DEFAULT_OUTPUT_LANGUAGE", "").strip()
+    or os.getenv("TRADINGAGENTS_OUTPUT_LANGUAGE", "").strip()
+    or "Vietnamese"
+)
+DEFAULT_RESEARCH_DEPTH = _resolve_default_research_depth()
+DEFAULT_SELECTED_ANALYSTS = _resolve_default_selected_analysts()
+DEFAULT_CHECKPOINT_ENABLED = _env_bool(
+    "ANALYSIS_DEFAULT_CHECKPOINT_ENABLED",
+    bool(DEFAULT_CONFIG.get("checkpoint_enabled", False)),
+)
+STREAM_HEARTBEAT_SECONDS = max(1.0, _env_float("ANALYSIS_STREAM_HEARTBEAT_SECONDS", 2.0))
+BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "").strip().rstrip("/")
 CORS_ALLOW_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")
@@ -165,15 +249,17 @@ class ChatRequest(BaseModel):
 
 class AnalysisRequest(BaseModel):
     symbol: str = Field(min_length=1)
+    asset_type: Literal["auto", "stock", "crypto"] = DEFAULT_ASSET_TYPE
     analysis_date: str = Field(default_factory=lambda: date.today().isoformat())
-    output_language: str = Field(default=DEFAULT_CONFIG.get("output_language", "English"))
+    lookback_days: int = Field(default=DEFAULT_ANALYSIS_LOOKBACK_DAYS, ge=1, le=90)
+    output_language: str = Field(default=DEFAULT_OUTPUT_LANGUAGE)
     selected_analysts: List[Literal["market", "social", "news", "fundamentals"]] = Field(
-        default_factory=lambda: DEFAULT_ANALYSTS.copy(),
+        default_factory=lambda: DEFAULT_SELECTED_ANALYSTS.copy(),
         min_length=1,
     )
-    research_depth: Literal["quick", "medium", "deep"] = "medium"
+    research_depth: Literal["quick", "medium", "deep"] = DEFAULT_RESEARCH_DEPTH
     model: str = Field(default=DEFAULT_MODEL, min_length=1)
-    checkpoint_enabled: bool = False
+    checkpoint_enabled: bool = DEFAULT_CHECKPOINT_ENABLED
 
     @field_validator("symbol")
     @classmethod
@@ -305,29 +391,57 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def frontend_config_payload() -> dict:
+def resolve_backend_base_url(request: Request | None = None) -> str:
+    if BACKEND_BASE_URL:
+        return BACKEND_BASE_URL
+    if request is None:
+        return ""
+    return str(request.base_url).rstrip("/")
+
+
+def render_frontend_html(request: Request) -> str:
+    api_base_url = html.escape(resolve_backend_base_url(request), quote=True)
+    return INDEX_FILE.read_text(encoding="utf-8").replace(
+        "__BACKEND_BASE_URL__",
+        api_base_url,
+    )
+
+
+def frontend_config_payload(request: Request | None = None) -> dict:
     settings = resolve_minimax_settings()
     return {
         "configured": settings["configured"],
         "provider": settings["provider"],
         "base_url": settings["base_url"],
+        "api_base_url": resolve_backend_base_url(request),
         "default_model": DEFAULT_MODEL,
         "default_max_tokens": DEFAULT_MAX_TOKENS,
         "default_temperature": DEFAULT_TEMPERATURE,
         "default_system_prompt": DEFAULT_SYSTEM_PROMPT,
         "analysis_defaults": {
-            "symbol": "NVDA",
+            "symbol": DEFAULT_ANALYSIS_SYMBOL,
+            "asset_type": DEFAULT_ASSET_TYPE,
             "analysis_date": date.today().isoformat(),
-            "output_language": DEFAULT_CONFIG.get("output_language", "English"),
-            "selected_analysts": DEFAULT_ANALYSTS.copy(),
-            "research_depth": "medium",
+            "lookback_days": DEFAULT_ANALYSIS_LOOKBACK_DAYS,
+            "output_language": DEFAULT_OUTPUT_LANGUAGE,
+            "selected_analysts": DEFAULT_SELECTED_ANALYSTS.copy(),
+            "research_depth": DEFAULT_RESEARCH_DEPTH,
             "model": DEFAULT_MODEL,
-            "checkpoint_enabled": DEFAULT_CONFIG.get("checkpoint_enabled", False),
+            "checkpoint_enabled": DEFAULT_CHECKPOINT_ENABLED,
         },
         "analysis_options": {
             "analysts": [
                 {"value": key, "label": ANALYST_NODE_SPECS[key].agent_node}
                 for key in DEFAULT_ANALYSTS
+            ],
+            "asset_types": ASSET_TYPE_OPTIONS,
+            "lookback_presets": [
+                {
+                    "value": str(days),
+                    "label": f"{days} days",
+                    "days": days,
+                }
+                for days in LOOKBACK_PRESET_OPTIONS
             ],
             "output_languages": LANGUAGE_OPTIONS,
             "research_depths": [
@@ -355,6 +469,7 @@ def build_analysis_config(request: AnalysisRequest, settings: dict) -> dict:
             "output_language": request.output_language,
             "max_debate_rounds": depth_preset["rounds"],
             "max_risk_discuss_rounds": depth_preset["rounds"],
+            "global_news_lookback_days": request.lookback_days,
             "checkpoint_enabled": request.checkpoint_enabled,
         }
     )
@@ -633,13 +748,50 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
             detail="Set MINIMAX_API_KEY or MINIMAX_CN_API_KEY in .env before running analysis.",
         )
 
+    run_started_at = time.time()
     symbol = normalize_ticker_symbol(request.symbol)
-    asset_type = detect_asset_type(symbol)
+
+    def emit_analysis_log(message: str, phase: str = "backend", level: str = "info", **extra: object) -> None:
+        payload = {
+            "level": level,
+            "phase": phase,
+            "message": message,
+            "elapsed_seconds": round(time.time() - run_started_at, 2),
+            **extra,
+        }
+        log_method = logger.warning if level == "warning" else logger.info
+        log_method(
+            "analysis symbol=%s phase=%s elapsed=%ss message=%s extra=%s",
+            symbol,
+            phase,
+            payload["elapsed_seconds"],
+            message,
+            extra,
+        )
+        emit("analysis_log", payload)
+
+    asset_type = detect_asset_type(symbol) if request.asset_type == "auto" else request.asset_type
     filtered_analysts = filter_analysts_for_asset_type(request.selected_analysts, asset_type)
     if not filtered_analysts:
         raise HTTPException(status_code=400, detail="No valid analysts remain for the selected asset type.")
 
+    emit_analysis_log(
+        "Request validated and runtime options resolved.",
+        "prepare",
+        requested_asset_type=request.asset_type,
+        resolved_asset_type=asset_type,
+        selected_analysts=filtered_analysts,
+        lookback_days=request.lookback_days,
+        research_depth=request.research_depth,
+        output_language=request.output_language,
+    )
+
     if asset_type == "crypto" and filtered_analysts != request.selected_analysts:
+        emit_analysis_log(
+            "Fundamentals Analyst disabled for crypto analysis.",
+            "prepare",
+            "warning",
+        )
         emit(
             "warning",
             {
@@ -648,6 +800,13 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
         )
 
     config = build_analysis_config(request, settings)
+    emit_analysis_log(
+        "Building TradingAgents graph.",
+        "graph_setup",
+        provider=settings["provider"],
+        model=request.model,
+        depth_rounds=RESEARCH_DEPTH_OPTIONS[request.research_depth]["rounds"],
+    )
     graph = TradingAgentsGraph(selected_analysts=filtered_analysts, debug=False, config=config)
 
     initial_snapshot = extract_runtime_snapshot({})
@@ -657,7 +816,9 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
         "analysis_meta",
         {
             "symbol": symbol,
+            "asset_type_mode": request.asset_type,
             "analysis_date": request.analysis_date,
+            "lookback_days": request.lookback_days,
             "asset_type": asset_type,
             "output_language": request.output_language,
             "research_depth": request.research_depth,
@@ -673,9 +834,11 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
     emit("status_snapshot", initial_status)
 
     graph.ticker = symbol
+    emit_analysis_log("Resolving pending memory/reflection entries.", "memory")
     graph._resolve_pending_entries(symbol)
 
     if config.get("checkpoint_enabled"):
+        emit_analysis_log("Checkpoint resume requested; preparing checkpointer.", "checkpoint")
         graph._checkpointer_ctx = get_checkpointer(config["data_cache_dir"], symbol)
         saver = graph._checkpointer_ctx.__enter__()
         graph.graph = graph.workflow.compile(checkpointer=saver)
@@ -695,7 +858,9 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
     previous_snapshot = initial_snapshot
     previous_status = initial_status
     try:
+        emit_analysis_log("Loading past context from memory log.", "memory")
         past_context = graph.memory_log.get_past_context(symbol)
+        emit_analysis_log("Creating initial graph state.", "graph_setup")
         init_state = graph.propagator.create_initial_state(
             symbol,
             request.analysis_date,
@@ -708,11 +873,22 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
             args.setdefault("config", {}).setdefault("configurable", {})["thread_id"] = tid
 
         started_at = time.time()
+        chunk_index = 0
+        emit_analysis_log("Graph stream started.", "stream", current_agent=current_agent)
         for chunk in graph.graph.stream(init_state, **args):
+            chunk_index += 1
             final_state.update(chunk)
             current_snapshot = extract_runtime_snapshot(final_state)
             current_agent = detect_current_agent(previous_snapshot, current_snapshot) or current_agent
             current_status = build_status_snapshot(current_snapshot, filtered_analysts, current_agent)
+            emit_analysis_log(
+                "Graph emitted a state update.",
+                current_status["phase"],
+                chunk_index=chunk_index,
+                current_agent=current_agent,
+                updated_keys=sorted(chunk.keys()),
+                progress=current_status["progress"],
+            )
             emit_snapshot_updates(previous_snapshot, current_snapshot, emit)
             if current_status != previous_status:
                 emit("status_snapshot", current_status)
@@ -734,6 +910,12 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
 
         completed_snapshot = extract_runtime_snapshot(final_state)
         completed_status = build_status_snapshot(completed_snapshot, filtered_analysts, "Portfolio Manager")
+        emit_analysis_log(
+            "Analysis completed and final decision stored.",
+            "complete",
+            signal=graph.process_signal(final_state["final_trade_decision"]),
+            elapsed_seconds=round(time.time() - started_at, 2),
+        )
         emit(
             "complete",
             {
@@ -755,6 +937,7 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
 async def generate_analysis_stream(request: AnalysisRequest) -> AsyncIterator[str]:
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[str | None] = asyncio.Queue()
+    stream_started_at = time.time()
 
     def emit(event: str, data: dict) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(_sse(event, data)), loop).result()
@@ -763,8 +946,10 @@ async def generate_analysis_stream(request: AnalysisRequest) -> AsyncIterator[st
         try:
             run_trading_analysis(request, emit)
         except HTTPException as exc:
+            logger.warning("analysis request failed: %s", exc.detail)
             emit("error", {"error": exc.detail})
         except Exception as exc:
+            logger.exception("analysis stream crashed")
             emit("error", {"error": str(exc)})
         finally:
             asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
@@ -772,7 +957,21 @@ async def generate_analysis_stream(request: AnalysisRequest) -> AsyncIterator[st
     worker_task = asyncio.create_task(asyncio.to_thread(worker))
     try:
         while True:
-            item = await queue.get()
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=STREAM_HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                if worker_task.done():
+                    break
+                yield _sse(
+                    "analysis_log",
+                    {
+                        "level": "debug",
+                        "phase": "heartbeat",
+                        "message": "Backend is still processing the active graph node.",
+                        "elapsed_seconds": round(time.time() - stream_started_at, 2),
+                    },
+                )
+                continue
             if item is None:
                 break
             yield item
@@ -780,9 +979,9 @@ async def generate_analysis_stream(request: AnalysisRequest) -> AsyncIterator[st
         await worker_task
 
 
-@app.get("/", response_class=FileResponse)
-async def serve_index() -> FileResponse:
-    return FileResponse(INDEX_FILE)
+@app.get("/", response_class=HTMLResponse)
+async def serve_index(request: Request) -> HTMLResponse:
+    return HTMLResponse(render_frontend_html(request))
 
 
 @app.get("/favicon.ico")
@@ -802,8 +1001,8 @@ async def health_check() -> dict:
 
 
 @app.get("/api/config")
-async def get_frontend_config() -> dict:
-    return frontend_config_payload()
+async def get_frontend_config(request: Request) -> dict:
+    return frontend_config_payload(request)
 
 
 @app.post("/api/analyze")
