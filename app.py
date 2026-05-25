@@ -138,7 +138,7 @@ logger = logging.getLogger("tradingagents.app")
 
 
 APP_TITLE = "TradingAgents Analysis API"
-APP_VERSION = "0.0.2"
+APP_VERSION = "0.0.3"
 
 
 DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
