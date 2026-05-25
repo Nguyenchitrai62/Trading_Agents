@@ -2973,9 +2973,211 @@ body {
     }
 }
 
+.team-status-grid {
+    padding-right: 0;
+    overflow: hidden;
+    flex: 0 0 auto;
+}
+
+.orchestration-window .window-header {
+    margin-bottom: 8px;
+}
+
+.orchestration-window .progress-card {
+    padding: 8px 10px;
+}
+
+.orchestration-window .progress-track {
+    height: 8px;
+    margin: 6px 0 5px;
+}
+
+.orchestration-window .execution-strip {
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.execution-status-table-wrap {
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--surface-1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    overflow: hidden;
+}
+
+.execution-status-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-family: "IBM Plex Mono", monospace;
+}
+
+.execution-status-table thead th,
+.execution-status-table tbody th,
+.execution-status-table td {
+    padding: 3px 7px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+}
+
+.execution-status-table thead th {
+    color: var(--accent);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-align: left;
+    text-transform: uppercase;
+    background: rgba(101, 208, 173, 0.06);
+}
+
+.execution-status-table thead th:nth-child(1) {
+    width: 28%;
+}
+
+.execution-status-table thead th:nth-child(2) {
+    width: 72%;
+}
+
+.execution-status-table tbody tr:last-child th,
+.execution-status-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.execution-status-team {
+    color: var(--accent);
+    font-size: 0.8rem;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.execution-status-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px;
+    align-items: stretch;
+    overflow: visible;
+}
+
+.execution-status-list-trading,
+.execution-status-list-portfolio {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.execution-status-list-research .role-manager,
+.execution-status-list-risk .role-neutral {
+    grid-column: 1 / -1;
+}
+
+.execution-status-role,
+.execution-status-agent {
+    font-size: 0.8rem;
+    line-height: 1.2;
+}
+
+.execution-status-role-cell {
+    cursor: pointer;
+}
+
+.execution-status-role {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+    min-height: 21px;
+    min-width: 0;
+    padding: 2px 5px;
+    border: 1px solid rgba(139, 178, 160, 0.14);
+    border-radius: 7px;
+    background: rgba(8, 13, 12, 0.28);
+    color: var(--ink);
+    white-space: nowrap;
+}
+
+.execution-status-role.detail-trigger {
+    text-align: left;
+    cursor: pointer;
+}
+
+.execution-status-team:hover,
+.execution-status-team:focus-visible,
+.execution-status-role-cell:hover,
+.execution-status-role-cell:focus-visible {
+    background: rgba(101, 208, 173, 0.06);
+    outline: none;
+}
+
+.execution-status-role.detail-trigger:hover,
+.execution-status-role.detail-trigger:focus-visible {
+    border-color: var(--line-strong);
+    background: rgba(101, 208, 173, 0.1);
+    color: var(--accent);
+    outline: none;
+}
+
+.execution-status-icon {
+    position: relative;
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    flex: 0 0 9px;
+    border: 1px solid currentColor;
+    color: var(--warning);
+    opacity: 0.9;
+}
+
+.execution-status-icon.status-pending {
+    background: transparent;
+}
+
+.execution-status-icon.status-completed {
+    color: var(--success);
+    background: currentColor;
+}
+
+.execution-status-icon.status-completed::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 0;
+    width: 3px;
+    height: 5px;
+    border-right: 1px solid var(--surface-1);
+    border-bottom: 1px solid var(--surface-1);
+    transform: rotate(40deg);
+}
+
+.execution-status-icon.status-in_progress {
+    color: var(--secondary);
+    border-top-color: transparent;
+    animation: taskSpin 0.9s linear infinite;
+}
+
+.execution-status-agent {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 820px) {
+    .execution-status-table thead th,
+    .execution-status-table tbody th,
+    .execution-status-table td {
+        padding: 6px 8px;
+    }
+
+    .execution-status-team,
+    .execution-status-role,
+    .execution-status-agent,
+    .execution-status-icon {
+        font-size: 0.72rem;
+    }
+}
+
 .dashboard {
     grid-template-columns: minmax(300px, 0.86fr) minmax(620px, 1.76fr) minmax(340px, 0.98fr);
-    grid-template-rows: minmax(340px, 1fr) minmax(220px, 0.66fr);
+    grid-template-rows: max-content minmax(0, 1fr);
     gap: 10px;
 }
 
@@ -2988,6 +3190,7 @@ body {
     grid-column: 1;
     grid-row: 2;
     min-height: 0;
+    padding: 10px 12px 12px;
 }
 
 .report-window {
@@ -3012,17 +3215,34 @@ body {
     flex: 1 1 auto;
 }
 
+.backend-log-window .execution-log-header {
+    margin-bottom: 8px;
+    min-height: 0;
+}
+
+.backend-log-window .window-kicker {
+    display: none;
+}
+
+.backend-log-window .window-header h2 {
+    font-size: 0.96rem;
+}
+
+.backend-log-window .window-status {
+    font-size: 0.68rem;
+}
+
 @media (max-width: 1280px) {
     .dashboard {
         grid-template-columns: minmax(280px, 0.88fr) minmax(0, 1.46fr) minmax(310px, 0.96fr);
-        grid-template-rows: minmax(320px, 1fr) minmax(210px, 0.62fr);
+        grid-template-rows: max-content minmax(0, 1fr);
     }
 }
 
 @media (max-width: 960px) {
     .dashboard {
         grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
-        grid-template-rows: minmax(300px, 0.94fr) minmax(220px, 0.5fr) minmax(320px, 0.72fr);
+        grid-template-rows: max-content minmax(0, 1fr) minmax(320px, 0.72fr);
     }
 
     .orchestration-window {

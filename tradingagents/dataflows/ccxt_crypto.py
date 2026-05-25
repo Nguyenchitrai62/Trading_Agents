@@ -73,6 +73,8 @@ _CRYPTO_TIMEFRAME_MINUTES = {
 }
 
 _CRYPTO_MARKET_HARD_CANDLE_LIMIT = 199
+_CRYPTO_OHLCV_PREVIEW_ROWS = 18
+_CRYPTO_INDICATOR_PREVIEW_ROWS = 12
 
 
 def _resolve_exchange(exchange_name: str):
@@ -263,7 +265,8 @@ def _prepare_indicator_frame(frame: pd.DataFrame) -> pd.DataFrame:
     loss = -delta.clip(upper=0)
     avg_gain = gain.rolling(14).mean()
     avg_loss = loss.rolling(14).mean()
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
+    avg_loss_safe = avg_loss.where(avg_loss.ne(0))
+    rs = avg_gain / avg_loss_safe
     working["rsi"] = 100 - (100 / (1 + rs))
 
     ema12 = working["close"].ewm(span=12, adjust=False).mean()
@@ -289,17 +292,85 @@ def _prepare_indicator_frame(frame: pd.DataFrame) -> pd.DataFrame:
     ).max(axis=1)
     working["atr"] = true_range.rolling(14).mean()
 
-    volume_sum = working["volume"].rolling(20).sum().replace(0, pd.NA)
+    volume_sum = working["volume"].rolling(20).sum()
+    volume_sum = volume_sum.where(volume_sum.ne(0))
     working["vwma"] = (working["close"] * working["volume"]).rolling(20).sum() / volume_sum
 
     typical_price = (working["high"] + working["low"] + working["close"]) / 3
     raw_money_flow = typical_price * working["volume"]
     positive_flow = raw_money_flow.where(typical_price.diff() > 0, 0.0)
     negative_flow = raw_money_flow.where(typical_price.diff() < 0, 0.0).abs()
-    flow_ratio = positive_flow.rolling(14).sum() / negative_flow.rolling(14).sum().replace(0, pd.NA)
+    negative_flow_sum = negative_flow.rolling(14).sum()
+    negative_flow_sum = negative_flow_sum.where(negative_flow_sum.ne(0))
+    flow_ratio = positive_flow.rolling(14).sum() / negative_flow_sum
     working["mfi"] = 100 - (100 / (1 + flow_ratio))
 
     return working
+
+
+def _format_number(value: object, digits: int = 6) -> str:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return "N/A"
+    return f"{float(numeric):.{digits}f}"
+
+
+def _format_percent(value: object) -> str:
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return "N/A"
+    return f"{float(numeric):+.2f}%"
+
+
+def _build_ohlcv_summary(frame: pd.DataFrame) -> list[str]:
+    latest = frame.iloc[-1]
+    first = frame.iloc[0]
+    close_start = pd.to_numeric(first["close"], errors="coerce")
+    close_end = pd.to_numeric(latest["close"], errors="coerce")
+    window_return = ((close_end - close_start) / close_start * 100) if pd.notna(close_start) and close_start else pd.NA
+    average_volume = pd.to_numeric(frame["volume"], errors="coerce").mean()
+    average_range = (pd.to_numeric(frame["high"], errors="coerce") - pd.to_numeric(frame["low"], errors="coerce")).mean()
+
+    return [
+        f"- Latest close: {_format_number(close_end)}",
+        f"- Window return: {_format_percent(window_return)}",
+        f"- High / Low: {_format_number(frame['high'].max())} / {_format_number(frame['low'].min())}",
+        f"- Total volume: {_format_number(frame['volume'].sum(), 3)}",
+        f"- Average candle volume: {_format_number(average_volume, 3)}",
+        f"- Average candle range: {_format_number(average_range)}",
+    ]
+
+
+def _build_indicator_summary(window: pd.DataFrame, indicator_name: str) -> list[str]:
+    clean = pd.to_numeric(window[indicator_name], errors="coerce").dropna()
+    if clean.empty:
+        return [
+            "- Latest value: N/A",
+            "- Previous value: N/A",
+            "- Window min / max: N/A / N/A",
+            "- Window mean: N/A",
+            "- Output-window change: N/A",
+        ]
+
+    latest_value = clean.iloc[-1]
+    previous_value = clean.iloc[-2] if len(clean) > 1 else pd.NA
+    start_value = clean.iloc[0]
+    window_change = pd.NA
+    if pd.notna(start_value) and float(start_value) != 0.0:
+        window_change = (float(latest_value) - float(start_value)) / abs(float(start_value)) * 100
+
+    return [
+        f"- Latest value: {_format_number(latest_value)}",
+        f"- Previous value: {_format_number(previous_value)}",
+        f"- Window min / max: {_format_number(clean.min())} / {_format_number(clean.max())}",
+        f"- Window mean: {_format_number(clean.mean())}",
+        f"- Output-window change: {_format_percent(window_change)}",
+    ]
+
+
+def _format_compact_table(frame: pd.DataFrame, columns: list[str], preview_rows: int) -> str:
+    preview = frame[columns].tail(min(preview_rows, len(frame))).copy()
+    return preview.to_csv(index=False)
 
 
 def get_crypto_ohlcv(
@@ -318,15 +389,6 @@ def get_crypto_ohlcv(
         frame["volume"] = frame["volume"].round(3)
         frame["timestamp"] = frame["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        latest = frame.iloc[-1]
-        first = frame.iloc[0]
-        close_start = float(first["close"]) if first["close"] else 0.0
-        close_end = float(latest["close"]) if latest["close"] else 0.0
-        window_return = ((close_end - close_start) / close_start * 100) if close_start else 0.0
-        range_high = float(frame["high"].max())
-        range_low = float(frame["low"].min())
-        quote_volume = float(frame["volume"].sum())
-
         header = [
             f"# Crypto OHLCV for {market_symbol} from {exchange_name}",
             (
@@ -338,16 +400,21 @@ def get_crypto_ohlcv(
             f"# Timeframe: {policy['timeframe']}",
             f"# Total candles: {len(frame)}",
             f"# Window start: {frame.iloc[0]['timestamp']}",
-            f"# Window end: {latest['timestamp']}",
-            f"# Latest close: {close_end}",
-            f"# Window return: {window_return:.2f}%",
-            f"# High / Low: {range_high} / {range_low}",
-            f"# Total volume: {quote_volume:.3f}",
+            f"# Window end: {frame.iloc[-1]['timestamp']}",
             f"# Data retrieved on: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
             "",
+            "## Summary",
+            *_build_ohlcv_summary(frame),
+            "",
+            f"## Recent candles shown ({min(_CRYPTO_OHLCV_PREVIEW_ROWS, len(frame))} of {len(frame)})",
+            _format_compact_table(
+                frame,
+                ["timestamp", "open", "high", "low", "close", "volume"],
+                _CRYPTO_OHLCV_PREVIEW_ROWS,
+            ),
         ]
 
-        return "\n".join(header) + frame.to_csv(index=False)
+        return "\n".join(header)
     finally:
         close_method = getattr(exchange, "close", None)
         if callable(close_method):
@@ -399,6 +466,8 @@ def get_crypto_indicators(
                 latest_value = latest_row.iloc[0][item]
                 latest_timestamp = latest_row.iloc[0]["timestamp_label"]
 
+            preview_rows = min(_CRYPTO_INDICATOR_PREVIEW_ROWS, len(tail))
+
             blocks.append(
                 "\n".join(
                     [
@@ -415,7 +484,11 @@ def get_crypto_indicators(
                         f"Latest value: {latest_value}",
                         f"Description: {_CRYPTO_INDICATOR_DESCRIPTIONS[item]}",
                         "",
-                        tail.to_csv(index=False),
+                        "### Indicator summary",
+                        *_build_indicator_summary(tail, item),
+                        "",
+                        f"### Recent indicator rows shown ({preview_rows} of {len(tail)})",
+                        _format_compact_table(tail, ["timestamp_label", item], _CRYPTO_INDICATOR_PREVIEW_ROWS),
                     ]
                 )
             )

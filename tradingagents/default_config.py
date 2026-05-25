@@ -75,11 +75,11 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "max_risk_discuss_rounds": 1,
     "max_recur_limit": 100,
     "analyst_concurrency_limit": 1,
-    # News / data fetching parameters
-    # Increase for longer lookback strategies or to broaden macro coverage;
-    # decrease to reduce token usage in agent prompts.
-    "news_article_limit": 20,             # max articles per ticker (ticker-news)
-    "global_news_article_limit": 10,      # max articles for global/macro news
+    # News / data fetching parameters tuned for crypto-first analysis.
+    # Token-level news still matters, but macro flow should stay compact so
+    # prompts can reserve more room for market structure and debate.
+    "news_article_limit": 12,             # max articles per symbol-specific news pull
+    "global_news_article_limit": 8,       # max articles for macro / cross-asset news
     "global_news_lookback_days": 7,       # macro news lookback window
     # Crypto market-data policy: select the densest single timeframe whose
     # candle count still stays below the hard memory ceiling for the active
@@ -100,44 +100,41 @@ DEFAULT_CONFIG = _apply_env_overrides({
             "url": "https://vnwallstreet.com/",
             "focus": "Real-time event flow and market-moving calendar context.",
         },
+        {
+            "name": "TradingEconomics",
+            "url": "https://tradingeconomics.com/",
+            "focus": "Macro releases, rates, liquidity, and cross-asset risk context that can spill directly into crypto.",
+        },
     ],
-    # Search queries used by get_global_news for macro headlines. Extend or
-    # replace to broaden geographic / sector coverage.
+    # Search queries used by get_global_news for crypto-relevant macro and
+    # cross-asset headlines. Keep macro flow because liquidity, rates, and
+    # regulation still move crypto even when no stock analysis is performed.
     "global_news_queries": [
-        "Federal Reserve interest rates inflation",
-        "S&P 500 earnings GDP economic outlook",
-        "geopolitical risk trade war sanctions",
-        "ECB Bank of England BOJ central bank policy",
-        "oil commodities supply chain energy",
+        "Bitcoin Ethereum crypto ETF flows market structure",
+        "Federal Reserve interest rates inflation dollar liquidity risk assets",
+        "stablecoin regulation SEC Congress crypto banking policy",
+        "crypto exchange flows liquidations funding open interest miners",
+        "Nasdaq Treasury yields geopolitics recession cross-asset volatility",
     ],
     # Data vendor configuration
     # Category-level configuration (default for all tools in category)
     "data_vendors": {
-        "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
+        "core_stock_apis": "yfinance",       # Kept for legacy compatibility and benchmark/reflection paths
         "crypto_market_apis": "ccxt",        # Options: ccxt
-        "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
-        "fundamental_data": "yfinance",      # Options: alpha_vantage, yfinance
-        "news_data": "yfinance",             # Options: alpha_vantage, yfinance
+        "technical_indicators": "yfinance",  # Legacy fallback; primary crypto market work stays on ccxt
+        "fundamental_data": "yfinance",      # Legacy fallback for any non-price contextual pulls
+        "news_data": "yfinance",             # Primary news vendor; tool-level fallback extends this below
     },
     # Tool-level configuration (takes precedence over category-level)
     "tool_vendors": {
-        # Example: "get_stock_data": "alpha_vantage",  # Override category default
+        "get_news": "yfinance,alpha_vantage",
+        "get_global_news": "yfinance,alpha_vantage",
     },
     # Benchmark for alpha calculation in the reflection layer.
-    # ``benchmark_ticker`` (when set) overrides the suffix map for all
-    # tickers; leave it None to use ``benchmark_map`` for auto-detection
-    # based on the ticker's exchange suffix. SPY remains the US default
-    # so the reflection label keeps reading "Alpha vs SPY" for US tickers
-    # while non-US tickers get their regional index automatically.
-    "benchmark_ticker": None,
+    # The product is now crypto-first, so BTC is the default baseline for
+    # relative performance instead of SPY.
+    "benchmark_ticker": "BTC-USD",
     "benchmark_map": {
-        ".NS":  "^NSEI",    # NSE India (Nifty 50)
-        ".BO":  "^BSESN",   # BSE India (Sensex)
-        ".T":   "^N225",    # Tokyo (Nikkei 225)
-        ".HK":  "^HSI",     # Hong Kong (Hang Seng)
-        ".L":   "^FTSE",    # London (FTSE 100)
-        ".TO":  "^GSPTSE",  # Toronto (TSX Composite)
-        ".AX":  "^AXJO",    # Australia (ASX 200)
-        "":     "SPY",      # default for US-listed tickers (no suffix)
+        "":     "BTC-USD",  # fallback if explicit benchmark_ticker is disabled
     },
 })

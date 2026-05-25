@@ -299,7 +299,7 @@ def normalize_ticker_symbol(ticker: str) -> str:
 
 
 def filter_analysts_for_crypto(selected_analysts: List[str]) -> List[str]:
-    return [analyst for analyst in selected_analysts if analyst != "fundamentals"]
+    return list(selected_analysts)
 
 
 class AnalysisCancelled(Exception):

@@ -1,9 +1,9 @@
 const GROUP_LABELS = {
-    analysts: "Analyst Team",
-    research: "Research Team",
-    trading: "Trading Team",
-    risk: "Risk Management",
-    portfolio: "Portfolio Management",
+    analysts: "Signals",
+    research: "Research",
+    trading: "Trader",
+    risk: "Risk",
+    portfolio: "Manager",
 };
 
 const REPORT_BY_ANALYST = {
@@ -38,6 +38,24 @@ const REPORT_DETAIL_BY_AGENT = {
         title: REPORT_BY_ANALYST.fundamentals.title,
         subtitle: "Fundamentals Analyst",
     },
+};
+
+const COMPACT_AGENT_LABELS = {
+    "Market Analyst": "Market",
+    "Sentiment Analyst": "Social",
+    "News Analyst": "News",
+    "Fundamentals Analyst": "Fund",
+    "Research Manager": "Lead",
+    "Portfolio Manager": "Manager",
+    "Aggressive Analyst": "Aggressive",
+    "Conservative Analyst": "Conservative",
+    "Neutral Analyst": "Neutral",
+};
+
+const STATUS_LABELS = {
+    pending: "wait",
+    in_progress: "run",
+    completed: "done",
 };
 
 const CORE_ANALYSTS = ["market", "social", "news"];
@@ -781,7 +799,9 @@ function getAgentNarrativeMarkdown(agent, limit = 5) {
 }
 
 function getFallbackStatusGroups() {
-    const fallbackAnalysts = state.config?.analysis_defaults?.selected_analysts || [];
+    const fallbackAnalysts = getConfigSnapshot()?.selected_analysts
+        || state.config?.analysis_defaults?.selected_analysts
+        || [];
     return {
         analysts: fallbackAnalysts.map((key) => ({
             key,
@@ -1173,12 +1193,8 @@ function syncAnalystAvailability() {
     }
 
     const card = fundamentalsInput.closest(".checkbox-card");
-    const shouldDisable = getResolvedAssetType() === "crypto";
-    fundamentalsInput.disabled = shouldDisable;
-    if (shouldDisable) {
-        fundamentalsInput.checked = false;
-    }
-    card?.classList.toggle("checkbox-card-disabled", shouldDisable);
+    fundamentalsInput.disabled = false;
+    card?.classList.remove("checkbox-card-disabled");
 }
 
 function renderConfigPreview() {
@@ -1231,6 +1247,9 @@ function refreshConfigUi() {
     syncAnalystAvailability();
     renderTopNotice();
     renderConfigPreview();
+    if (!state.isBusy) {
+        renderTeamStatusGrid();
+    }
 }
 
 function renderTopNotice() {
@@ -1272,36 +1291,89 @@ function renderTopNotice() {
     elements.topNoticeText.title = notice;
 }
 
+function getCompactAgentLabel(label = "") {
+    if (COMPACT_AGENT_LABELS[label]) {
+        return COMPACT_AGENT_LABELS[label];
+    }
+
+    return String(label)
+        .replace(/ Analyst$/, "")
+        .replace(/ Researcher$/, "");
+}
+
+function getGroupDetailDescriptor(groupKey, items = []) {
+    const preferredItem = items.find((item) => item.status === "completed") || items[0];
+    return preferredItem ? getTaskDetailDescriptor(groupKey, preferredItem) : null;
+}
+
 function renderTeamStatusGrid() {
     const groups = getStatusGroups();
 
-    elements.teamStatusGrid.innerHTML = Object.entries(groups)
-        .map(([groupKey, items]) => `
-            <section class="task-row">
-                <p class="task-row-label">${escapeHtml(GROUP_LABELS[groupKey] || groupKey)}</p>
-                <div class="task-inline-list">
-                    ${items
+    const renderAgentCell = (groupKey, item) => {
+        const detail = getTaskDetailDescriptor(groupKey, item);
+        const interactive = Boolean(detail);
+        const dataset = interactive ? buildDetailDataset(detail) : "";
+        const compactLabel = getCompactAgentLabel(item.label);
+        const statusLabel = STATUS_LABELS[item.status] || item.status;
+        const roleContent = `
+            <span class="execution-status-icon status-${item.status}" title="${escapeHtml(item.status)}" aria-hidden="true"></span>
+            <span class="execution-status-agent">${escapeHtml(compactLabel)}</span>
+        `;
+
+        if (interactive) {
+            return `
+                <button type="button"
+                    class="execution-status-role role-${escapeHtml(item.key)} status-${item.status} detail-trigger"
+                    ${dataset}
+                    title="${escapeHtml(item.label)}"
+                    aria-label="Open ${escapeHtml(item.label)} detail, ${escapeHtml(statusLabel)}">
+                    ${roleContent}
+                </button>
+            `;
+        }
+
+        return `<span class="execution-status-role role-${escapeHtml(item.key)} status-${item.status}" title="${escapeHtml(item.label)}">${roleContent}</span>`;
+    };
+
+    elements.teamStatusGrid.innerHTML = `
+        <div class="execution-status-table-wrap">
+            <table class="execution-status-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Team</th>
+                        <th scope="col">Role</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${Object.entries(groups)
                         .map(
-                            (item) => {
-                                const detail = getTaskDetailDescriptor(groupKey, item);
-                                const interactive = Boolean(detail) && item.status === "completed";
-                                const dataset = interactive ? buildDetailDataset(detail) : "";
+                            ([groupKey, items]) => {
+                                const groupDetail = getGroupDetailDescriptor(groupKey, items);
+                                const groupDataset = groupDetail ? buildDetailDataset(groupDetail) : "";
+                                const groupLabel = GROUP_LABELS[groupKey] || groupKey;
                                 return `
-                                <article class="task-chip status-${item.status} ${interactive ? "detail-trigger" : ""}"
-                                    ${interactive ? 'tabindex="0" role="button"' : ""}
-                                    ${dataset}
-                                    aria-label="${interactive ? `Open ${escapeHtml(item.label)} detail` : escapeHtml(item.label)}">
-                                    <span class="task-state-icon" aria-hidden="true"></span>
-                                    <span class="task-chip-label">${escapeHtml(item.label)}</span>
-                                </article>
-                            `;
+                                    <tr>
+                                        <th scope="row" class="execution-status-team ${groupDetail ? "detail-trigger" : ""}"
+                                            ${groupDataset}
+                                            title="Open ${escapeHtml(groupLabel)} detail">
+                                            ${escapeHtml(groupLabel)}
+                                        </th>
+                                        <td class="execution-status-role-cell ${groupDetail ? "detail-trigger" : ""}"
+                                            ${groupDataset}
+                                            title="Open ${escapeHtml(groupLabel)} detail">
+                                            <div class="execution-status-list execution-status-list-${escapeHtml(groupKey)}">
+                                                ${items.map((item) => renderAgentCell(groupKey, item)).join("")}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `;
                             },
                         )
                         .join("")}
-                </div>
-            </section>
-        `)
-        .join("");
+                </tbody>
+            </table>
+        </div>
+    `;
 }
 
 function renderProgress() {

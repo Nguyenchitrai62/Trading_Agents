@@ -8,7 +8,7 @@
         analysisDate: "",
         lookbackDays: 7,
         outputLanguage: "Vietnamese",
-        selectedAnalysts: ["market", "social", "news"],
+        selectedAnalysts: ["market", "social", "news", "fundamentals"],
         researchDepth: "medium",
         model: "MiniMax-M2.7",
         checkpointEnabled: false,
