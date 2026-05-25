@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradingAgents Analysis Deck</title>
+    <link rel="stylesheet" href="/FE/styles.css">
+</head>
+<body>
+    <div class="backdrop"></div>
+
+    <div class="app-shell">
+        <header class="hero">
+            <div class="hero-copy">
+                <div class="eyebrow">TradingAgents • FastAPI • MiniMax • SSE</div>
+                <h1>Multi-Agent Analysis Deck</h1>
+                <p class="hero-text">
+                    Dashboard FE thuần HTML/CSS/JS mô phỏng tinh thần CLI gốc: theo dõi
+                    analyst nào đang chạy, debate đang tiến tới đâu, trader/risk/portfolio
+                    manager kết luận thế nào và report nào đã hoàn thành.
+                </p>
+                <div id="summaryChips" class="chip-row"></div>
+            </div>
+
+            <div class="hero-side">
+                <div class="headline-stats">
+                    <div class="headline-card">
+                        <span>Run status</span>
+                        <strong id="runStatusBadge">Idle</strong>
+                    </div>
+                    <div class="headline-card">
+                        <span>Current agent</span>
+                        <strong id="currentAgentText">Waiting</strong>
+                    </div>
+                    <div class="headline-card headline-card-wide">
+                        <span>Provider / endpoint</span>
+                        <strong id="endpointText">Loading...</strong>
+                    </div>
+                </div>
+
+                <div class="hero-actions">
+                    <button id="openConfigButton" class="button secondary">Config</button>
+                    <button id="runAnalysisButton" class="button primary">Run analysis</button>
+                </div>
+            </div>
+        </header>
+
+        <main class="dashboard">
+            <section class="window orchestration-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Live orchestration</p>
+                        <h2>Execution Board</h2>
+                    </div>
+                    <span id="phaseText" class="window-status">Idle</span>
+                </div>
+
+                <div class="execution-strip">
+                    <div class="progress-card">
+                        <div class="progress-topline">
+                            <span>Progress</span>
+                            <strong id="progressText">0 / 0</strong>
+                        </div>
+                        <div class="progress-track">
+                            <div id="progressFill" class="progress-fill"></div>
+                        </div>
+                        <div class="progress-footline">
+                            <span id="progressPercentText">0%</span>
+                            <span id="elapsedText">Awaiting run</span>
+                        </div>
+                    </div>
+
+                    <div class="smart-card">
+                        <h3>Smart notes</h3>
+                        <ul id="smartNotes" class="smart-notes"></ul>
+                    </div>
+                </div>
+
+                <div id="teamStatusGrid" class="team-status-grid"></div>
+            </section>
+
+            <section class="window report-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Analyst team</p>
+                        <h2>Report Windows</h2>
+                    </div>
+                    <span id="activeReportText" class="window-status">No reports yet</span>
+                </div>
+                <div id="reportGrid" class="report-grid"></div>
+            </section>
+
+            <section class="window chamber-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Research team</p>
+                        <h2>Research Chamber</h2>
+                    </div>
+                    <span id="researchStatusText" class="window-status">Awaiting analyst reports</span>
+                </div>
+                <div class="panel-grid three-up">
+                    <article class="mini-window">
+                        <h3>Bull Researcher</h3>
+                        <pre id="bullResearchPanel" class="panel-pre"></pre>
+                    </article>
+                    <article class="mini-window">
+                        <h3>Bear Researcher</h3>
+                        <pre id="bearResearchPanel" class="panel-pre"></pre>
+                    </article>
+                    <article class="mini-window accent-window">
+                        <h3>Research Manager</h3>
+                        <pre id="researchManagerPanel" class="panel-pre"></pre>
+                    </article>
+                </div>
+            </section>
+
+            <section class="window trader-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Trading team</p>
+                        <h2>Trader Desk</h2>
+                    </div>
+                    <span class="window-status">Transaction proposal</span>
+                </div>
+                <pre id="traderPlanPanel" class="panel-pre trader-pre"></pre>
+            </section>
+
+            <section class="window risk-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Risk management</p>
+                        <h2>Risk Room</h2>
+                    </div>
+                    <span id="riskStatusText" class="window-status">Waiting for trader</span>
+                </div>
+                <div class="panel-grid risk-grid">
+                    <article class="mini-window">
+                        <h3>Aggressive</h3>
+                        <pre id="aggressiveRiskPanel" class="panel-pre"></pre>
+                    </article>
+                    <article class="mini-window">
+                        <h3>Conservative</h3>
+                        <pre id="conservativeRiskPanel" class="panel-pre"></pre>
+                    </article>
+                    <article class="mini-window">
+                        <h3>Neutral</h3>
+                        <pre id="neutralRiskPanel" class="panel-pre"></pre>
+                    </article>
+                </div>
+            </section>
+
+            <section class="window decision-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Portfolio management</p>
+                        <h2>Final Decision</h2>
+                    </div>
+                    <span id="signalBadge" class="signal-badge">No signal</span>
+                </div>
+                <pre id="portfolioDecisionPanel" class="panel-pre decision-pre"></pre>
+            </section>
+
+            <section class="window log-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Timeline</p>
+                        <h2>Event Log</h2>
+                    </div>
+                    <span class="window-status">SSE events</span>
+                </div>
+                <pre id="eventLog" class="event-log"></pre>
+            </section>
+        </main>
+    </div>
+
+    <div id="configModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-backdrop" data-close-modal="true"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="configTitle">
+            <div class="modal-header">
+                <div>
+                    <p class="window-kicker">Quick config</p>
+                    <h2 id="configTitle">Analysis Settings</h2>
+                </div>
+                <button id="closeConfigButton" class="icon-button" type="button" aria-label="Close config">×</button>
+            </div>
+
+            <form id="configForm" class="config-form">
+                <div class="config-grid two-up">
+                    <label class="field">
+                        <span>Symbol</span>
+                        <input id="symbolInput" type="text" placeholder="NVDA">
+                    </label>
+                    <label class="field">
+                        <span>Analysis date</span>
+                        <input id="analysisDateInput" type="date">
+                    </label>
+                </div>
+
+                <div class="config-grid two-up">
+                    <label class="field">
+                        <span>Output language</span>
+                        <select id="languageSelect"></select>
+                    </label>
+                    <label id="customLanguageField" class="field hidden">
+                        <span>Custom language</span>
+                        <input id="customLanguageInput" type="text" placeholder="Vietnamese">
+                    </label>
+                </div>
+
+                <div class="config-grid two-up">
+                    <label class="field">
+                        <span>LLM model</span>
+                        <input id="modelInput" type="text" placeholder="MiniMax-M2.7">
+                    </label>
+                    <label class="toggle-field">
+                        <span>Checkpoint resume</span>
+                        <input id="checkpointToggle" type="checkbox">
+                    </label>
+                </div>
+
+                <section class="config-section">
+                    <div class="config-section-header">
+                        <h3>Analyst team</h3>
+                        <p>Chọn những analyst sẽ tham gia vòng phân tích.</p>
+                    </div>
+                    <div id="analystOptions" class="checkbox-grid"></div>
+                </section>
+
+                <section class="config-section">
+                    <div class="config-section-header">
+                        <h3>Research depth</h3>
+                        <p>Map trực tiếp vào số vòng debate và risk discussion.</p>
+                    </div>
+                    <div id="depthOptions" class="depth-grid"></div>
+                </section>
+
+                <div class="modal-actions">
+                    <button id="saveConfigButton" type="button" class="button secondary">Apply</button>
+                    <button id="runFromModalButton" type="submit" class="button primary">Apply & Run</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="module" src="/FE/app.js"></script>
+</body>
+</html>
