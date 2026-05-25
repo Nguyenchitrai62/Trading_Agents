@@ -41,10 +41,10 @@ const REPORT_DETAIL_BY_AGENT = {
 };
 
 const CORE_ANALYSTS = ["market", "social", "news"];
-const CRYPTO_SUFFIXES = ["-USD", "-USDT", "-USDC", "-BTC", "-ETH"];
 const CUSTOM_LOOKBACK_VALUE = "__custom__";
 const TRACE_DISPLAY_LIMIT = 14;
 const LOG_DISPLAY_LIMIT = 12;
+const EXECUTION_LOG_DISPLAY_LIMIT = 80;
 
 const DETAIL_PANEL_META = {
     bullResearch: { title: "Bull Researcher", subtitle: "Research Chamber" },
@@ -63,6 +63,8 @@ const state = {
     apiBaseUrl: getConfiguredApiBaseUrl(),
     isBusy: false,
     controller: null,
+    activeRunId: null,
+    stopRequested: false,
     activeDetail: null,
     run: createEmptyRunState(),
 };
@@ -93,6 +95,8 @@ const elements = {
     signalBadge: document.getElementById("signalBadge"),
     portfolioDecisionPanel: document.getElementById("portfolioDecisionPanel"),
     eventLog: document.getElementById("eventLog"),
+    executionLog: document.getElementById("executionLog"),
+    executionLogStatusText: document.getElementById("executionLogStatusText"),
     opsStatusText: document.getElementById("opsStatusText"),
     opsAgentText: document.getElementById("opsAgentText"),
     opsPhaseText: document.getElementById("opsPhaseText"),
@@ -102,6 +106,7 @@ const elements = {
     openConfigButton: document.getElementById("openConfigButton"),
     closeConfigButton: document.getElementById("closeConfigButton"),
     runAnalysisButton: document.getElementById("runAnalysisButton"),
+    stopAnalysisButton: document.getElementById("stopAnalysisButton"),
     configModal: document.getElementById("configModal"),
     configForm: document.getElementById("configForm"),
     dashboard: document.querySelector(".dashboard"),
@@ -113,7 +118,6 @@ const elements = {
     saveConfigButton: document.getElementById("saveConfigButton"),
     runFromModalButton: document.getElementById("runFromModalButton"),
     symbolInput: document.getElementById("symbolInput"),
-    assetTypeSelect: document.getElementById("assetTypeSelect"),
     analysisDateInput: document.getElementById("analysisDateInput"),
     lookbackPresetSelect: document.getElementById("lookbackPresetSelect"),
     lookbackDaysInput: document.getElementById("lookbackDaysInput"),
@@ -138,6 +142,7 @@ function createEmptyRunState() {
         research: {},
         risk: {},
         complete: null,
+        cancelled: null,
         warnings: [],
         logs: [],
         logEntries: [],
@@ -149,6 +154,8 @@ function createEmptyRunState() {
         seenTraceFingerprints: new Set(),
         lastTrackedAgent: null,
         latestReportTitle: null,
+        latestTraceId: null,
+        flashLatestTrace: false,
     };
 }
 
@@ -165,6 +172,11 @@ function renderInlineMarkdown(value = "") {
     return escapeHtml(value)
         .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1" loading="lazy">')
         .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+        .replace(/(^|[\s(])((https?:\/\/)[^\s<)]+)/g, (match, prefix, url) => {
+            const trailing = url.match(/[.,;:!?]+$/)?.[0] || "";
+            const href = trailing ? url.slice(0, -trailing.length) : url;
+            return `${prefix}<a href="${href}" target="_blank" rel="noreferrer">${href}</a>${trailing}`;
+        })
         .replace(/`([^`]+)`/g, "<code>$1</code>")
         .replace(/~~([^~]+)~~/g, "<del>$1</del>")
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
@@ -442,12 +454,12 @@ function normalizeFrontendConfig() {
         api_base_url: getConfiguredApiBaseUrl(),
         default_model: defaultModel,
         analysis_defaults: {
-            symbol: String(defaults.symbol || "BTC").trim().toUpperCase(),
-            asset_type: defaults.assetType || defaults.asset_type || "auto",
+            symbol: String(defaults.symbol || "BTC-USDT").trim().toUpperCase(),
+            asset_type: "crypto",
             analysis_date: defaults.analysisDate || defaults.analysis_date || todayIsoDate(),
             lookback_days: Number(defaults.lookbackDays || defaults.lookback_days || 7),
             output_language: defaults.outputLanguage || defaults.output_language || "Vietnamese",
-            selected_analysts: defaults.selectedAnalysts || defaults.selected_analysts || ["market", "social", "news", "fundamentals"],
+            selected_analysts: defaults.selectedAnalysts || defaults.selected_analysts || ["market", "social", "news"],
             research_depth: defaults.researchDepth || defaults.research_depth || "medium",
             model: defaultModel,
             checkpoint_enabled: Boolean(defaults.checkpointEnabled ?? defaults.checkpoint_enabled ?? false),
@@ -459,11 +471,7 @@ function normalizeFrontendConfig() {
                 { value: "news", label: "News Analyst" },
                 { value: "fundamentals", label: "Fundamentals Analyst" },
             ],
-            asset_types: options.assetTypes || options.asset_types || [
-                { value: "auto", label: "Auto detect" },
-                { value: "stock", label: "Stock" },
-                { value: "crypto", label: "Crypto" },
-            ],
+            asset_types: [{ value: "crypto", label: "Crypto" }],
             lookback_presets: options.lookbackPresets || options.lookback_presets || [
                 { value: "7", label: "7 days", days: 7 },
                 { value: "14", label: "14 days", days: 14 },
@@ -504,23 +512,22 @@ function formatApiBaseLabel(value = "") {
     }
 }
 
-function detectAssetTypeFromSymbol(symbol) {
-    const normalized = symbol.trim().toUpperCase();
-    return CRYPTO_SUFFIXES.some((suffix) => normalized.endsWith(suffix)) ? "crypto" : "stock";
+function normalizeCryptoSymbol(value = "") {
+    const normalized = String(value).trim().toUpperCase().replace(/\s+/g, "");
+    if (!normalized) {
+        return "";
+    }
+    return normalized.includes("/") || normalized.includes("-") ? normalized : `${normalized}-USDT`;
 }
 
 function getResolvedAssetType() {
-    const selected = elements.assetTypeSelect.value || "auto";
-    if (selected !== "auto") {
-        return selected;
-    }
-    return detectAssetTypeFromSymbol(elements.symbolInput.value);
+    return "crypto";
 }
 
 function collectConfigDraft() {
     return {
-        symbol: elements.symbolInput.value.trim().toUpperCase(),
-        asset_type: elements.assetTypeSelect.value || "auto",
+        symbol: normalizeCryptoSymbol(elements.symbolInput.value),
+        asset_type: "crypto",
         analysis_date: elements.analysisDateInput.value,
         lookback_days: Number(elements.lookbackDaysInput.value || 7),
         output_language: getOutputLanguage(),
@@ -529,6 +536,24 @@ function collectConfigDraft() {
         model: elements.modelInput.value.trim(),
         checkpoint_enabled: elements.checkpointToggle.checked,
     };
+}
+
+function createRunId() {
+    return `run-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function isAbortError(error) {
+    return Boolean(error && error.name === "AbortError");
+}
+
+function requestBackendCancel(runId) {
+    if (!runId) {
+        return Promise.resolve(null);
+    }
+    return fetch(buildApiUrl(`/api/analyze/${encodeURIComponent(runId)}/cancel`), {
+        method: "POST",
+        keepalive: true,
+    }).catch(() => null);
 }
 
 function getConfigSnapshot() {
@@ -541,7 +566,7 @@ function getConfigSnapshot() {
     } catch {
         return {
             symbol: state.config.analysis_defaults.symbol,
-            asset_type: state.config.analysis_defaults.asset_type,
+            asset_type: "crypto",
             analysis_date: state.config.analysis_defaults.analysis_date,
             lookback_days: state.config.analysis_defaults.lookback_days,
             output_language: state.config.analysis_defaults.output_language,
@@ -649,6 +674,13 @@ function preserveScrollPosition(element, updateFn) {
     element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight - distanceFromBottom);
 }
 
+function isScrolledNearBottom(element, threshold = 36) {
+    if (!(element instanceof HTMLElement)) {
+        return true;
+    }
+    return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+}
+
 function getFocusIdentity(focus) {
     if (focus.detail?.type === "report") {
         return `report:${focus.detail.section}`;
@@ -701,6 +733,7 @@ function pushAgentTrace(trace) {
         state.run.seenTraceFingerprints.add(fingerprint);
     }
 
+    const wasAtLatest = isScrolledNearBottom(elements.toolTraceList);
     const entry = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         timestamp: new Date().toLocaleTimeString(),
@@ -711,8 +744,10 @@ function pushAgentTrace(trace) {
         content,
     };
 
-    state.run.agentTrace[agent] = [entry, ...(state.run.agentTrace[agent] || [])].slice(0, 12);
-    state.run.traceFeed = [entry, ...state.run.traceFeed].slice(0, 40);
+    state.run.agentTrace[agent] = [...(state.run.agentTrace[agent] || []), entry].slice(-12);
+    state.run.traceFeed = [...state.run.traceFeed, entry].slice(-40);
+    state.run.latestTraceId = entry.id;
+    state.run.flashLatestTrace = wasAtLatest;
     pushStreamFeed({
         title: `${agent} - ${entry.title}`,
         content: compactText(entry.content, 260),
@@ -728,7 +763,7 @@ function getAgentTraceEntries(agent, limit = 6, allowedPhases = null) {
     const filtered = Array.isArray(allowedPhases)
         ? entries.filter((entry) => allowedPhases.includes(entry.phase))
         : entries;
-    return filtered.slice(0, limit);
+    return filtered.slice(-limit);
 }
 
 function getAgentTraceMarkdown(agent, limit = 6, allowedPhases = null) {
@@ -842,6 +877,18 @@ function getCurrentLivePanel() {
             detail: { key: "portfolioDecision" },
             tone: "completed",
             badge: "Complete",
+        };
+    }
+
+    if (state.run.cancelled) {
+        return {
+            title: "Analysis stopped",
+            subtitle: "Cancelled by client",
+            content: state.run.cancelled.message || "Analysis was cancelled before completion.",
+            fallback: "Analysis was cancelled before completion.",
+            detail: null,
+            tone: "warning",
+            badge: "Stopped",
         };
     }
 
@@ -986,26 +1033,21 @@ function formatBlock(content, fallback = "No content yet.") {
 }
 
 function appendLog(label, payload, options = {}) {
-    if (payload && typeof payload === "object" && payload.phase === "heartbeat") {
-        return;
-    }
-
     const entry = buildLogEntry(label, payload);
-    if ((options.source || "frontend") !== "backend") {
+    entry.source = options.source || "frontend";
+    entry.level = payload && typeof payload === "object" ? payload.level || "info" : "info";
+    const fingerprint = payload && typeof payload === "object" && payload.phase === "heartbeat"
+        ? buildContentFingerprint(entry.label, entry.summary, payload.elapsed_seconds)
+        : buildContentFingerprint(entry.label, entry.summary);
+    if (!options.allowDuplicate && fingerprint && state.run.seenLogFingerprints.has(fingerprint)) {
         return;
     }
-    const fingerprint = buildContentFingerprint(entry.label, entry.summary);
-    if (fingerprint && state.run.seenLogFingerprints.has(fingerprint)) {
-        return;
-    }
-    if (fingerprint) {
+    if (!options.allowDuplicate && fingerprint) {
         state.run.seenLogFingerprints.add(fingerprint);
     }
 
-    state.run.logEntries.unshift(entry);
-    state.run.logEntries = state.run.logEntries.slice(0, 120);
-    state.run.logs.unshift(entry.detail);
-    state.run.logs = state.run.logs.slice(0, 120);
+    state.run.logEntries = [...state.run.logEntries, entry].slice(-120);
+    state.run.logs = [...state.run.logs, entry.detail].slice(-120);
     if (state.activeDetail?.key === "eventLog") {
         renderActiveDetail();
     }
@@ -1014,6 +1056,7 @@ function appendLog(label, payload, options = {}) {
 function setBusy(isBusy) {
     state.isBusy = isBusy;
     elements.runAnalysisButton.disabled = isBusy;
+    elements.stopAnalysisButton.disabled = !isBusy;
     elements.runFromModalButton.disabled = isBusy;
     elements.saveConfigButton.disabled = isBusy;
     elements.openConfigButton.disabled = isBusy;
@@ -1095,9 +1138,6 @@ function renderConfigPreview() {
     }
 
     const payload = collectConfigDraft();
-    const assetTypeMap = Object.fromEntries(
-        (state.config.analysis_options.asset_types || []).map((item) => [item.value, item.label]),
-    );
     const depthMap = Object.fromEntries(
         state.config.analysis_options.research_depths.map((item) => [item.value, item.label]),
     );
@@ -1105,26 +1145,17 @@ function renderConfigPreview() {
         state.config.analysis_options.analysts.map((item) => [item.value, item.label]),
     );
     const analystNames = payload.selected_analysts.map((key) => analystLabelMap[key] || key);
-    const resolvedAssetType = getResolvedAssetType();
     const chips = [
         ["Symbol", payload.symbol || "-"],
-        ["Asset", assetTypeMap[resolvedAssetType] || resolvedAssetType],
         ["Window", `${payload.lookback_days || 0}d`],
         ["Language", payload.output_language || "-"],
         ["Depth", depthMap[payload.research_depth] || payload.research_depth],
         ["Model", payload.model || "-"],
         ["Analysts", analystNames.length ? analystNames.join(" / ") : "None selected"],
         ["Checkpoint", payload.checkpoint_enabled ? "On" : "Off"],
-        ["Provider", state.config.provider || "minimax"],
     ];
 
     const notes = [];
-    if (payload.asset_type === "auto") {
-        notes.push("Auto asset detect is on.");
-    }
-    if (resolvedAssetType === "crypto") {
-        notes.push("Crypto mode removes Fundamentals Analyst automatically.");
-    }
     if (!analystNames.length) {
         notes.push("Select at least one analyst before running.");
     }
@@ -1168,27 +1199,23 @@ function renderTopNotice() {
     }
 
     const payload = getConfigSnapshot();
-    const assetTypeMap = Object.fromEntries(
-        (state.config.analysis_options.asset_types || []).map((item) => [item.value, item.label]),
-    );
-
     let notice = "Ready to run analysis.";
     if (state.isBusy) {
         const progress = state.run.status?.progress || { completed: 0, total: 0 };
         const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
-        const assetType = state.run.meta?.asset_type || getResolvedAssetType();
         const depth = state.run.meta?.research_depth || payload?.research_depth || state.config.analysis_defaults.research_depth;
         const lookback = state.run.meta?.lookback_days || payload?.lookback_days || state.config.analysis_defaults.lookback_days;
-        notice = `${symbol} - ${assetType} - ${lookback}d - ${depth} depth - ${progress.completed}/${progress.total} tasks`;
+        notice = `${symbol} - ${lookback}d - ${depth} depth - ${progress.completed}/${progress.total} tasks`;
     } else if (state.run.complete) {
         const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
         const signal = state.run.complete.signal || "analysis completed";
         const elapsed = state.run.complete.elapsed_seconds ? ` - ${state.run.complete.elapsed_seconds}s` : "";
         notice = `${symbol} - ${signal}${elapsed}`;
+    } else if (state.run.cancelled) {
+        const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
+        notice = `${symbol} - analysis stopped`;
     } else if (payload) {
-        const resolvedAssetType = getResolvedAssetType();
-        const assetLabel = assetTypeMap[resolvedAssetType] || resolvedAssetType;
-        notice = `${payload.symbol || "-"} - ${assetLabel} - ${payload.lookback_days || "-"}d - ${payload.output_language || "-"} - ${payload.selected_analysts.length} analysts`;
+        notice = `${payload.symbol || "-"} - ${payload.lookback_days || "-"}d - ${payload.output_language || "-"} - ${payload.selected_analysts.length} analysts`;
     }
 
     elements.topNoticeText.textContent = notice;
@@ -1233,6 +1260,8 @@ function renderProgress() {
         ? "Running"
         : state.run.complete
         ? "Completed"
+        : state.run.cancelled
+        ? "Stopped"
         : state.run.warnings.length
         ? "Attention"
         : "Idle";
@@ -1240,7 +1269,7 @@ function renderProgress() {
     elements.progressText.textContent = `${progress.completed} / ${progress.total}`;
     elements.progressPercentText.textContent = `${progress.percent || 0}%`;
     elements.progressFill.style.width = `${progress.percent || 0}%`;
-    elements.phaseText.textContent = state.run.status?.phase || "idle";
+    elements.phaseText.textContent = state.run.cancelled ? "cancelled" : state.run.status?.phase || "idle";
     elements.currentAgentText.textContent = state.run.status?.current_agent || "Waiting";
     elements.currentAgentText.title = elements.currentAgentText.textContent;
     elements.runStatusBadge.textContent = runStatus;
@@ -1249,6 +1278,8 @@ function renderProgress() {
     elements.endpointText.title = state.apiBaseUrl || "API unresolved";
     if (state.run.complete?.elapsed_seconds) {
         elements.elapsedText.textContent = `${state.run.complete.elapsed_seconds} s total`;
+    } else if (state.run.cancelled) {
+        elements.elapsedText.textContent = "Stopped by client";
     } else {
         elements.elapsedText.textContent = state.isBusy ? "Live stream active" : "Awaiting run";
     }
@@ -1332,21 +1363,48 @@ function renderReportGrid() {
 
     elements.activeReportText.textContent = state.isBusy
         ? "Live markdown stream"
-        : state.run.complete?.signal || "Awaiting live stream";
+        : state.run.cancelled?.message || state.run.complete?.signal || "Awaiting live stream";
+}
+
+function renderLogEntries(element, entries, emptyText, options = {}) {
+    if (!(element instanceof HTMLElement)) {
+        return;
+    }
+    const useDetail = Boolean(options.useDetail);
+    preserveScrollPosition(element, () => {
+        element.innerHTML = entries.length
+            ? entries
+                  .map((item) => {
+                      const message = useDetail ? item.detail : item.summary;
+                      return `
+                    <article class="event-log-item event-log-level-${escapeHtml(item.level || "info")}">
+                        <div class="event-log-topline">
+                            <strong class="event-log-label">${escapeHtml(item.label)}</strong>
+                            <span>${escapeHtml(item.timestamp)}</span>
+                        </div>
+                        <p class="event-log-message">${escapeHtml(message)}</p>
+                    </article>
+                `;
+                  })
+                  .join("")
+            : `<div class="event-log-empty">${escapeHtml(emptyText)}</div>`;
+    });
 }
 
 function renderOperationsRail() {
-    const feed = state.run.traceFeed
-        .filter((item) => item.phase === "tool_call" || item.phase === "tool_result")
-        .slice(0, TRACE_DISPLAY_LIMIT);
-    const latestUpdate = state.run.latestReportTitle || state.run.complete?.signal || feed[0]?.title || "No updates yet";
-    const totalToolEvents = state.run.traceFeed.filter((item) => item.phase === "tool_call" || item.phase === "tool_result").length;
+    const toolFeed = state.run.traceFeed.filter((item) => item.phase === "tool_call" || item.phase === "tool_result");
+    const feed = toolFeed.slice(-TRACE_DISPLAY_LIMIT);
+    const newestTool = feed[feed.length - 1];
+    const latestUpdate = state.run.latestReportTitle || state.run.complete?.signal || state.run.cancelled?.message || newestTool?.title || "No updates yet";
+    const totalToolEvents = toolFeed.length;
     const totalLogEvents = state.run.logEntries.length;
 
     elements.opsStatusText.textContent = state.isBusy
         ? `${feed.length} live updates`
         : state.run.complete
         ? "Run completed"
+        : state.run.cancelled
+        ? "Run stopped"
         : "Watching stream";
     elements.opsAgentText.textContent = totalToolEvents ? `${totalToolEvents} captured` : "No tool events";
     elements.opsAgentText.title = elements.opsAgentText.textContent;
@@ -1357,32 +1415,34 @@ function renderOperationsRail() {
     elements.eventLogStatusText.textContent = state.run.logEntries.length
         ? `${Math.min(state.run.logEntries.length, LOG_DISPLAY_LIMIT)} recent events`
         : "Recent SSE events";
-    elements.eventLog.innerHTML = state.run.logEntries.length
-        ? state.run.logEntries.slice(0, LOG_DISPLAY_LIMIT)
-              .map(
-                  (item) => `
-                    <article class="event-log-item">
-                        <div class="event-log-topline">
-                            <strong class="event-log-label">${escapeHtml(item.label)}</strong>
-                            <span>${escapeHtml(item.timestamp)}</span>
-                        </div>
-                        <p class="event-log-message">${escapeHtml(item.summary)}</p>
-                    </article>
-                `,
-              )
-              .join("")
-        : '<div class="event-log-empty">No SSE events yet. Run analysis to start the backend stream.</div>';
+    elements.executionLogStatusText.textContent = state.run.logEntries.length
+        ? `${Math.min(state.run.logEntries.length, EXECUTION_LOG_DISPLAY_LIMIT)} backend lines`
+        : "Waiting for stream";
 
-    elements.toolTraceList.innerHTML = feed.length
-        ? feed
-              .map(
-                  (item) => `
-                    <article class="tool-trace-item trace-tone-${escapeHtml(item.tone || "progress")} detail-trigger"
+    renderLogEntries(
+        elements.eventLog,
+        state.run.logEntries.slice(-LOG_DISPLAY_LIMIT),
+        "No SSE events yet. Run analysis to start the backend stream.",
+    );
+    renderLogEntries(
+        elements.executionLog,
+        state.run.logEntries.slice(-EXECUTION_LOG_DISPLAY_LIMIT),
+        "Backend log lines will appear here while analysis is running.",
+        { useDetail: true },
+    );
+
+    preserveScrollPosition(elements.toolTraceList, () => {
+        elements.toolTraceList.innerHTML = feed.length
+            ? feed
+                  .map((item) => {
+                      const shouldFlash = state.run.flashLatestTrace && item.id === state.run.latestTraceId;
+                      return `
+                    <article class="tool-trace-item trace-tone-${escapeHtml(item.tone || "progress")} ${shouldFlash ? "tool-trace-new" : ""} detail-trigger"
                         tabindex="0"
                         role="button"
                         data-detail-trace-id="${escapeHtml(item.id || "")}"
                         data-detail-title="${escapeHtml(`${item.agent || "Agent"} - ${formatTracePhaseLabel(item.phase)}`)}"
-                        data-detail-subtitle="${escapeHtml(item.title || "Trace detail") }"
+                        data-detail-subtitle="${escapeHtml(item.title || "Trace detail")}"
                         data-detail-mode="markdown">
                         <div class="tool-trace-topline">
                             <strong>${escapeHtml(item.agent || item.title || "Live update")}</strong>
@@ -1394,10 +1454,11 @@ function renderOperationsRail() {
                         </div>
                         <p>${escapeHtml(compactText(item.content || "", 320))}</p>
                     </article>
-                `,
-              )
-              .join("")
-        : '<div class="tool-trace-empty">Agent tool calls and reasoning traces will appear here when the backend stream starts.</div>';
+                                `;
+                                    })
+                                    .join("")
+                        : '<div class="tool-trace-empty">Agent tool calls and reasoning traces will appear here when the backend stream starts.</div>';
+        });
 }
 
 function renderResearchRoom() {
@@ -1446,7 +1507,7 @@ function renderFinalDecision() {
 function renderSmartNotes() {
     const notes = [];
     if (state.run.meta) {
-        notes.push(`Asset type: ${state.run.meta.asset_type}`);
+        notes.push(`Market mode: ${state.run.meta.asset_type}`);
         notes.push(`Lookback window: ${state.run.meta.lookback_days} day(s)`);
         notes.push(`Depth preset: ${state.run.meta.research_depth} (${state.run.meta.depth_rounds} rounds)`);
         notes.push(`Output language: ${state.run.meta.output_language}`);
@@ -1521,7 +1582,8 @@ function formatTraceDetailMarkdown(entry) {
 
     const content = String(entry.content || "").trim();
     const looksStructured = /^[\[{]/.test(content) || /^analysis\s/.test(content);
-    const body = looksStructured ? `\`\`\`text\n${content}\n\`\`\`` : content;
+    const hasLink = /https?:\/\//.test(content);
+    const body = looksStructured && !hasLink ? `\`\`\`text\n${content}\n\`\`\`` : content;
     return [
         `**Agent:** ${entry.agent || "Agent"}`,
         `**Phase:** ${formatTracePhaseLabel(entry.phase)}`,
@@ -1533,7 +1595,7 @@ function formatTraceDetailMarkdown(entry) {
 }
 
 function formatEventLogMarkdown(limit = 80) {
-    const entries = state.run.logEntries.slice(0, limit);
+    const entries = state.run.logEntries.slice(-limit);
     if (!entries.length) {
         return "";
     }
@@ -1763,6 +1825,7 @@ function handleServerEvent(event, data) {
 
     if (event === "complete") {
         state.run.complete = data;
+        state.run.cancelled = null;
         state.run.sections = { ...state.run.sections, ...(data.sections || {}) };
         state.run.research = data.research || state.run.research;
         state.run.risk = data.risk || state.run.risk;
@@ -1771,6 +1834,18 @@ function handleServerEvent(event, data) {
             title: "Final Decision",
             content: compactText(`${data.signal || "Completed"} - ${data.elapsed_seconds || 0}s`),
             tone: "completed",
+        });
+        renderAll();
+        return;
+    }
+
+    if (event === "cancelled") {
+        state.run.cancelled = data || { message: "Analysis was cancelled." };
+        appendLog("cancelled", { ...state.run.cancelled, phase: "cancelled" }, { source: "backend", allowDuplicate: true });
+        pushStreamFeed({
+            title: "Analysis stopped",
+            content: compactText(state.run.cancelled.message || "Analysis was cancelled."),
+            tone: "warning",
         });
         renderAll();
         return;
@@ -1806,16 +1881,6 @@ function populateLanguageOptions(config) {
     }
 
     syncLanguageControls();
-}
-
-function populateAssetTypeOptions(config) {
-    const currentValue = config.analysis_defaults.asset_type || "auto";
-    elements.assetTypeSelect.innerHTML = (config.analysis_options.asset_types || [])
-        .map(
-            (assetType) => `<option value="${escapeHtml(assetType.value)}">${escapeHtml(assetType.label)}</option>`,
-        )
-        .join("");
-    elements.assetTypeSelect.value = currentValue;
 }
 
 function populateLookbackPresets(config) {
@@ -1860,7 +1925,6 @@ function bindConfigInputListeners() {
     const sync = () => refreshConfigUi();
     [
         elements.symbolInput,
-        elements.assetTypeSelect,
         elements.analysisDateInput,
         elements.lookbackPresetSelect,
         elements.lookbackDaysInput,
@@ -1868,8 +1932,7 @@ function bindConfigInputListeners() {
         elements.customLanguageInput,
         elements.checkpointToggle,
         elements.languageSelect,
-    ].forEach((element) => element.addEventListener("input", sync));
-    elements.assetTypeSelect.addEventListener("change", sync);
+    ].filter(Boolean).forEach((element) => element.addEventListener("input", sync));
     elements.lookbackPresetSelect.addEventListener("change", () => {
         if (elements.lookbackPresetSelect.value !== CUSTOM_LOOKBACK_VALUE) {
             elements.lookbackDaysInput.value = elements.lookbackPresetSelect.value;
@@ -1899,7 +1962,6 @@ async function loadConfig() {
     state.apiBaseUrl = normalizeApiBaseUrl(config.api_base_url || state.apiBaseUrl);
 
     elements.symbolInput.value = config.analysis_defaults.symbol;
-    populateAssetTypeOptions(config);
     elements.analysisDateInput.value = config.analysis_defaults.analysis_date;
     populateLookbackPresets(config);
     elements.lookbackDaysInput.value = config.analysis_defaults.lookback_days;
@@ -1923,8 +1985,19 @@ async function runAnalysis() {
         throw new Error("Symbol, analysis date and model are required.");
     }
 
+    if (state.isBusy) {
+        return;
+    }
+
+    const runId = createRunId();
+    const controller = new AbortController();
+    payload.run_id = runId;
+
     state.run = createEmptyRunState();
     state.run.logs = [];
+    state.controller = controller;
+    state.activeRunId = runId;
+    state.stopRequested = false;
     setBusy(true);
     renderAll();
 
@@ -1935,6 +2008,7 @@ async function runAnalysis() {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify(payload),
+            signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -1942,14 +2016,63 @@ async function runAnalysis() {
         }
 
         await consumeEventStream(response);
+    } catch (error) {
+        if (state.stopRequested || isAbortError(error)) {
+            state.run.cancelled = state.run.cancelled || {
+                run_id: runId,
+                message: "Analysis stopped from the frontend.",
+            };
+            appendLog(
+                "cancelled",
+                {
+                    phase: "cancelled",
+                    message: state.run.cancelled.message,
+                    log_line: `analysis run_id=${runId} phase=cancelled message=${state.run.cancelled.message}`,
+                },
+                { source: "frontend", allowDuplicate: true },
+            );
+            return;
+        }
+        throw error;
     } finally {
+        state.controller = null;
+        state.activeRunId = null;
+        state.stopRequested = false;
         setBusy(false);
         renderAll();
     }
 }
 
+function stopActiveAnalysis() {
+    if (!state.isBusy) {
+        return;
+    }
+    const runId = state.activeRunId;
+    const message = "Stop requested from the frontend.";
+    state.stopRequested = true;
+    state.run.cancelled = { run_id: runId, message };
+    appendLog(
+        "cancelled",
+        {
+            phase: "cancelled",
+            message,
+            log_line: `analysis run_id=${runId || "unknown"} phase=cancelled message=${message}`,
+        },
+        { source: "frontend", allowDuplicate: true },
+    );
+    pushStreamFeed({
+        title: "Stop requested",
+        content: message,
+        tone: "warning",
+    });
+    renderAll();
+    requestBackendCancel(runId);
+    state.controller?.abort();
+}
+
 elements.openConfigButton.addEventListener("click", openConfigModal);
 elements.closeConfigButton.addEventListener("click", closeConfigModal);
+elements.stopAnalysisButton.addEventListener("click", stopActiveAnalysis);
 elements.runAnalysisButton.addEventListener("click", async () => {
     try {
         await runAnalysis();
@@ -2001,6 +2124,9 @@ elements.dashboard.addEventListener("click", (event) => {
     if (!(target instanceof HTMLElement)) {
         return;
     }
+    if (target.closest("a")) {
+        return;
+    }
     const trigger = target.closest(".detail-trigger");
     if (trigger instanceof HTMLElement && elements.dashboard.contains(trigger)) {
         openDetailFromTrigger(trigger);
@@ -2024,6 +2150,14 @@ window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !elements.configModal.classList.contains("hidden")) {
         closeConfigModal();
     }
+});
+
+window.addEventListener("beforeunload", () => {
+    if (!state.isBusy) {
+        return;
+    }
+    requestBackendCancel(state.activeRunId);
+    state.controller?.abort();
 });
 
 loadConfig().catch((error) => {

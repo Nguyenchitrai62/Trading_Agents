@@ -22,7 +22,7 @@ def create_trader(llm):
 
     def trader_node(state, name):
         company_name = state["company_of_interest"]
-        asset_type = state.get("asset_type", "stock")
+        asset_type = state.get("asset_type", "crypto")
         instrument_context = build_instrument_context(company_name, asset_type)
         investment_plan = state["investment_plan"]
 

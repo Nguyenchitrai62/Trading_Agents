@@ -44,6 +44,12 @@
                         <path d="M10 8.5L16 12l-6 3.5z" fill="currentColor" stroke="none"></path>
                     </svg>
                 </button>
+                <button id="stopAnalysisButton" class="toolbar-button toolbar-button-danger" type="button" aria-label="Stop analysis" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9"></circle>
+                        <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none"></rect>
+                    </svg>
+                </button>
             </div>
         </header>
 
@@ -79,6 +85,14 @@
                 </div>
 
                 <div id="teamStatusGrid" class="team-status-grid"></div>
+
+                <section class="execution-log-panel" aria-label="Backend analysis log">
+                    <div class="execution-log-header">
+                        <h3>Backend Log</h3>
+                        <span id="executionLogStatusText" class="window-status">Waiting for stream</span>
+                    </div>
+                    <div id="executionLog" class="event-log execution-event-log" aria-live="polite"></div>
+                </section>
             </section>
 
             <section class="window report-window">
@@ -147,11 +161,7 @@
                 <div class="config-grid four-up compact-grid-primary">
                     <label class="field">
                         <span>Symbol</span>
-                        <input id="symbolInput" type="text" placeholder="NVDA">
-                    </label>
-                    <label class="field">
-                        <span>Asset type</span>
-                        <select id="assetTypeSelect"></select>
+                        <input id="symbolInput" type="text" placeholder="BTC-USDT">
                     </label>
                     <label class="field">
                         <span>Analysis date</span>

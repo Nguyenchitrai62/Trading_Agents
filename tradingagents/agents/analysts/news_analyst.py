@@ -11,8 +11,8 @@ from tradingagents.dataflows.config import get_config
 def create_news_analyst(llm):
     def news_analyst_node(state):
         current_date = state["trade_date"]
-        asset_type = state.get("asset_type", "stock")
-        asset_label = "company" if asset_type == "stock" else "asset"
+        asset_type = state.get("asset_type", "crypto")
+        asset_label = "asset"
         instrument_context = build_instrument_context(
             state["company_of_interest"], asset_type
         )

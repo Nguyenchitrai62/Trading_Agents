@@ -40,7 +40,7 @@ def get_language_instruction() -> str:
     return f" Write your entire response in {lang}."
 
 
-def build_instrument_context(ticker: str, asset_type: str = "stock") -> str:
+def build_instrument_context(ticker: str, asset_type: str = "crypto") -> str:
     """Describe the exact instrument so agents preserve exchange-qualified tickers."""
     instrument_label = "asset" if asset_type == "crypto" else "instrument"
     extra_hint = (
@@ -51,7 +51,7 @@ def build_instrument_context(ticker: str, asset_type: str = "stock") -> str:
     return (
         f"The {instrument_label} to analyze is `{ticker}`. "
         "Use this exact ticker in every tool call, report, and recommendation, "
-        "preserving any exchange suffix (e.g. `.TO`, `.L`, `.HK`, `.T`, `-USD`)."
+        "preserving the crypto pair suffix (e.g. `-USDT`, `-USD`, or `/USDT`)."
         + extra_hint
     )
 

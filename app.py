@@ -1,7 +1,10 @@
 import asyncio
+import contextlib
+import io
 import json
 import logging
 import os
+import threading
 import time
 from copy import deepcopy
 from datetime import date, datetime
@@ -10,7 +13,7 @@ from typing import AsyncIterator, Callable, List, Literal
 
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -44,7 +47,7 @@ FRONTEND_DIR = ROOT_DIR / "FE"
 IMAGE_DIR = ROOT_DIR / "image"
 INDEX_FILE = ROOT_DIR / "index.html"
 CRYPTO_SUFFIXES = ("-USD", "-USDT", "-USDC", "-BTC", "-ETH")
-DEFAULT_ANALYSTS = ["market", "social", "news", "fundamentals"]
+DEFAULT_ANALYSTS = ["market", "social", "news"]
 RESEARCH_DEPTH_OPTIONS = {
     "quick": {
         "label": "Quick",
@@ -134,7 +137,7 @@ logger = logging.getLogger("tradingagents.app")
 
 DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
-DEFAULT_ASSET_TYPE = "auto"
+DEFAULT_ASSET_TYPE = "crypto"
 DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
 DEFAULT_RESEARCH_DEPTH = "medium"
 DEFAULT_SELECTED_ANALYSTS = DEFAULT_ANALYSTS.copy()
@@ -148,6 +151,9 @@ CORS_ALLOW_ORIGINS = [
 ALLOW_ALL_ORIGINS = not CORS_ALLOW_ORIGINS or CORS_ALLOW_ORIGINS == ["*"]
 
 app = FastAPI(title="TradingAgents Analysis API", version="2.0.0")
+
+ACTIVE_ANALYSIS_CANCEL_EVENTS: dict[str, threading.Event] = {}
+ACTIVE_ANALYSIS_LOCK = threading.Lock()
 
 app.add_middleware(
     CORSMiddleware,
@@ -164,7 +170,8 @@ if IMAGE_DIR.exists():
 
 class AnalysisRequest(BaseModel):
     symbol: str = Field(min_length=1)
-    asset_type: Literal["auto", "stock", "crypto"] = DEFAULT_ASSET_TYPE
+    asset_type: Literal["crypto"] = DEFAULT_ASSET_TYPE
+    run_id: str | None = Field(default=None, max_length=120)
     analysis_date: str = Field(default_factory=lambda: date.today().isoformat())
     lookback_days: int = Field(default=DEFAULT_ANALYSIS_LOOKBACK_DAYS, ge=1, le=90)
     output_language: str = Field(default=DEFAULT_OUTPUT_LANGUAGE)
@@ -179,10 +186,20 @@ class AnalysisRequest(BaseModel):
     @field_validator("symbol")
     @classmethod
     def normalize_symbol(cls, value: str) -> str:
-        normalized = value.strip().upper()
+        normalized = value.strip().upper().replace(" ", "")
         if not normalized:
             raise ValueError("symbol is required")
+        if "/" not in normalized and "-" not in normalized:
+            return f"{normalized}-USDT"
         return normalized
+
+    @field_validator("run_id")
+    @classmethod
+    def normalize_run_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip()
+        return normalized or None
 
     @field_validator("analysis_date")
     @classmethod
@@ -269,20 +286,59 @@ def ensure_analysis_runtime_available() -> None:
 
 
 def normalize_ticker_symbol(ticker: str) -> str:
-    return ticker.strip().upper()
+    normalized = ticker.strip().upper().replace(" ", "")
+    if normalized and "/" not in normalized and "-" not in normalized:
+        return f"{normalized}-USDT"
+    return normalized
 
 
-def detect_asset_type(ticker: str) -> str:
-    normalized = normalize_ticker_symbol(ticker)
-    if normalized.endswith(CRYPTO_SUFFIXES):
-        return "crypto"
-    return "stock"
-
-
-def filter_analysts_for_asset_type(selected_analysts: List[str], asset_type: str) -> List[str]:
-    if asset_type != "crypto":
-        return selected_analysts
+def filter_analysts_for_crypto(selected_analysts: List[str]) -> List[str]:
     return [analyst for analyst in selected_analysts if analyst != "fundamentals"]
+
+
+class AnalysisCancelled(Exception):
+    pass
+
+
+class AnalysisLogStream(io.TextIOBase):
+    def __init__(self, emit_log: Callable[[str, str, str], None], phase: str, level: str):
+        self.emit_log = emit_log
+        self.phase = phase
+        self.level = level
+        self._buffer = ""
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, value: str) -> int:
+        if not value:
+            return 0
+        self._buffer += value
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            if line.strip():
+                self.emit_log(line.strip(), self.phase, self.level)
+        return len(value)
+
+    def flush(self) -> None:
+        if self._buffer.strip():
+            self.emit_log(self._buffer.strip(), self.phase, self.level)
+        self._buffer = ""
+
+
+class AnalysisLoggingHandler(logging.Handler):
+    def __init__(self, emit_log: Callable[[str, str, str], None]):
+        super().__init__(level=logging.INFO)
+        self.emit_log = emit_log
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.name == logger.name:
+            return
+        try:
+            level = "warning" if record.levelno >= logging.WARNING else "info"
+            self.emit_log(self.format(record), "backend_log", level)
+        except Exception:
+            self.handleError(record)
 
 
 def _sse(event: str, data: dict) -> str:
@@ -822,7 +878,11 @@ def emit_snapshot_updates(previous: dict, current: dict, emit: Callable[[str, di
             )
 
 
-def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], None]) -> None:
+def run_trading_analysis(
+    request: AnalysisRequest,
+    emit: Callable[[str, dict], None],
+    cancel_event: threading.Event | None = None,
+) -> None:
     ensure_analysis_runtime_available()
     settings = resolve_minimax_settings()
     if not settings["configured"]:
@@ -831,10 +891,17 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
             detail="Set MINIMAX_API_KEY or MINIMAX_CN_API_KEY in .env before running analysis.",
         )
 
+    cancel_event = cancel_event or threading.Event()
     run_started_at = time.time()
     symbol = normalize_ticker_symbol(request.symbol)
 
-    def emit_analysis_log(message: str, phase: str = "backend", level: str = "info", **extra: object) -> None:
+    def emit_analysis_log(
+        message: str,
+        phase: str = "backend",
+        level: str = "info",
+        write_logger: bool = True,
+        **extra: object,
+    ) -> None:
         payload = {
             "level": level,
             "phase": phase,
@@ -847,21 +914,28 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
             f"analysis symbol={symbol} phase={phase} elapsed={payload['elapsed_seconds']}s "
             f"message={message} extra={extra_json}"
         )
-        log_method = logger.warning if level == "warning" else logger.info
-        log_method(
-            "analysis symbol=%s phase=%s elapsed=%ss message=%s extra=%s",
-            symbol,
-            phase,
-            payload["elapsed_seconds"],
-            message,
-            extra,
-        )
+        if write_logger:
+            log_method = logger.warning if level == "warning" else logger.info
+            log_method(
+                "analysis symbol=%s phase=%s elapsed=%ss message=%s extra=%s",
+                symbol,
+                phase,
+                payload["elapsed_seconds"],
+                message,
+                extra,
+            )
         emit("analysis_log", payload)
 
-    asset_type = detect_asset_type(symbol) if request.asset_type == "auto" else request.asset_type
-    filtered_analysts = filter_analysts_for_asset_type(request.selected_analysts, asset_type)
+    def ensure_not_cancelled() -> None:
+        if cancel_event.is_set():
+            emit_analysis_log("Analysis cancellation requested; stopping active graph run.", "cancelled", "warning")
+            raise AnalysisCancelled()
+
+    graph = None
+    asset_type = DEFAULT_ASSET_TYPE
+    filtered_analysts = filter_analysts_for_crypto(request.selected_analysts)
     if not filtered_analysts:
-        raise HTTPException(status_code=400, detail="No valid analysts remain for the selected asset type.")
+        raise HTTPException(status_code=400, detail="No valid analysts remain for crypto analysis.")
 
     emit_analysis_log(
         "Request validated and runtime options resolved.",
@@ -874,7 +948,7 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
         output_language=request.output_language,
     )
 
-    if asset_type == "crypto" and filtered_analysts != request.selected_analysts:
+    if filtered_analysts != request.selected_analysts:
         emit_analysis_log(
             "Fundamentals Analyst disabled for crypto analysis.",
             "prepare",
@@ -886,6 +960,8 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
                 "message": "Fundamentals Analyst was disabled automatically for crypto analysis.",
             },
         )
+
+    ensure_not_cancelled()
 
     config = build_analysis_config(request, settings)
     emit_analysis_log(
@@ -921,10 +997,11 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
     )
     emit("status_snapshot", initial_status)
 
+    ensure_not_cancelled()
     graph.ticker = symbol
-    emit_analysis_log("Resolving pending memory/reflection entries.", "memory")
-    graph._resolve_pending_entries(symbol)
+    emit_analysis_log("Skipping stock outcome reflection for crypto analysis.", "memory")
 
+    ensure_not_cancelled()
     if config.get("checkpoint_enabled"):
         emit_analysis_log("Checkpoint resume requested; preparing checkpointer.", "checkpoint")
         graph._checkpointer_ctx = get_checkpointer(config["data_cache_dir"], symbol)
@@ -942,13 +1019,29 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
             },
         )
 
+    def emit_captured_log(message: str, phase: str = "backend_log", level: str = "info") -> None:
+        emit_analysis_log(message, phase, level, write_logger=False)
+
+    log_capture = AnalysisLoggingHandler(emit_captured_log)
+    log_capture.setFormatter(logging.Formatter("%(levelname)s %(name)s - %(message)s"))
+    tradingagents_logger = logging.getLogger("tradingagents")
+    stdout_stream = AnalysisLogStream(emit_captured_log, "backend_stdout", "info")
+    stderr_stream = AnalysisLogStream(emit_captured_log, "backend_stderr", "warning")
+    stdout_redirect = contextlib.redirect_stdout(stdout_stream)
+    stderr_redirect = contextlib.redirect_stderr(stderr_stream)
+    tradingagents_logger.addHandler(log_capture)
+    stdout_redirect.__enter__()
+    stderr_redirect.__enter__()
+
     final_state: dict = {}
     previous_snapshot = initial_snapshot
     previous_status = initial_status
     seen_message_signatures: set[str] = set()
     try:
+        ensure_not_cancelled()
         emit_analysis_log("Loading past context from memory log.", "memory")
         past_context = graph.memory_log.get_past_context(symbol)
+        ensure_not_cancelled()
         emit_analysis_log("Creating initial graph state.", "graph_setup")
         init_state = graph.propagator.create_initial_state(
             symbol,
@@ -965,6 +1058,7 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
         chunk_index = 0
         emit_analysis_log("Graph stream started.", "stream", current_agent=current_agent)
         for chunk in graph.graph.stream(init_state, **args):
+            ensure_not_cancelled()
             chunk_index += 1
             final_state.update(chunk)
             current_snapshot = extract_runtime_snapshot(final_state)
@@ -989,6 +1083,7 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
                 emit("status_snapshot", current_status)
                 previous_status = current_status
             previous_snapshot = current_snapshot
+            ensure_not_cancelled()
 
         if not final_state.get("final_trade_decision"):
             raise RuntimeError("Analysis finished without a final_trade_decision.")
@@ -1023,23 +1118,42 @@ def run_trading_analysis(request: AnalysisRequest, emit: Callable[[str, dict], N
             },
         )
     finally:
-        if graph._checkpointer_ctx is not None:
+        stdout_stream.flush()
+        stderr_stream.flush()
+        stderr_redirect.__exit__(None, None, None)
+        stdout_redirect.__exit__(None, None, None)
+        tradingagents_logger.removeHandler(log_capture)
+        if graph is not None and graph._checkpointer_ctx is not None:
             graph._checkpointer_ctx.__exit__(None, None, None)
             graph._checkpointer_ctx = None
             graph.graph = graph.workflow.compile()
 
 
-async def generate_analysis_stream(request: AnalysisRequest) -> AsyncIterator[str]:
+async def generate_analysis_stream(analysis_request: AnalysisRequest, http_request: Request) -> AsyncIterator[str]:
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[str | None] = asyncio.Queue()
     stream_started_at = time.time()
+    cancel_event = threading.Event()
+
+    if analysis_request.run_id:
+        with ACTIVE_ANALYSIS_LOCK:
+            ACTIVE_ANALYSIS_CANCEL_EVENTS[analysis_request.run_id] = cancel_event
 
     def emit(event: str, data: dict) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(_sse(event, data)), loop).result()
 
     def worker() -> None:
         try:
-            run_trading_analysis(request, emit)
+            run_trading_analysis(analysis_request, emit, cancel_event)
+        except AnalysisCancelled:
+            logger.info("analysis cancelled: run_id=%s symbol=%s", analysis_request.run_id, analysis_request.symbol)
+            emit(
+                "cancelled",
+                {
+                    "run_id": analysis_request.run_id,
+                    "message": "Analysis was cancelled before completion.",
+                },
+            )
         except HTTPException as exc:
             logger.warning("analysis request failed: %s", exc.detail)
             emit("error", {"error": exc.detail})
@@ -1052,10 +1166,27 @@ async def generate_analysis_stream(request: AnalysisRequest) -> AsyncIterator[st
     worker_task = asyncio.create_task(asyncio.to_thread(worker))
     try:
         while True:
+            if await http_request.is_disconnected():
+                cancel_event.set()
+                logger.info(
+                    "analysis client disconnected: run_id=%s symbol=%s",
+                    analysis_request.run_id,
+                    analysis_request.symbol,
+                )
+                break
+
             try:
                 item = await asyncio.wait_for(queue.get(), timeout=STREAM_HEARTBEAT_SECONDS)
             except asyncio.TimeoutError:
                 if worker_task.done():
+                    break
+                if await http_request.is_disconnected():
+                    cancel_event.set()
+                    logger.info(
+                        "analysis client disconnected during heartbeat: run_id=%s symbol=%s",
+                        analysis_request.run_id,
+                        analysis_request.symbol,
+                    )
                     break
                 heartbeat_elapsed = round(time.time() - stream_started_at, 2)
                 yield _sse(
@@ -1067,7 +1198,7 @@ async def generate_analysis_stream(request: AnalysisRequest) -> AsyncIterator[st
                         "elapsed_seconds": heartbeat_elapsed,
                         "log_line": (
                             "analysis symbol="
-                            f"{request.symbol} phase=heartbeat elapsed={heartbeat_elapsed}s "
+                            f"{analysis_request.symbol} phase=heartbeat elapsed={heartbeat_elapsed}s "
                             "message=Backend is still processing the active graph node. extra={}"
                         ),
                     },
@@ -1076,8 +1207,30 @@ async def generate_analysis_stream(request: AnalysisRequest) -> AsyncIterator[st
             if item is None:
                 break
             yield item
+    except asyncio.CancelledError:
+        cancel_event.set()
+        logger.info(
+            "analysis stream task cancelled: run_id=%s symbol=%s",
+            analysis_request.run_id,
+            analysis_request.symbol,
+        )
+        raise
     finally:
-        await worker_task
+        if analysis_request.run_id:
+            with ACTIVE_ANALYSIS_LOCK:
+                ACTIVE_ANALYSIS_CANCEL_EVENTS.pop(analysis_request.run_id, None)
+        if not worker_task.done():
+            cancel_event.set()
+            try:
+                await asyncio.wait_for(asyncio.shield(worker_task), timeout=1.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "analysis worker is waiting for the active graph call to return: run_id=%s symbol=%s",
+                    analysis_request.run_id,
+                    analysis_request.symbol,
+                )
+        else:
+            await worker_task
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1118,10 +1271,31 @@ async def chat_completion(request: ChatRequest):
     return await generate_non_streaming_chat(request)
 
 
+@app.post("/api/analyze/{run_id}/cancel")
+async def cancel_trading_analysis(run_id: str) -> dict:
+    with ACTIVE_ANALYSIS_LOCK:
+        cancel_event = ACTIVE_ANALYSIS_CANCEL_EVENTS.get(run_id)
+
+    if cancel_event is None:
+        return {
+            "cancelled": False,
+            "run_id": run_id,
+            "message": "No active analysis stream matched this run id.",
+        }
+
+    cancel_event.set()
+    logger.info("analysis cancel requested: run_id=%s", run_id)
+    return {
+        "cancelled": True,
+        "run_id": run_id,
+        "message": "Cancellation requested for the active analysis stream.",
+    }
+
+
 @app.post("/api/analyze")
-async def analyze_trading_agents(request: AnalysisRequest):
+async def analyze_trading_agents(analysis_request: AnalysisRequest, http_request: Request):
     return StreamingResponse(
-        generate_analysis_stream(request),
+        generate_analysis_stream(analysis_request, http_request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

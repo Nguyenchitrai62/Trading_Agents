@@ -30,8 +30,6 @@ from tradingagents.dataflows.config import set_config
 from tradingagents.agents.utils.agent_utils import (
     get_crypto_indicators,
     get_crypto_ohlcv,
-    get_stock_data,
-    get_indicators,
     get_fundamentals,
     get_balance_sheet,
     get_cashflow,
@@ -162,13 +160,8 @@ class TradingAgentsGraph:
         return {
             "market": ToolNode(
                 [
-                    # Core stock data tools
-                    get_stock_data,
-                    # Intraday crypto market data
                     get_crypto_ohlcv,
                     get_crypto_indicators,
-                    # Technical indicators
-                    get_indicators,
                 ]
             ),
             "social": ToolNode(
@@ -297,12 +290,10 @@ class TradingAgentsGraph:
         if updates:
             self.memory_log.batch_update_with_outcomes(updates)
 
-    def propagate(self, company_name, trade_date, asset_type: str = "stock"):
-        """Run the trading agents graph for a company on a specific date.
+    def propagate(self, company_name, trade_date, asset_type: str = "crypto"):
+        """Run the trading agents graph for an asset on a specific date.
 
-        ``asset_type`` selects between the stock pipeline (default) and the
-        crypto pipeline (``"crypto"``) shipped in #567 — the CLI auto-detects
-        from the ticker; programmatic callers pass it explicitly. When
+        ``asset_type`` defaults to the crypto pipeline for this backend. When
         ``checkpoint_enabled`` is set in config, the graph is recompiled with
         a per-ticker SqliteSaver so a crashed run can resume from the last
         successful node on a subsequent invocation with the same ticker+date.
@@ -338,7 +329,7 @@ class TradingAgentsGraph:
                 self._checkpointer_ctx = None
                 self.graph = self.workflow.compile()
 
-    def _run_graph(self, company_name, trade_date, asset_type: str = "stock"):
+    def _run_graph(self, company_name, trade_date, asset_type: str = "crypto"):
         """Execute the graph and write the resulting state to disk and memory log."""
         # Initialize state — inject memory log context for PM.
         past_context = self.memory_log.get_past_context(company_name)

@@ -3,22 +3,17 @@
     provider: "minimax",
     defaultModel: "MiniMax-M2.7",
     analysisDefaults: {
-        symbol: "BTC",
-        assetType: "auto",
+        symbol: "BTC-USDT",
+        assetType: "crypto",
         analysisDate: "",
         lookbackDays: 7,
         outputLanguage: "Vietnamese",
-        selectedAnalysts: ["market", "social", "news", "fundamentals"],
+        selectedAnalysts: ["market", "social", "news"],
         researchDepth: "medium",
         model: "MiniMax-M2.7",
         checkpointEnabled: false,
     },
     analysisOptions: {
-        assetTypes: [
-            { value: "auto", label: "Auto detect" },
-            { value: "stock", label: "Stock" },
-            { value: "crypto", label: "Crypto" },
-        ],
         lookbackPresets: [
             { value: "7", label: "7 days", days: 7 },
             { value: "14", label: "14 days", days: 14 },
