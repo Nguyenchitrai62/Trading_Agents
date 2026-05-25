@@ -85,14 +85,17 @@
                 </div>
 
                 <div id="teamStatusGrid" class="team-status-grid"></div>
+            </section>
 
-                <section class="execution-log-panel" aria-label="Backend analysis log">
-                    <div class="execution-log-header">
-                        <h3>Backend Log</h3>
-                        <span id="executionLogStatusText" class="window-status">Waiting for stream</span>
+            <section class="window backend-log-window" aria-label="Backend analysis log">
+                <div class="window-header execution-log-header">
+                    <div>
+                        <p class="window-kicker">Runtime stream</p>
+                        <h2>Backend Log</h2>
                     </div>
-                    <div id="executionLog" class="event-log execution-event-log" aria-live="polite"></div>
-                </section>
+                    <span id="executionLogStatusText" class="window-status">Waiting for stream</span>
+                </div>
+                <div id="executionLog" class="event-log execution-event-log" aria-live="polite"></div>
             </section>
 
             <section class="window report-window">

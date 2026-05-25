@@ -807,6 +807,56 @@ function getStatusGroups() {
     return state.run.status?.groups || getFallbackStatusGroups();
 }
 
+function buildCancelledStatus(status) {
+    const fallbackGroups = getFallbackStatusGroups();
+    const sourceGroups = status?.groups || fallbackGroups;
+    const groups = Object.fromEntries(
+        Object.entries(sourceGroups).map(([groupKey, items]) => [
+            groupKey,
+            (items || []).map((item) => ({
+                ...item,
+                status: item.status === "completed" ? "completed" : "pending",
+            })),
+        ]),
+    );
+
+    const progress = status?.progress || { completed: 0, total: 0, percent: 0 };
+    const total = Number(progress.total || 0);
+    const completed = Number(progress.completed || 0);
+
+    return {
+        current_agent: null,
+        phase: "cancelled",
+        progress: {
+            completed,
+            total,
+            percent: total ? Math.min(100, roundToOneDecimal((completed / total) * 100)) : 0,
+        },
+        groups,
+    };
+}
+
+function roundToOneDecimal(value) {
+    return Math.round(Number(value || 0) * 10) / 10;
+}
+
+function applyStoppedRunState(payload = {}) {
+    state.run.cancelled = payload && typeof payload === "object"
+        ? payload
+        : { message: String(payload || "Analysis was cancelled.") };
+    state.run.status = buildCancelledStatus(state.run.status);
+    state.run.lastTrackedAgent = null;
+    state.run.flashLatestTrace = false;
+    state.run.latestTraceId = null;
+}
+
+function mergeStatePatch(currentState, patch) {
+    if (!patch || typeof patch !== "object") {
+        return currentState || {};
+    }
+    return { ...(currentState || {}), ...patch };
+}
+
 function getTaskDetailDescriptor(groupKey, item) {
     if (groupKey === "analysts") {
         const report = REPORT_BY_ANALYST[item.key];
@@ -1200,7 +1250,10 @@ function renderTopNotice() {
 
     const payload = getConfigSnapshot();
     let notice = "Ready to run analysis.";
-    if (state.isBusy) {
+    if (state.run.cancelled) {
+        const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
+        notice = `${symbol} - analysis stopped`;
+    } else if (state.isBusy) {
         const progress = state.run.status?.progress || { completed: 0, total: 0 };
         const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
         const depth = state.run.meta?.research_depth || payload?.research_depth || state.config.analysis_defaults.research_depth;
@@ -1211,9 +1264,6 @@ function renderTopNotice() {
         const signal = state.run.complete.signal || "analysis completed";
         const elapsed = state.run.complete.elapsed_seconds ? ` - ${state.run.complete.elapsed_seconds}s` : "";
         notice = `${symbol} - ${signal}${elapsed}`;
-    } else if (state.run.cancelled) {
-        const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
-        notice = `${symbol} - analysis stopped`;
     } else if (payload) {
         notice = `${payload.symbol || "-"} - ${payload.lookback_days || "-"}d - ${payload.output_language || "-"} - ${payload.selected_analysts.length} analysts`;
     }
@@ -1256,12 +1306,12 @@ function renderTeamStatusGrid() {
 
 function renderProgress() {
     const progress = state.run.status?.progress || { completed: 0, total: 0, percent: 0 };
-    const runStatus = state.isBusy
+    const runStatus = state.run.cancelled
+        ? "Stopped"
+        : state.isBusy
         ? "Running"
         : state.run.complete
         ? "Completed"
-        : state.run.cancelled
-        ? "Stopped"
         : state.run.warnings.length
         ? "Attention"
         : "Idle";
@@ -1361,9 +1411,8 @@ function renderReportGrid() {
         });
     }
 
-    elements.activeReportText.textContent = state.isBusy
-        ? "Live markdown stream"
-        : state.run.cancelled?.message || state.run.complete?.signal || "Awaiting live stream";
+    elements.activeReportText.textContent = state.run.cancelled?.message
+        || (state.isBusy ? "Live markdown stream" : state.run.complete?.signal || "Awaiting live stream");
 }
 
 function renderLogEntries(element, entries, emptyText, options = {}) {
@@ -1399,12 +1448,12 @@ function renderOperationsRail() {
     const totalToolEvents = toolFeed.length;
     const totalLogEvents = state.run.logEntries.length;
 
-    elements.opsStatusText.textContent = state.isBusy
+    elements.opsStatusText.textContent = state.run.cancelled
+        ? "Run stopped"
+        : state.isBusy
         ? `${feed.length} live updates`
         : state.run.complete
         ? "Run completed"
-        : state.run.cancelled
-        ? "Run stopped"
         : "Watching stream";
     elements.opsAgentText.textContent = totalToolEvents ? `${totalToolEvents} captured` : "No tool events";
     elements.opsAgentText.title = elements.opsAgentText.textContent;
@@ -1773,10 +1822,11 @@ function handleServerEvent(event, data) {
     }
 
     if (event === "debate_update") {
+        const patch = data.patch || data.state || {};
         if (data.team === "research") {
-            state.run.research = data.state || {};
+            state.run.research = mergeStatePatch(state.run.research, patch);
         } else if (data.team === "risk") {
-            state.run.risk = data.state || {};
+            state.run.risk = mergeStatePatch(state.run.risk, patch);
         }
         pushStreamFeed({
             title: data.speaker,
@@ -1826,9 +1876,9 @@ function handleServerEvent(event, data) {
     if (event === "complete") {
         state.run.complete = data;
         state.run.cancelled = null;
-        state.run.sections = { ...state.run.sections, ...(data.sections || {}) };
-        state.run.research = data.research || state.run.research;
-        state.run.risk = data.risk || state.run.risk;
+        state.run.sections = { ...state.run.sections, ...(data.sections_patch || data.sections || {}) };
+        state.run.research = mergeStatePatch(state.run.research, data.research_patch || data.research || {});
+        state.run.risk = mergeStatePatch(state.run.risk, data.risk_patch || data.risk || {});
         state.run.status = data.status || state.run.status;
         pushStreamFeed({
             title: "Final Decision",
@@ -1840,7 +1890,7 @@ function handleServerEvent(event, data) {
     }
 
     if (event === "cancelled") {
-        state.run.cancelled = data || { message: "Analysis was cancelled." };
+        applyStoppedRunState(data || { message: "Analysis was cancelled." });
         appendLog("cancelled", { ...state.run.cancelled, phase: "cancelled" }, { source: "backend", allowDuplicate: true });
         pushStreamFeed({
             title: "Analysis stopped",
@@ -2018,10 +2068,10 @@ async function runAnalysis() {
         await consumeEventStream(response);
     } catch (error) {
         if (state.stopRequested || isAbortError(error)) {
-            state.run.cancelled = state.run.cancelled || {
+            applyStoppedRunState(state.run.cancelled || {
                 run_id: runId,
                 message: "Analysis stopped from the frontend.",
-            };
+            });
             appendLog(
                 "cancelled",
                 {
@@ -2050,7 +2100,7 @@ function stopActiveAnalysis() {
     const runId = state.activeRunId;
     const message = "Stop requested from the frontend.";
     state.stopRequested = true;
-    state.run.cancelled = { run_id: runId, message };
+    applyStoppedRunState({ run_id: runId, message });
     appendLog(
         "cancelled",
         {

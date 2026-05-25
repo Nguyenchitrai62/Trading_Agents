@@ -1,5 +1,7 @@
 import asyncio
 import contextlib
+import gc
+import hashlib
 import io
 import json
 import logging
@@ -135,6 +137,10 @@ logging.basicConfig(
 logger = logging.getLogger("tradingagents.app")
 
 
+APP_TITLE = "TradingAgents Analysis API"
+APP_VERSION = "0.0.1"
+
+
 DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
 DEFAULT_ASSET_TYPE = "crypto"
@@ -150,7 +156,7 @@ CORS_ALLOW_ORIGINS = [
 ]
 ALLOW_ALL_ORIGINS = not CORS_ALLOW_ORIGINS or CORS_ALLOW_ORIGINS == ["*"]
 
-app = FastAPI(title="TradingAgents Analysis API", version="2.0.0")
+app = FastAPI(title=APP_TITLE, version=APP_VERSION)
 
 ACTIVE_ANALYSIS_CANCEL_EVENTS: dict[str, threading.Event] = {}
 ACTIVE_ANALYSIS_LOCK = threading.Lock()
@@ -572,20 +578,23 @@ def _tool_call_summary(tool_call: dict) -> str:
 
 
 def _build_message_signature(message: object) -> str:
+    raw_signature = ""
     if hasattr(message, "id") and getattr(message, "id"):
-        return str(getattr(message, "id"))
-    return json.dumps(
-        {
-            "type": message.__class__.__name__,
-            "name": getattr(message, "name", ""),
-            "content": _normalize_message_content(getattr(message, "content", "")),
-            "tool_calls": getattr(message, "tool_calls", []),
-            "tool_call_id": getattr(message, "tool_call_id", ""),
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        default=str,
-    )
+        raw_signature = str(getattr(message, "id"))
+    else:
+        raw_signature = json.dumps(
+            {
+                "type": message.__class__.__name__,
+                "name": getattr(message, "name", ""),
+                "content": _normalize_message_content(getattr(message, "content", "")),
+                "tool_calls": getattr(message, "tool_calls", []),
+                "tool_call_id": getattr(message, "tool_call_id", ""),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+    return hashlib.sha1(raw_signature.encode("utf-8", errors="ignore")).hexdigest()
 
 
 def emit_message_progress_updates(
@@ -823,6 +832,22 @@ def build_status_snapshot(snapshot: dict, selected_analysts: List[str], current_
     }
 
 
+def build_changed_fields(previous: dict, current: dict) -> dict:
+    return {
+        key: value
+        for key, value in current.items()
+        if value != previous.get(key)
+    }
+
+
+def build_changed_sections(previous: dict, current: dict) -> dict:
+    return {
+        key: value
+        for key, value in current.items()
+        if value and value != previous.get(key)
+    }
+
+
 def emit_snapshot_updates(previous: dict, current: dict, emit: Callable[[str, dict], None]) -> None:
     previous_sections = previous.get("sections", {})
     current_sections = current.get("sections", {})
@@ -854,7 +879,7 @@ def emit_snapshot_updates(previous: dict, current: dict, emit: Callable[[str, di
                 "team": "research",
                 "speaker": speaker,
                 "content": current_investment["current_response"],
-                "state": current_investment,
+                "patch": build_changed_fields(previous_investment, current_investment),
             },
         )
 
@@ -873,7 +898,7 @@ def emit_snapshot_updates(previous: dict, current: dict, emit: Callable[[str, di
                     "team": "risk",
                     "speaker": speaker,
                     "content": current_risk[field_name],
-                    "state": current_risk,
+                    "patch": build_changed_fields(previous_risk, current_risk),
                 },
             )
 
@@ -1078,6 +1103,8 @@ def run_trading_analysis(
                 seen_message_signatures,
                 emit,
             )
+            if final_state.get("messages"):
+                final_state["messages"] = []
             emit_snapshot_updates(previous_snapshot, current_snapshot, emit)
             if current_status != previous_status:
                 emit("status_snapshot", current_status)
@@ -1100,6 +1127,9 @@ def run_trading_analysis(
 
         completed_snapshot = extract_runtime_snapshot(final_state)
         completed_status = build_status_snapshot(completed_snapshot, filtered_analysts, "Portfolio Manager")
+        completed_sections_patch = build_changed_sections(previous_snapshot.get("sections", {}), completed_snapshot["sections"])
+        completed_research_patch = build_changed_fields(previous_snapshot.get("investment", {}), completed_snapshot["investment"])
+        completed_risk_patch = build_changed_fields(previous_snapshot.get("risk", {}), completed_snapshot["risk"])
         emit_analysis_log(
             "Analysis completed and final decision stored.",
             "complete",
@@ -1111,9 +1141,9 @@ def run_trading_analysis(
             {
                 "elapsed_seconds": round(time.time() - started_at, 2),
                 "signal": graph.process_signal(final_state["final_trade_decision"]),
-                "sections": completed_snapshot["sections"],
-                "research": completed_snapshot["investment"],
-                "risk": completed_snapshot["risk"],
+                "sections_patch": completed_sections_patch,
+                "research_patch": completed_research_patch,
+                "risk_patch": completed_risk_patch,
                 "status": completed_status,
             },
         )
@@ -1127,6 +1157,13 @@ def run_trading_analysis(
             graph._checkpointer_ctx.__exit__(None, None, None)
             graph._checkpointer_ctx = None
             graph.graph = graph.workflow.compile()
+        if graph is not None:
+            graph.curr_state = None
+        final_state.clear()
+        previous_snapshot.clear()
+        previous_status.clear()
+        seen_message_signatures.clear()
+        gc.collect()
 
 
 async def generate_analysis_stream(analysis_request: AnalysisRequest, http_request: Request) -> AsyncIterator[str]:
@@ -1251,6 +1288,8 @@ async def health_check() -> dict:
     settings = resolve_minimax_settings()
     return {
         "status": "healthy",
+        "title": APP_TITLE,
+        "version": APP_VERSION,
         "configured": settings["configured"],
         "provider": settings["provider"],
         "modes": ["analysis", "chat"],
