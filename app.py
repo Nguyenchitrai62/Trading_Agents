@@ -27,24 +27,38 @@ load_dotenv(ROOT_DIR / ".env")
 load_dotenv(ROOT_DIR / ".env.enterprise", override=False)
 
 
-def _apply_cpu_thread_guardrail() -> None:
-    raw_threads = os.getenv("ANALYSIS_CPU_THREADS", "1").strip() or "1"
-    try:
-        threads = max(1, int(raw_threads))
-    except ValueError:
-        threads = 1
-    thread_value = str(threads)
-    for name in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-    ):
-        os.environ[name] = thread_value
+CPU_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+)
 
 
-_apply_cpu_thread_guardrail()
+def _auto_cpu_threads() -> int:
+    return max(1, os.cpu_count() or 1)
+
+
+def _configured_cpu_threads() -> int:
+    for name in CPU_THREAD_ENV_VARS:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            continue
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            continue
+    return _auto_cpu_threads()
+
+
+def _apply_cpu_thread_defaults() -> None:
+    thread_value = str(_configured_cpu_threads())
+    for name in CPU_THREAD_ENV_VARS:
+        os.environ.setdefault(name, thread_value)
+
+
+_apply_cpu_thread_defaults()
 
 try:
     from tradingagents.default_config import DEFAULT_CONFIG
@@ -185,16 +199,6 @@ def _memory_limit_mb() -> int | None:
     return min(candidates) if candidates else None
 
 
-def _default_resource_constrained_mode() -> bool:
-    if any(
-        os.getenv(name, "").strip()
-        for name in ("RENDER", "RENDER_INSTANCE_ID", "RENDER_SERVICE_ID")
-    ):
-        return True
-    memory_limit = _memory_limit_mb()
-    return memory_limit is not None and memory_limit <= 1536
-
-
 def _process_rss_mb() -> int | None:
     try:
         import resource
@@ -220,18 +224,15 @@ logger = logging.getLogger("tradingagents.app")
 
 
 APP_TITLE = "TradingAgents Analysis API"
-APP_VERSION = "0.0.5"
+APP_VERSION = "0.1.0"
 
 
 DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
 DEFAULT_ASSET_TYPE = "crypto"
 DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
-RESOURCE_CONSTRAINED_MODE = _env_bool(
-    "ANALYSIS_RESOURCE_CONSTRAINED",
-    _default_resource_constrained_mode(),
-)
-ANALYSIS_CPU_THREADS = max(1, _env_int("ANALYSIS_CPU_THREADS", 1))
+RESOURCE_CONSTRAINED_MODE = False
+ANALYSIS_CPU_THREADS = _configured_cpu_threads()
 DEFAULT_RESEARCH_DEPTH = "medium"
 DEFAULT_SELECTED_ANALYSTS = DEFAULT_ANALYSTS.copy()
 DEFAULT_CHECKPOINT_ENABLED = False
@@ -240,10 +241,7 @@ ANALYSIS_VERBOSE_RUNTIME_LOGS = _env_bool(
     "ANALYSIS_VERBOSE_RUNTIME_LOGS",
     not RESOURCE_CONSTRAINED_MODE,
 )
-ANALYSIS_MAX_CONCURRENT_RUNS = max(
-    1,
-    _env_int("ANALYSIS_MAX_CONCURRENT_RUNS", 1 if RESOURCE_CONSTRAINED_MODE else 2),
-)
+ANALYSIS_MAX_CONCURRENT_RUNS = max(2, ANALYSIS_CPU_THREADS)
 ANALYSIS_SSE_QUEUE_MAXSIZE = max(
     8,
     _env_int("ANALYSIS_SSE_QUEUE_MAXSIZE", 32 if RESOURCE_CONSTRAINED_MODE else 128),
@@ -656,6 +654,8 @@ def build_analysis_config(request: AnalysisRequest, settings: dict, runtime_prof
             "crypto_market_lookback_days": request.lookback_days,
             "analysis_llm_max_tokens": runtime_profile["llm_max_tokens"],
             "checkpoint_enabled": request.checkpoint_enabled,
+            "memory_log_path": None,
+            "persist_analysis_artifacts": False,
         }
     )
     return config
@@ -1278,8 +1278,12 @@ def run_trading_analysis(
     seen_message_signatures: set[str] = set()
     try:
         ensure_not_cancelled()
-        emit_analysis_log("Loading past context from memory log.", "memory")
-        past_context = graph.memory_log.get_past_context(symbol)
+        if config.get("memory_log_path"):
+            emit_analysis_log("Loading past context from memory log.", "memory")
+            past_context = graph.memory_log.get_past_context(symbol)
+        else:
+            emit_analysis_log("Persistent memory log disabled for stateless API run.", "memory")
+            past_context = ""
         ensure_not_cancelled()
         emit_analysis_log("Creating initial graph state.", "graph_setup")
         init_state = graph.propagator.create_initial_state(
@@ -1335,12 +1339,13 @@ def run_trading_analysis(
             raise RuntimeError("Analysis finished without a final_trade_decision.")
 
         graph.curr_state = final_state
-        graph._log_state(request.analysis_date, final_state)
-        graph.memory_log.store_decision(
-            ticker=symbol,
-            trade_date=request.analysis_date,
-            final_trade_decision=final_state["final_trade_decision"],
-        )
+        if config.get("persist_analysis_artifacts"):
+            graph._log_state(request.analysis_date, final_state)
+            graph.memory_log.store_decision(
+                ticker=symbol,
+                trade_date=request.analysis_date,
+                final_trade_decision=final_state["final_trade_decision"],
+            )
         if config.get("checkpoint_enabled"):
             clear_checkpoint(config["data_cache_dir"], symbol, request.analysis_date)
 
@@ -1350,7 +1355,7 @@ def run_trading_analysis(
         completed_research_patch = build_changed_fields(previous_snapshot.get("investment", {}), completed_snapshot["investment"])
         completed_risk_patch = build_changed_fields(previous_snapshot.get("risk", {}), completed_snapshot["risk"])
         emit_analysis_log(
-            "Analysis completed and final decision stored.",
+            "Analysis completed.",
             "complete",
             signal=graph.process_signal(final_state["final_trade_decision"]),
             elapsed_seconds=round(time.time() - started_at, 2),
