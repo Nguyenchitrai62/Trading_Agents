@@ -1,6 +1,6 @@
 ﻿window.TRADINGAGENTS_CONFIG = {
-    // apiBaseUrl: "https://apicrypto.nguyenchitrai.id.vn",
-    apiBaseUrl: "http://103.77.242.137:8001",
+    apiBaseUrl: "https://apicrypto.nguyenchitrai.id.vn",
+    // apiBaseUrl: "http://103.77.242.137:8001",
     // apiBaseUrl: "http://localhost:8000",
     provider: "minimax",
     defaultModel: "MiniMax-M2.7",
