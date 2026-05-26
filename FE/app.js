@@ -212,6 +212,7 @@ const HISTORY_SIGNAL_WIRE_PATHS = [
 ];
 
 const HISTORY_STAGE_WIRE_PATH = "M0 50 C28 28 72 72 100 50";
+const HISTORY_RISK_WIRE_PATH = "M0 140 C30 116 70 164 100 140";
 
 const state = {
     config: null,
@@ -3017,6 +3018,13 @@ function renderHistoryDiagramSingleGroup(label, key, node, options = {}) {
 function renderHistoryStageConnector(index, stageCount) {
     if (index >= stageCount - 1) {
         return "";
+    }
+    if (stageCount >= 4 && index === 2) {
+        return renderHistoryCurveWire(
+            [HISTORY_RISK_WIRE_PATH],
+            "history-diagram-stage-link history-diagram-stage-link--risk",
+            "0 0 100 280",
+        );
     }
     return renderHistoryCurveWire(
         [HISTORY_STAGE_WIRE_PATH],

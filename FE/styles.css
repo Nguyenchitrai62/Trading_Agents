@@ -4900,13 +4900,14 @@ body.is-running .window-status {
     --history-node-width: 108px;
     --history-node-height: 62px;
     --history-research-width: 160px;
-    --history-connector-width: clamp(26px, 3.4vw, 46px);
+    --history-connector-width: clamp(64px, 7vw, 104px);
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 0;
-    width: max-content;
+    width: 100%;
     min-width: 100%;
-    max-width: none;
+    max-width: 1160px;
     min-height: 0;
     margin: 0 auto;
 }
@@ -5080,6 +5081,10 @@ body.is-running .window-status {
     width: var(--history-connector-width);
     height: var(--history-node-height);
     margin: 0;
+}
+
+.history-diagram-stage-link--risk {
+    height: 280px;
 }
 
 .history-diagram-curve-base,
@@ -5414,7 +5419,9 @@ body.is-running .window-status {
     .history-diagram {
         --history-node-width: 104px;
         --history-research-width: 156px;
-        --history-connector-width: 26px;
+        --history-connector-width: 44px;
+        width: max-content;
+        max-width: none;
     }
 
     .history-diagram-stage--research-intake {
@@ -5439,6 +5446,10 @@ body.is-running .window-status {
     .history-diagram-stage-link {
         height: var(--history-node-height);
         margin-top: 0;
+    }
+
+    .history-diagram-stage-link--risk {
+        height: 280px;
     }
 
     .history-diagram-stage--research-intake .history-diagram-cluster--research::before {
