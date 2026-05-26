@@ -29,37 +29,28 @@
             </nav>
 
             <div class="topbar-status" aria-live="polite">
-                <span id="runStatusBadge" class="status-pill" data-state="idle">Idle</span>
+                <span id="runStatusBadge" class="status-pill" data-state="idle"></span>
                 <span id="currentAgentText" class="status-pill status-pill-muted topbar-detail-pill">Waiting</span>
                 <span id="endpointText" class="status-pill status-pill-subtle topbar-detail-pill">API endpoint</span>
-                <span id="authStatusText" class="status-pill status-pill-subtle">Sign in required</span>
+                <span id="authStatusText" class="status-pill status-pill-subtle topbar-detail-pill"></span>
             </div>
 
             <div class="topbar-actions">
                 <div id="googleSignInButton" class="google-signin-button"></div>
-                <button id="signOutButton" class="toolbar-button auth-signout-button hidden" type="button" aria-label="Sign out">Sign out</button>
-                <button id="openConfigButton" class="toolbar-button" type="button" aria-label="Open config">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M4 6h16"></path>
-                        <path d="M4 12h16"></path>
-                        <path d="M4 18h16"></path>
-                        <circle cx="9" cy="6" r="2"></circle>
-                        <circle cx="15" cy="12" r="2"></circle>
-                        <circle cx="11" cy="18" r="2"></circle>
-                    </svg>
-                </button>
-                <button id="runAnalysisButton" class="toolbar-button toolbar-button-primary" type="button" aria-label="Run analysis">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <circle cx="12" cy="12" r="9"></circle>
-                        <path d="M10 8.5L16 12l-6 3.5z" fill="currentColor" stroke="none"></path>
-                    </svg>
-                </button>
-                <button id="stopAnalysisButton" class="toolbar-button toolbar-button-danger" type="button" aria-label="Stop analysis" disabled>
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <circle cx="12" cy="12" r="9"></circle>
-                        <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none"></rect>
-                    </svg>
-                </button>
+                <div id="authProfile" class="auth-profile hidden" aria-label="Signed-in Google profile">
+                    <span class="auth-avatar-wrap">
+                        <img id="authProfileAvatar" class="auth-avatar hidden" alt="" referrerpolicy="no-referrer">
+                        <span id="authProfileInitial" class="auth-avatar-initial">G</span>
+                    </span>
+                    <span id="authProfileEmail" class="auth-profile-email"></span>
+                    <button id="signOutButton" class="auth-signout-button" type="button" aria-label="Sign out">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M10 17l5-5-5-5"></path>
+                            <path d="M15 12H3"></path>
+                            <path d="M13 5h5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"></path>
+                        </svg>
+                    </button>
+                </div>
             </div>
         </header>
 
@@ -70,7 +61,7 @@
                         <p class="window-kicker">Live orchestration</p>
                         <h2>Execution Board</h2>
                     </div>
-                    <span id="phaseText" class="window-status">Idle</span>
+                    <span id="phaseText" class="window-status">ready</span>
                 </div>
 
                 <div class="execution-strip">
@@ -114,7 +105,41 @@
                         <p class="window-kicker">Streaming focus</p>
                         <h2>Main View</h2>
                     </div>
-                    <span id="activeReportText" class="window-status">Awaiting live stream</span>
+                    <div class="main-view-actions">
+                        <span id="activeReportText" class="window-status">Awaiting live stream</span>
+                        <button id="openConfigButton" class="toolbar-button main-config-button" type="button" aria-label="Open config">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M4 6h16"></path>
+                                <path d="M4 12h16"></path>
+                                <path d="M4 18h16"></path>
+                                <circle cx="9" cy="6" r="2"></circle>
+                                <circle cx="15" cy="12" r="2"></circle>
+                                <circle cx="11" cy="18" r="2"></circle>
+                            </svg>
+                        </button>
+                        <button id="runAnalysisButton" class="toolbar-button analysis-toggle-button" type="button" aria-label="Run analysis" data-state="idle">
+                            <span class="analysis-icon analysis-run-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24">
+                                    <circle cx="12" cy="12" r="9"></circle>
+                                    <path d="M10 8.5L16 12l-6 3.5z" fill="currentColor" stroke="none"></path>
+                                </svg>
+                            </span>
+                            <span class="analysis-icon analysis-busy-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24">
+                                    <circle cx="12" cy="12" r="8"></circle>
+                                    <path d="M12 4v4"></path>
+                                </svg>
+                            </span>
+                            <span class="analysis-icon analysis-pause-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24">
+                                    <circle cx="12" cy="12" r="9"></circle>
+                                    <path d="M9.5 8.5v7"></path>
+                                    <path d="M14.5 8.5v7"></path>
+                                </svg>
+                            </span>
+                        </button>
+                        <button id="stopAnalysisButton" class="toolbar-button toolbar-button-danger hidden" type="button" aria-label="Stop analysis" disabled></button>
+                    </div>
                 </div>
                 <div id="reportGrid" class="report-grid"></div>
             </section>
@@ -135,7 +160,7 @@
                         </article>
                         <article class="ops-stat">
                             <span>Logged events</span>
-                            <strong id="opsPhaseText">Idle</strong>
+                            <strong id="opsPhaseText">No log events</strong>
                         </article>
                         <article class="ops-stat ops-stat-wide">
                             <span>Latest output</span>

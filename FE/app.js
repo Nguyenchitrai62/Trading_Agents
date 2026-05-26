@@ -117,6 +117,10 @@ const elements = {
     chartPage: document.getElementById("chartPage"),
     authStatusText: document.getElementById("authStatusText"),
     googleSignInButton: document.getElementById("googleSignInButton"),
+    authProfile: document.getElementById("authProfile"),
+    authProfileAvatar: document.getElementById("authProfileAvatar"),
+    authProfileInitial: document.getElementById("authProfileInitial"),
+    authProfileEmail: document.getElementById("authProfileEmail"),
     signOutButton: document.getElementById("signOutButton"),
     refreshHistoryButton: document.getElementById("refreshHistoryButton"),
     historyList: document.getElementById("historyList"),
@@ -944,21 +948,29 @@ function initializeGoogleAuth() {
 
 function updateActionAvailability() {
     const canRun = Boolean(state.config && state.auth.isAuthorized);
-    elements.runAnalysisButton.disabled = state.isBusy || !canRun;
+    const runButtonLabel = state.isBusy ? "Stop analysis" : canRun ? "Run analysis" : "Sign in with Google to run analysis.";
+
+    elements.runAnalysisButton.disabled = !state.isBusy && !canRun;
+    elements.runAnalysisButton.dataset.state = state.isBusy ? "running" : "idle";
+    elements.runAnalysisButton.classList.toggle("is-running", state.isBusy);
+    elements.runAnalysisButton.setAttribute("aria-label", runButtonLabel);
     elements.runFromModalButton.disabled = state.isBusy || !canRun;
     elements.stopAnalysisButton.disabled = !state.isBusy;
     elements.saveConfigButton.disabled = state.isBusy;
     elements.openConfigButton.disabled = state.isBusy;
-    elements.runAnalysisButton.title = canRun ? "Run analysis" : "Sign in with the authorized Google account to run analysis.";
+    elements.runAnalysisButton.title = runButtonLabel;
     elements.runFromModalButton.title = canRun ? "Apply and run" : "Sign in with the authorized Google account to run analysis.";
 }
 
 function renderAuthState() {
-    if (!(elements.authStatusText instanceof HTMLElement)) {
-        return;
-    }
     const email = state.auth.user?.email || state.auth.profile?.email || "";
-    let label = "Sign in required";
+    const profile = { ...(state.auth.profile || {}), ...(state.auth.user || {}) };
+    const picture = profile.picture || "";
+    const name = profile.name || "";
+    const profileLabel = email || name || "Google account";
+    const profileInitial = (email || name || "G").trim().charAt(0).toUpperCase() || "G";
+    const showProfile = Boolean(state.auth.idToken);
+    let label = "";
     let status = "idle";
     if (state.auth.status === "validating") {
         label = "Checking Google";
@@ -974,11 +986,33 @@ function renderAuthState() {
         status = "attention";
     }
 
-    elements.authStatusText.textContent = label;
-    elements.authStatusText.title = state.auth.error || "Authorized Google account required.";
-    elements.authStatusText.dataset.state = status;
-    elements.signOutButton.classList.toggle("hidden", !state.auth.idToken);
-    elements.googleSignInButton.classList.toggle("hidden", Boolean(state.auth.idToken && state.auth.isAuthorized));
+    if (elements.authStatusText instanceof HTMLElement) {
+        elements.authStatusText.textContent = label;
+        elements.authStatusText.title = state.auth.error || "Authorized Google account required.";
+        elements.authStatusText.dataset.state = status;
+    }
+    if (elements.authProfile instanceof HTMLElement) {
+        elements.authProfile.classList.toggle("hidden", !showProfile);
+        elements.authProfile.dataset.state = status;
+        elements.authProfile.title = state.auth.error || profileLabel;
+    }
+    if (elements.authProfileEmail instanceof HTMLElement) {
+        elements.authProfileEmail.textContent = profileLabel;
+    }
+    if (elements.authProfileInitial instanceof HTMLElement) {
+        elements.authProfileInitial.textContent = profileInitial;
+        elements.authProfileInitial.classList.toggle("hidden", Boolean(picture));
+    }
+    if (elements.authProfileAvatar instanceof HTMLImageElement) {
+        elements.authProfileAvatar.classList.toggle("hidden", !picture);
+        if (picture) {
+            elements.authProfileAvatar.src = picture;
+        } else {
+            elements.authProfileAvatar.removeAttribute("src");
+        }
+    }
+    elements.signOutButton.classList.toggle("hidden", !showProfile);
+    elements.googleSignInButton.classList.toggle("hidden", showProfile);
     updateActionAvailability();
 }
 
@@ -1929,7 +1963,14 @@ function renderProgress() {
     elements.progressText.textContent = `${progress.completed} / ${progress.total}`;
     elements.progressPercentText.textContent = `${progress.percent || 0}%`;
     elements.progressFill.style.width = `${progress.percent || 0}%`;
-    elements.phaseText.textContent = state.run.cancelled ? "cancelled" : state.run.status?.phase || "idle";
+    const phaseLabel = state.run.cancelled
+        ? "cancelled"
+        : state.isBusy
+        ? state.run.status?.phase || "running"
+        : state.run.complete
+        ? "completed"
+        : "ready";
+    elements.phaseText.textContent = phaseLabel;
     elements.currentAgentText.textContent = state.run.status?.current_agent || "Waiting";
     elements.currentAgentText.title = elements.currentAgentText.textContent;
     elements.runStatusBadge.textContent = runStatus;
@@ -3150,6 +3191,10 @@ elements.chartSymbolForm.addEventListener("submit", (event) => {
     addChartSymbolFromInput();
 });
 elements.runAnalysisButton.addEventListener("click", async () => {
+    if (state.isBusy) {
+        stopActiveAnalysis();
+        return;
+    }
     try {
         await runAnalysis();
     } catch (error) {
