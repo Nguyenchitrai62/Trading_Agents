@@ -77,6 +77,7 @@ const DEFAULT_CHART_SYMBOLS = Array.isArray(TRADING_VIEW_SETTINGS.symbols)
     ? TRADING_VIEW_SETTINGS.symbols
     : ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"];
 const DEFAULT_CHART_INTERVAL = String(TRADING_VIEW_SETTINGS.interval || "60");
+const TRADING_VIEW_WIDGET_ORIGIN = "https://www.tradingview-widget.com";
 
 const DETAIL_PANEL_META = {
     bullResearch: { title: "Bull Researcher", subtitle: "Research Chamber" },
@@ -319,6 +320,9 @@ function createInitialChartState() {
     const symbols = [...new Set((storedSymbols && storedSymbols.length ? storedSymbols : DEFAULT_CHART_SYMBOLS).map(normalizeTradingViewSymbol).filter(Boolean))];
     return {
         loaded: false,
+        loading: false,
+        widgetReady: false,
+        pendingSymbol: "",
         symbol: symbols[0],
         interval: normalizeTradingViewInterval(DEFAULT_CHART_INTERVAL) || "60",
         symbols,
@@ -2987,14 +2991,131 @@ function getChartSymbolLabel(symbol = "") {
     return ticker.replace(/USDT$/, "");
 }
 
-function getTradingViewEmbedUrl() {
-    const symbol = encodeURIComponent(state.chart.symbol || "BINANCE:BTCUSDT");
-    const interval = encodeURIComponent(state.chart.interval || "60");
-    return `https://www.tradingview.com/widgetembed/?frameElementId=tradingview_btc&symbol=${symbol}&interval=${interval}&hidesidetoolbar=0&symboledit=1&saveimage=0&toolbarbg=f1f3f6&studies=[]&theme=dark&style=1&timezone=Etc%2FUTC&withdateranges=1&hideideas=1`;
-}
-
 function persistChartSymbols() {
     safeWriteLocalStorage(CHART_SYMBOLS_STORAGE_KEY, JSON.stringify(state.chart.symbols));
+}
+
+function getTradingViewWidgetSettings() {
+    return {
+        autosize: true,
+        symbol: state.chart.symbol || "BINANCE:BTCUSDT",
+        interval: state.chart.interval || DEFAULT_CHART_INTERVAL || "60",
+        timezone: "Etc/UTC",
+        theme: "dark",
+        style: "1",
+        locale: "en",
+        allow_symbol_change: true,
+        hide_side_toolbar: false,
+        hide_top_toolbar: false,
+        hide_legend: false,
+        save_image: false,
+        withdateranges: true,
+        details: false,
+        calendar: false,
+        hotlist: false,
+        watchlist: state.chart.symbols,
+        editablewatchlist: false,
+        studies: [],
+        frameElementId: "tradingViewFrame",
+    };
+}
+
+function getTradingViewWidgetUrl() {
+    const url = new URL(`${TRADING_VIEW_WIDGET_ORIGIN}/embed-widget/advanced-chart/`);
+    url.searchParams.set("locale", "en");
+    url.hash = encodeURIComponent(JSON.stringify(getTradingViewWidgetSettings()));
+    return url.toString();
+}
+
+function getTradingViewIframe() {
+    if (!(elements.tradingViewFrame instanceof HTMLElement)) {
+        return null;
+    }
+    const iframe = elements.tradingViewFrame.querySelector("iframe");
+    return iframe instanceof HTMLIFrameElement ? iframe : null;
+}
+
+function postTradingViewMessage(name, data = {}) {
+    const iframe = getTradingViewIframe();
+    if (!iframe?.contentWindow) {
+        return false;
+    }
+    iframe.contentWindow.postMessage({ name, data }, TRADING_VIEW_WIDGET_ORIGIN);
+    return true;
+}
+
+function markTradingViewWidgetReady() {
+    const wasReady = state.chart.widgetReady;
+    state.chart.widgetReady = true;
+    state.chart.loading = false;
+    const queuedSymbol = state.chart.pendingSymbol;
+    state.chart.pendingSymbol = "";
+    if (wasReady && !queuedSymbol) {
+        return;
+    }
+    renderChartControls();
+    if (queuedSymbol) {
+        setTradingViewWidgetSymbol(queuedSymbol);
+    }
+}
+
+function handleTradingViewWidgetMessage(event) {
+    if (event.origin !== TRADING_VIEW_WIDGET_ORIGIN || !event.data || typeof event.data !== "object") {
+        return;
+    }
+    const messageName = event.data.name;
+    if (messageName === "tv-widget-load" || messageName === "tv-widget-ready") {
+        markTradingViewWidgetReady();
+    }
+}
+
+function createTradingViewWidget() {
+    if (!(elements.tradingViewFrame instanceof HTMLElement)) {
+        return;
+    }
+    elements.tradingViewFrame.innerHTML = "";
+    state.chart.widgetReady = false;
+    state.chart.loading = true;
+    elements.chartStatusText.textContent = "Loading chart";
+
+    const iframe = document.createElement("iframe");
+    iframe.title = "TradingView advanced chart";
+    iframe.loading = "eager";
+    iframe.allowFullscreen = true;
+    iframe.src = getTradingViewWidgetUrl();
+    iframe.addEventListener("load", () => {
+        window.setTimeout(markTradingViewWidgetReady, 350);
+    }, { once: true });
+    iframe.addEventListener("error", () => {
+        state.chart.loading = false;
+        elements.chartStatusText.textContent = "Chart load issue";
+        appendLog("chart-error", "TradingView chart failed to load.", { source: "frontend" });
+    }, { once: true });
+    elements.tradingViewFrame.appendChild(iframe);
+}
+
+function ensureTradingViewWidget() {
+    if (state.chart.loading || state.chart.widgetReady) {
+        return;
+    }
+    state.chart.loading = true;
+    renderChartControls();
+    createTradingViewWidget();
+}
+
+function setTradingViewWidgetSymbol(symbol) {
+    const normalized = normalizeTradingViewSymbol(symbol);
+    if (!normalized) {
+        return;
+    }
+    if (!state.chart.loaded || !state.chart.widgetReady) {
+        state.chart.pendingSymbol = normalized;
+        ensureTradingViewWidget();
+        return;
+    }
+    postTradingViewMessage("set-symbol", { symbol: normalized });
+    state.chart.symbol = normalized;
+    renderChartControls();
 }
 
 function renderChartControls() {
@@ -3021,18 +3142,19 @@ function renderChartControls() {
 
 function refreshTradingViewChart() {
     renderChartControls();
-    if (state.chart.loaded && elements.tradingViewFrame instanceof HTMLIFrameElement) {
-        elements.tradingViewFrame.src = getTradingViewEmbedUrl();
+    if (!state.chart.loaded) {
+        return;
     }
+    setTradingViewWidgetSymbol(state.chart.symbol);
 }
 
 function loadTradingViewChart() {
     renderChartControls();
-    if (state.chart.loaded || !(elements.tradingViewFrame instanceof HTMLIFrameElement)) {
+    if (state.chart.loaded || !(elements.tradingViewFrame instanceof HTMLElement)) {
         return;
     }
-    elements.tradingViewFrame.src = getTradingViewEmbedUrl();
     state.chart.loaded = true;
+    ensureTradingViewWidget();
     renderChartControls();
 }
 
@@ -4251,6 +4373,8 @@ window.addEventListener("keydown", (event) => {
         closeConfigModal();
     }
 });
+
+window.addEventListener("message", handleTradingViewWidgetMessage);
 
 window.addEventListener("beforeunload", () => {
     if (!state.isBusy) {

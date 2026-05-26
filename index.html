@@ -213,26 +213,16 @@
             </section>
         </main>
 
-        <main id="chartPage" class="page-view chart-page hidden" aria-label="TradingView BTC chart">
+        <main id="chartPage" class="page-view chart-page hidden" aria-label="TradingView chart">
             <section class="window chart-window">
-                <div class="window-header">
-                    <div>
-                        <p class="window-kicker">TradingView</p>
-                        <h2>BTC Chart</h2>
-                    </div>
-                    <span id="chartStatusText" class="window-status">Waiting</span>
-                </div>
+                <span id="chartStatusText" hidden>Waiting</span>
                 <div class="chart-workspace">
                     <div class="chart-main-pane">
                         <div class="chart-frame-wrap">
-                            <iframe id="tradingViewFrame" title="TradingView BTC chart" loading="lazy" allowfullscreen></iframe>
+                            <div id="tradingViewFrame" class="trading-view-container" aria-label="TradingView chart"></div>
                         </div>
                     </div>
                     <aside class="chart-symbol-panel" aria-label="Favorite symbols">
-                        <div class="chart-symbol-panel-header">
-                            <p class="window-kicker">Watchlist</p>
-                            <h3>Symbols</h3>
-                        </div>
                         <div id="chartSymbolList" class="chart-symbol-list" aria-label="Favorite symbols"></div>
                         <form id="chartSymbolForm" class="chart-symbol-form">
                             <input id="chartSymbolInput" type="text" placeholder="BINANCE:BNBUSDT" aria-label="Add TradingView symbol">
