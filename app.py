@@ -129,6 +129,20 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _default_resource_constrained_mode() -> bool:
+    return any(
+        os.getenv(name, "").strip()
+        for name in ("RENDER", "RENDER_INSTANCE_ID", "RENDER_SERVICE_ID")
+    )
+
+
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -138,17 +152,57 @@ logger = logging.getLogger("tradingagents.app")
 
 
 APP_TITLE = "TradingAgents Analysis API"
-APP_VERSION = "0.0.3"
+APP_VERSION = "0.0.4"
 
 
 DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
 DEFAULT_ASSET_TYPE = "crypto"
 DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
-DEFAULT_RESEARCH_DEPTH = "medium"
+RESOURCE_CONSTRAINED_MODE = _env_bool(
+    "ANALYSIS_RESOURCE_CONSTRAINED",
+    _default_resource_constrained_mode(),
+)
+DEFAULT_RESEARCH_DEPTH = "quick" if RESOURCE_CONSTRAINED_MODE else "medium"
 DEFAULT_SELECTED_ANALYSTS = DEFAULT_ANALYSTS.copy()
 DEFAULT_CHECKPOINT_ENABLED = False
 STREAM_HEARTBEAT_SECONDS = max(1.0, _env_float("ANALYSIS_STREAM_HEARTBEAT_SECONDS", 2.0))
+ANALYSIS_VERBOSE_RUNTIME_LOGS = _env_bool(
+    "ANALYSIS_VERBOSE_RUNTIME_LOGS",
+    not RESOURCE_CONSTRAINED_MODE,
+)
+ANALYSIS_MAX_CONCURRENT_RUNS = max(
+    1,
+    _env_int("ANALYSIS_MAX_CONCURRENT_RUNS", 1 if RESOURCE_CONSTRAINED_MODE else 2),
+)
+ANALYSIS_SSE_QUEUE_MAXSIZE = max(
+    8,
+    _env_int("ANALYSIS_SSE_QUEUE_MAXSIZE", 32 if RESOURCE_CONSTRAINED_MODE else 128),
+)
+ANALYSIS_MAX_DEPTH_ROUNDS = max(
+    1,
+    _env_int(
+        "ANALYSIS_MAX_DEPTH_ROUNDS",
+        2 if RESOURCE_CONSTRAINED_MODE else max(option["rounds"] for option in RESEARCH_DEPTH_OPTIONS.values()),
+    ),
+)
+ANALYSIS_LLM_MAX_TOKENS = max(
+    512,
+    _env_int("ANALYSIS_LLM_MAX_TOKENS", 12000 if RESOURCE_CONSTRAINED_MODE else 24000),
+)
+ANALYSIS_NEWS_ARTICLE_LIMIT = max(
+    2,
+    _env_int("ANALYSIS_NEWS_ARTICLE_LIMIT", 6 if RESOURCE_CONSTRAINED_MODE else 12),
+)
+ANALYSIS_GLOBAL_NEWS_ARTICLE_LIMIT = max(
+    2,
+    _env_int("ANALYSIS_GLOBAL_NEWS_ARTICLE_LIMIT", 4 if RESOURCE_CONSTRAINED_MODE else 8),
+)
+ANALYSIS_TRACE_CHAR_LIMIT = max(
+    400,
+    _env_int("ANALYSIS_TRACE_CHAR_LIMIT", 1800 if RESOURCE_CONSTRAINED_MODE else 4000),
+)
+DROPPABLE_SSE_EVENTS = {"analysis_log", "agent_trace"}
 CORS_ALLOW_ORIGINS = [
     origin.strip()
     for origin in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")
@@ -160,6 +214,7 @@ app = FastAPI(title=APP_TITLE, version=APP_VERSION)
 
 ACTIVE_ANALYSIS_CANCEL_EVENTS: dict[str, threading.Event] = {}
 ACTIVE_ANALYSIS_LOCK = threading.Lock()
+ACTIVE_ANALYSIS_COUNT = 0
 
 app.add_middleware(
     CORSMiddleware,
@@ -299,7 +354,43 @@ def normalize_ticker_symbol(ticker: str) -> str:
 
 
 def filter_analysts_for_crypto(selected_analysts: List[str]) -> List[str]:
-    return list(selected_analysts)
+    allowed = {"market", "social", "news"}
+    return [analyst for analyst in selected_analysts if analyst in allowed]
+
+
+def _trim_text(value: str, limit: int) -> str:
+    if limit <= 0 or len(value) <= limit:
+        return value
+    suffix = "\n\n[truncated for constrained runtime]"
+    safe_limit = max(0, limit - len(suffix))
+    return value[:safe_limit].rstrip() + suffix
+
+
+def _try_reserve_analysis_slot() -> bool:
+    global ACTIVE_ANALYSIS_COUNT
+    with ACTIVE_ANALYSIS_LOCK:
+        if ACTIVE_ANALYSIS_COUNT >= ANALYSIS_MAX_CONCURRENT_RUNS:
+            return False
+        ACTIVE_ANALYSIS_COUNT += 1
+        return True
+
+
+def _release_analysis_slot() -> None:
+    global ACTIVE_ANALYSIS_COUNT
+    with ACTIVE_ANALYSIS_LOCK:
+        if ACTIVE_ANALYSIS_COUNT > 0:
+            ACTIVE_ANALYSIS_COUNT -= 1
+
+
+def build_analysis_runtime_profile(request: AnalysisRequest) -> dict:
+    requested_rounds = RESEARCH_DEPTH_OPTIONS[request.research_depth]["rounds"]
+    return {
+        "requested_rounds": requested_rounds,
+        "effective_rounds": min(requested_rounds, ANALYSIS_MAX_DEPTH_ROUNDS),
+        "llm_max_tokens": ANALYSIS_LLM_MAX_TOKENS,
+        "news_article_limit": ANALYSIS_NEWS_ARTICLE_LIMIT,
+        "global_news_article_limit": ANALYSIS_GLOBAL_NEWS_ARTICLE_LIMIT,
+    }
 
 
 class AnalysisCancelled(Exception):
@@ -499,8 +590,7 @@ async def generate_non_streaming_chat(request: ChatRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-def build_analysis_config(request: AnalysisRequest, settings: dict) -> dict:
-    depth_preset = RESEARCH_DEPTH_OPTIONS[request.research_depth]
+def build_analysis_config(request: AnalysisRequest, settings: dict, runtime_profile: dict) -> dict:
     config = deepcopy(DEFAULT_CONFIG)
     config.update(
         {
@@ -509,11 +599,14 @@ def build_analysis_config(request: AnalysisRequest, settings: dict) -> dict:
             "deep_think_llm": request.model,
             "backend_url": settings["base_url"],
             "output_language": request.output_language,
-            "max_debate_rounds": depth_preset["rounds"],
-            "max_risk_discuss_rounds": depth_preset["rounds"],
+            "max_debate_rounds": runtime_profile["effective_rounds"],
+            "max_risk_discuss_rounds": runtime_profile["effective_rounds"],
             "global_news_lookback_days": request.lookback_days,
+            "news_article_limit": runtime_profile["news_article_limit"],
+            "global_news_article_limit": runtime_profile["global_news_article_limit"],
             "crypto_market_lookback_days": request.lookback_days,
             "crypto_market_max_candles": 199,
+            "analysis_llm_max_tokens": runtime_profile["llm_max_tokens"],
             "checkpoint_enabled": request.checkpoint_enabled,
         }
     )
@@ -616,7 +709,10 @@ def emit_message_progress_updates(
 
         if isinstance(message, ToolMessage):
             tool_name = getattr(message, "name", None) or getattr(message, "tool_call_id", None) or "tool"
-            content = _normalize_message_content(getattr(message, "content", ""))
+            content = _trim_text(
+                _normalize_message_content(getattr(message, "content", "")),
+                ANALYSIS_TRACE_CHAR_LIMIT,
+            )
             if not content:
                 continue
             emit(
@@ -642,7 +738,10 @@ def emit_message_progress_updates(
                         "content": "\n".join(_tool_call_summary(tool_call) for tool_call in tool_calls),
                     },
                 )
-            content = _normalize_message_content(getattr(message, "content", ""))
+            content = _trim_text(
+                _normalize_message_content(getattr(message, "content", "")),
+                ANALYSIS_TRACE_CHAR_LIMIT,
+            )
             if content:
                 emit(
                     "agent_trace",
@@ -921,6 +1020,7 @@ def run_trading_analysis(
     cancel_event = cancel_event or threading.Event()
     run_started_at = time.time()
     symbol = normalize_ticker_symbol(request.symbol)
+    runtime_profile = build_analysis_runtime_profile(request)
 
     def emit_analysis_log(
         message: str,
@@ -972,6 +1072,9 @@ def run_trading_analysis(
         selected_analysts=filtered_analysts,
         lookback_days=request.lookback_days,
         research_depth=request.research_depth,
+        effective_depth_rounds=runtime_profile["effective_rounds"],
+        llm_max_tokens=runtime_profile["llm_max_tokens"],
+        resource_constrained=RESOURCE_CONSTRAINED_MODE,
         output_language=request.output_language,
     )
 
@@ -988,15 +1091,34 @@ def run_trading_analysis(
             },
         )
 
+    if runtime_profile["effective_rounds"] < runtime_profile["requested_rounds"]:
+        emit_analysis_log(
+            "Research depth capped for the current deployment footprint.",
+            "prepare",
+            "warning",
+            requested_rounds=runtime_profile["requested_rounds"],
+            effective_rounds=runtime_profile["effective_rounds"],
+        )
+        emit(
+            "warning",
+            {
+                "message": (
+                    "Research depth was reduced automatically to fit the current deployment size. "
+                    f"Requested {runtime_profile['requested_rounds']} round(s), running {runtime_profile['effective_rounds']}."
+                ),
+            },
+        )
+
     ensure_not_cancelled()
 
-    config = build_analysis_config(request, settings)
+    config = build_analysis_config(request, settings, runtime_profile)
     emit_analysis_log(
         "Building TradingAgents graph.",
         "graph_setup",
         provider=settings["provider"],
         model=request.model,
-        depth_rounds=RESEARCH_DEPTH_OPTIONS[request.research_depth]["rounds"],
+        depth_rounds=runtime_profile["effective_rounds"],
+        max_tokens=runtime_profile["llm_max_tokens"],
     )
     graph = TradingAgentsGraph(selected_analysts=filtered_analysts, debug=False, config=config)
 
@@ -1013,8 +1135,10 @@ def run_trading_analysis(
             "asset_type": asset_type,
             "output_language": request.output_language,
             "research_depth": request.research_depth,
-            "depth_rounds": RESEARCH_DEPTH_OPTIONS[request.research_depth]["rounds"],
+            "depth_rounds": runtime_profile["effective_rounds"],
             "model": request.model,
+            "llm_max_tokens": runtime_profile["llm_max_tokens"],
+            "resource_constrained": RESOURCE_CONSTRAINED_MODE,
             "selected_analysts": filtered_analysts,
             "selected_analyst_labels": [ANALYST_NODE_SPECS[key].agent_node for key in filtered_analysts],
             "provider": settings["provider"],
@@ -1049,16 +1173,22 @@ def run_trading_analysis(
     def emit_captured_log(message: str, phase: str = "backend_log", level: str = "info") -> None:
         emit_analysis_log(message, phase, level, write_logger=False)
 
-    log_capture = AnalysisLoggingHandler(emit_captured_log)
-    log_capture.setFormatter(logging.Formatter("%(levelname)s %(name)s - %(message)s"))
     tradingagents_logger = logging.getLogger("tradingagents")
-    stdout_stream = AnalysisLogStream(emit_captured_log, "backend_stdout", "info")
-    stderr_stream = AnalysisLogStream(emit_captured_log, "backend_stderr", "warning")
-    stdout_redirect = contextlib.redirect_stdout(stdout_stream)
-    stderr_redirect = contextlib.redirect_stderr(stderr_stream)
-    tradingagents_logger.addHandler(log_capture)
-    stdout_redirect.__enter__()
-    stderr_redirect.__enter__()
+    log_capture: AnalysisLoggingHandler | None = None
+    stdout_stream: AnalysisLogStream | None = None
+    stderr_stream: AnalysisLogStream | None = None
+    stdout_redirect = None
+    stderr_redirect = None
+    if ANALYSIS_VERBOSE_RUNTIME_LOGS:
+        log_capture = AnalysisLoggingHandler(emit_captured_log)
+        log_capture.setFormatter(logging.Formatter("%(levelname)s %(name)s - %(message)s"))
+        stdout_stream = AnalysisLogStream(emit_captured_log, "backend_stdout", "info")
+        stderr_stream = AnalysisLogStream(emit_captured_log, "backend_stderr", "warning")
+        stdout_redirect = contextlib.redirect_stdout(stdout_stream)
+        stderr_redirect = contextlib.redirect_stderr(stderr_stream)
+        tradingagents_logger.addHandler(log_capture)
+        stdout_redirect.__enter__()
+        stderr_redirect.__enter__()
 
     final_state: dict = {}
     previous_snapshot = initial_snapshot
@@ -1150,11 +1280,16 @@ def run_trading_analysis(
             },
         )
     finally:
-        stdout_stream.flush()
-        stderr_stream.flush()
-        stderr_redirect.__exit__(None, None, None)
-        stdout_redirect.__exit__(None, None, None)
-        tradingagents_logger.removeHandler(log_capture)
+        if stdout_stream is not None:
+            stdout_stream.flush()
+        if stderr_stream is not None:
+            stderr_stream.flush()
+        if stderr_redirect is not None:
+            stderr_redirect.__exit__(None, None, None)
+        if stdout_redirect is not None:
+            stdout_redirect.__exit__(None, None, None)
+        if log_capture is not None:
+            tradingagents_logger.removeHandler(log_capture)
         if graph is not None and graph._checkpointer_ctx is not None:
             graph._checkpointer_ctx.__exit__(None, None, None)
             graph._checkpointer_ctx = None
@@ -1168,9 +1303,13 @@ def run_trading_analysis(
         gc.collect()
 
 
-async def generate_analysis_stream(analysis_request: AnalysisRequest, http_request: Request) -> AsyncIterator[str]:
+async def generate_analysis_stream(
+    analysis_request: AnalysisRequest,
+    http_request: Request,
+    reserved_slot: bool = False,
+) -> AsyncIterator[str]:
     loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[str | None] = asyncio.Queue()
+    queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=ANALYSIS_SSE_QUEUE_MAXSIZE)
     stream_started_at = time.time()
     cancel_event = threading.Event()
 
@@ -1178,8 +1317,21 @@ async def generate_analysis_stream(analysis_request: AnalysisRequest, http_reque
         with ACTIVE_ANALYSIS_LOCK:
             ACTIVE_ANALYSIS_CANCEL_EVENTS[analysis_request.run_id] = cancel_event
 
+    async def queue_sse_item(payload: str, drop_if_full: bool) -> bool:
+        if drop_if_full:
+            try:
+                queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                return False
+            return True
+        await queue.put(payload)
+        return True
+
     def emit(event: str, data: dict) -> None:
-        asyncio.run_coroutine_threadsafe(queue.put(_sse(event, data)), loop).result()
+        asyncio.run_coroutine_threadsafe(
+            queue_sse_item(_sse(event, data), event in DROPPABLE_SSE_EVENTS),
+            loop,
+        ).result()
 
     def worker() -> None:
         try:
@@ -1258,6 +1410,8 @@ async def generate_analysis_stream(analysis_request: AnalysisRequest, http_reque
         if analysis_request.run_id:
             with ACTIVE_ANALYSIS_LOCK:
                 ACTIVE_ANALYSIS_CANCEL_EVENTS.pop(analysis_request.run_id, None)
+        if reserved_slot:
+            _release_analysis_slot()
         if not worker_task.done():
             cancel_event.set()
             try:
@@ -1294,6 +1448,12 @@ async def health_check() -> dict:
         "version": APP_VERSION,
         "configured": settings["configured"],
         "provider": settings["provider"],
+        "resource_constrained": RESOURCE_CONSTRAINED_MODE,
+        "analysis_limits": {
+            "max_concurrent_runs": ANALYSIS_MAX_CONCURRENT_RUNS,
+            "depth_rounds_cap": ANALYSIS_MAX_DEPTH_ROUNDS,
+            "llm_max_tokens": ANALYSIS_LLM_MAX_TOKENS,
+        },
         "modes": ["analysis", "chat"],
     }
 
@@ -1335,15 +1495,28 @@ async def cancel_trading_analysis(run_id: str) -> dict:
 
 @app.post("/api/analyze")
 async def analyze_trading_agents(analysis_request: AnalysisRequest, http_request: Request):
-    return StreamingResponse(
-        generate_analysis_stream(analysis_request, http_request),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    if not _try_reserve_analysis_slot():
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Analysis capacity is full for the current deployment size. "
+                "Wait for the active run to finish before starting another."
+            ),
+        )
+
+    try:
+        return StreamingResponse(
+            generate_analysis_stream(analysis_request, http_request, reserved_slot=True),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    except Exception:
+        _release_analysis_slot()
+        raise
 
 
 if __name__ == "__main__":

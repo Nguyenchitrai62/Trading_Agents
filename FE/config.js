@@ -1,5 +1,6 @@
 ﻿window.TRADINGAGENTS_CONFIG = {
     apiBaseUrl: "https://apicrypto.nguyenchitrai.id.vn",
+    // apiBaseUrl: "http://localhost:8000",
     provider: "minimax",
     defaultModel: "MiniMax-M2.7",
     analysisDefaults: {
@@ -9,7 +10,7 @@
         lookbackDays: 7,
         outputLanguage: "Vietnamese",
         selectedAnalysts: ["market", "social", "news", "fundamentals"],
-        researchDepth: "medium",
+        researchDepth: "quick",
         model: "MiniMax-M2.7",
         checkpointEnabled: false,
     },

@@ -137,6 +137,10 @@ class TradingAgentsGraph:
         """Get provider-specific kwargs for LLM client creation."""
         kwargs = {}
         provider = self.config.get("llm_provider", "").lower()
+        max_tokens = self.config.get("analysis_llm_max_tokens")
+
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
 
         if provider == "google":
             thinking_level = self.config.get("google_thinking_level")
@@ -148,7 +152,7 @@ class TradingAgentsGraph:
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
 
-        elif provider == "anthropic":
+        elif provider in ("anthropic", "minimax", "minimax-cn"):
             effort = self.config.get("anthropic_effort")
             if effort:
                 kwargs["effort"] = effort
