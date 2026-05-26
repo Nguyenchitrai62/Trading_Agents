@@ -91,6 +91,89 @@ const DETAIL_PANEL_META = {
     eventLog: { title: "Event Log", subtitle: "SSE Timeline", mode: "markdown" },
 };
 
+const HISTORY_FLOW_SECTION_ORDER = {
+    inputs: ["market_report", "sentiment_report", "news_report", "fundamentals_report"],
+    research: ["bull_research", "research_debate", "bear_research", "investment_plan"],
+    trading: ["trader_investment_plan"],
+    risk: ["aggressive_risk", "neutral_risk", "conservative_risk", "risk_debate"],
+    portfolio: ["final_trade_decision"],
+};
+
+const HISTORY_FLOW_SECTION_META = {
+    market_report: {
+        shortTitle: "Market",
+        tone: "signal",
+        description: "Price action, technical structure, and market regime context.",
+    },
+    sentiment_report: {
+        shortTitle: "Social",
+        tone: "signal",
+        description: "Social sentiment, crowd positioning, and narrative momentum.",
+    },
+    news_report: {
+        shortTitle: "News",
+        tone: "signal",
+        description: "Catalysts, headlines, and event pressure gathered into one report.",
+    },
+    fundamentals_report: {
+        shortTitle: "Fundamentals",
+        tone: "signal",
+        description: "Company profile, financial condition, and insider activity context.",
+    },
+    bull_research: {
+        shortTitle: "Bull",
+        tone: "bull",
+        description: "The upside case built from the selected analyst evidence.",
+    },
+    research_debate: {
+        shortTitle: "Debate",
+        tone: "debate",
+        compact: true,
+        description: "The research team exchange before the plan is locked in.",
+    },
+    bear_research: {
+        shortTitle: "Bear",
+        tone: "bear",
+        description: "The downside case, failure modes, and invalidation logic.",
+    },
+    investment_plan: {
+        shortTitle: "Plan",
+        tone: "plan",
+        description: "Research Manager synthesis that converts debate into a trade thesis.",
+    },
+    trader_investment_plan: {
+        shortTitle: "Trade",
+        tone: "trader",
+        description: "Entry, structure, and transaction proposal prepared for risk review.",
+    },
+    aggressive_risk: {
+        shortTitle: "Aggressive",
+        tone: "aggressive",
+        description: "The high-conviction, higher-risk interpretation of the proposal.",
+    },
+    neutral_risk: {
+        shortTitle: "Neutral",
+        tone: "neutral",
+        description: "The balanced baseline view on exposure, sizing, and constraints.",
+    },
+    conservative_risk: {
+        shortTitle: "Conservative",
+        tone: "conservative",
+        description: "The capital-protection and drawdown-focused response.",
+    },
+    risk_debate: {
+        shortTitle: "Review",
+        tone: "risk",
+        compact: true,
+        description: "Merged risk discussion before the final authorization.",
+    },
+    final_trade_decision: {
+        shortTitle: "Decision",
+        tone: "decision",
+        description: "Authorize, reject, or revise the transaction proposal.",
+    },
+};
+
 const state = {
     config: null,
     apiBaseUrl: getConfiguredApiBaseUrl(),
@@ -2574,6 +2657,21 @@ function getDetailContent(detail) {
         };
     }
 
+    if (detail?.type === "history-section") {
+        const section = getHistorySectionMeta(detail.sectionKey);
+        const active = state.history.active || {};
+        const content = active.sectionMarkdown?.[detail.sectionKey] || "";
+        const loading = active.sectionLoadingKey === detail.sectionKey;
+        return {
+            content,
+            fallback: loading
+                ? "Loading this saved markdown section..."
+                : section
+                ? "No markdown was saved for this section."
+                : "This saved history section is no longer available.",
+        };
+    }
+
     switch (detail?.key) {
         case "bullResearch":
             return { content: research.bull_history || "", fallback: "The Bull Researcher has not responded yet." };
@@ -2639,7 +2737,7 @@ function renderActiveDetail() {
         return;
     }
 
-    const meta = detail.type === "report" || detail.type === "trace" ? detail : DETAIL_PANEL_META[detail.key] || {};
+    const meta = detail.type === "report" || detail.type === "trace" || detail.type === "history-section" ? detail : DETAIL_PANEL_META[detail.key] || {};
     const { content, fallback } = getDetailContent(detail);
     const mode = detail.mode || meta.mode || "markdown";
     elements.detailTitle.textContent = meta.title || "Panel Detail";
@@ -2727,6 +2825,124 @@ function getHistorySectionLabel(section = {}) {
         .replace(/ Decision$/, "");
 }
 
+function getHistorySectionMeta(sectionKey = "") {
+    return (state.history.active?.sections || []).find((section) => section.section_key === sectionKey) || null;
+}
+
+function buildHistoryDiagramModel(sections = []) {
+    const sectionsByKey = new Map(sections.map((section) => [section.section_key, section]));
+    const knownKeys = new Set(Object.values(HISTORY_FLOW_SECTION_ORDER).flat());
+    return {
+        inputs: HISTORY_FLOW_SECTION_ORDER.inputs.map((key) => sectionsByKey.get(key)).filter(Boolean),
+        researchNodes: ["bull_research", "research_debate", "bear_research"].map((key) => sectionsByKey.get(key)).filter(Boolean),
+        researchOutput: sectionsByKey.get("investment_plan") || null,
+        trader: sectionsByKey.get("trader_investment_plan") || null,
+        riskNodes: ["aggressive_risk", "neutral_risk", "conservative_risk"].map((key) => sectionsByKey.get(key)).filter(Boolean),
+        riskOutput: sectionsByKey.get("risk_debate") || null,
+        manager: sectionsByKey.get("final_trade_decision") || null,
+        extras: sections.filter((section) => !knownKeys.has(section.section_key)),
+    };
+}
+
+function renderHistoryDiagramNode(section = {}, options = {}, layout = {}) {
+    const sectionKey = section.section_key || "";
+    const flowMeta = HISTORY_FLOW_SECTION_META[sectionKey] || {};
+    const activeSectionKey = options.activeSectionKey || "";
+    const sectionMarkdown = options.sectionMarkdown || {};
+    const loadingKey = options.loadingKey || "";
+    const isActive = sectionKey === activeSectionKey;
+    const isLoaded = Object.prototype.hasOwnProperty.call(sectionMarkdown, sectionKey);
+    const loading = sectionKey === loadingKey;
+    const shortTitle = layout.shortTitle || flowMeta.shortTitle || getHistorySectionLabel(section);
+    const tone = layout.tone || flowMeta.tone || "neutral";
+    const compact = Boolean(layout.compact || (flowMeta.compact && !layout.output));
+    const titleText = [section.title || shortTitle, section.agent || section.team || "Agent"].filter(Boolean).join(" - ");
+    return `
+        <button class="history-diagram-node history-diagram-node--${tone} ${compact ? "history-diagram-node--compact" : ""} ${layout.output ? "history-diagram-node--output" : ""} ${isActive ? "is-active" : ""} ${loading ? "is-loading" : ""} ${isLoaded ? "is-loaded" : ""}"
+            type="button"
+            data-history-section-key="${escapeHtml(sectionKey)}"
+            title="${escapeHtml(titleText)}"
+            aria-label="Open ${escapeHtml(section.title || sectionKey)} markdown">
+            <span class="history-diagram-node-head">
+                <span class="history-diagram-node-caption">${escapeHtml(section.agent || section.team || "Agent")}</span>
+                <span class="history-diagram-node-dot" aria-hidden="true"></span>
+            </span>
+            <strong>${escapeHtml(shortTitle || section.title || sectionKey || "Section")}</strong>
+        </button>
+    `;
+}
+
+function renderHistoryDiagramStackGroup(label, key, nodes, options = {}) {
+    return `
+        <section class="history-diagram-group history-diagram-group--${key}">
+            <span class="history-diagram-label">${escapeHtml(label)}</span>
+            <div class="history-diagram-stack history-diagram-stack--${key}">
+                ${nodes.map((section) => renderHistoryDiagramNode(section, options)).join("")}
+            </div>
+        </section>
+    `;
+}
+
+function renderHistoryDiagramMergeGroup(label, key, nodes, output, options = {}) {
+    return `
+        <section class="history-diagram-group history-diagram-group--${key}">
+            <span class="history-diagram-label">${escapeHtml(label)}</span>
+            <div class="history-diagram-merge history-diagram-merge--${key}">
+                <div class="history-diagram-stack history-diagram-stack--merge history-diagram-stack--${key}">
+                    ${nodes.map((section) => renderHistoryDiagramNode(section, options, { compact: HISTORY_FLOW_SECTION_META[section.section_key]?.compact })).join("")}
+                </div>
+                ${output
+                    ? `
+                        <div class="history-diagram-merge-link" aria-hidden="true"></div>
+                        <div class="history-diagram-output">
+                            ${renderHistoryDiagramNode(output, options, { output: true })}
+                        </div>
+                    `
+                    : ""}
+            </div>
+        </section>
+    `;
+}
+
+function renderHistoryDiagramSingleGroup(label, key, node, options = {}) {
+    return `
+        <section class="history-diagram-group history-diagram-group--${key}">
+            <span class="history-diagram-label">${escapeHtml(label)}</span>
+            <div class="history-diagram-single">
+                ${renderHistoryDiagramNode(node, options, { output: true })}
+            </div>
+        </section>
+    `;
+}
+
+function renderHistoryDiagramExtras(sections = [], options = {}) {
+    if (!sections.length) {
+        return "";
+    }
+    return `
+        <section class="history-diagram-extra">
+            <span class="history-diagram-label">Additional</span>
+            <div class="history-diagram-extra-grid">
+                ${sections.map((section) => renderHistoryDiagramNode(section, options, { compact: true })).join("")}
+            </div>
+        </section>
+    `;
+}
+
+function openHistorySectionDetail(sectionKey = "") {
+    const section = getHistorySectionMeta(sectionKey);
+    if (!section) {
+        return;
+    }
+    openDetailModal({
+        type: "history-section",
+        sectionKey,
+        title: section.title || HISTORY_FLOW_SECTION_META[sectionKey]?.shortTitle || "Saved Markdown",
+        subtitle: [section.team, section.agent].filter(Boolean).join(" - ") || "History archive",
+        mode: "markdown",
+    });
+}
+
 function selectHistorySummary(historyId) {
     const item = state.history.items.find((entry) => entry.id === historyId);
     if (!item) {
@@ -2798,6 +3014,7 @@ function renderHistoryPage() {
     elements.historyDetailTitle.textContent = `${history.active.summaryOnly ? "Final Summary" : "Analysis Detail"} - ${item.symbol || "Analysis"} - ${item.analysis_date || ""}`.trim();
 
     if (history.active.summaryOnly) {
+        elements.historyStatusText.textContent = "Final markdown";
         elements.historyDetail.innerHTML = `
             <div class="history-detail-meta">
                 <span>${escapeHtml(item.signal || "Completed")}</span>
@@ -2827,9 +3044,32 @@ function renderHistoryPage() {
 
     const sectionMarkdown = history.active.sectionMarkdown || {};
     const activeSectionKey = history.active.activeSectionKey || "";
-    const activeSection = sections.find((section) => section.section_key === activeSectionKey);
-    const activeMarkdown = activeSectionKey ? sectionMarkdown[activeSectionKey] || "" : "";
     const isSectionLoading = Boolean(history.active.sectionLoadingKey);
+    const diagram = buildHistoryDiagramModel(sections);
+    const diagramOptions = {
+        activeSectionKey,
+        sectionMarkdown,
+        loadingKey: history.active.sectionLoadingKey,
+    };
+    const segments = [];
+    if (diagram.inputs.length) {
+        segments.push(renderHistoryDiagramStackGroup("Signals", "inputs", diagram.inputs, diagramOptions));
+    }
+    if (diagram.researchNodes.length || diagram.researchOutput) {
+        segments.push(renderHistoryDiagramMergeGroup("Research", "research", diagram.researchNodes, diagram.researchOutput, diagramOptions));
+    }
+    if (diagram.trader) {
+        segments.push(renderHistoryDiagramSingleGroup("Trader", "trader", diagram.trader, diagramOptions));
+    }
+    if (diagram.riskNodes.length || diagram.riskOutput) {
+        segments.push(renderHistoryDiagramMergeGroup("Risk", "risk", diagram.riskNodes, diagram.riskOutput, diagramOptions));
+    }
+    if (diagram.manager) {
+        segments.push(renderHistoryDiagramSingleGroup("Manager", "portfolio", diagram.manager, diagramOptions));
+    }
+    elements.historyStatusText.textContent = isSectionLoading
+        ? "Loading markdown"
+        : `${sections.length} block${sections.length === 1 ? "" : "s"}`;
     elements.historyDetail.innerHTML = `
         <div class="history-detail-meta">
             <span>${escapeHtml(item.signal || "Completed")}</span>
@@ -2837,35 +3077,17 @@ function renderHistoryPage() {
             <span>${escapeHtml(String(item.lookback_days || "-"))}d</span>
             <span>${escapeHtml(formatHistoryTimestamp(item.created_at))}</span>
         </div>
-        <div class="history-section-card-grid">
-            ${sections
-                .map((section) => {
-                    const sectionKey = section.section_key || "";
-                    const isActive = sectionKey === activeSectionKey;
-                    const isLoaded = Boolean(sectionMarkdown[sectionKey]);
-                    const loading = history.active.sectionLoadingKey === sectionKey;
-                    return `
-                        <button class="history-section-card ${isActive ? "is-active" : ""}" type="button"
-                            data-history-section-key="${escapeHtml(sectionKey)}"
-                            aria-label="Load ${escapeHtml(section.title || sectionKey)}">
-                            <span>${escapeHtml(getHistorySectionLabel(section))}</span>
-                            <strong>${escapeHtml(section.title || sectionKey)}</strong>
-                            <small>${escapeHtml(section.agent || section.team || "Agent")}${loading ? " - loading" : isLoaded ? " - loaded" : ""}</small>
-                        </button>
-                    `;
-                })
-                .join("")}
+        <div class="history-flow-note">
+            Click any block to open its saved markdown.
         </div>
-        <article class="history-section history-section-lazy">
-            <div class="history-section-header">
-                <div>
-                    <p class="window-kicker">${escapeHtml(activeSection?.team || "History section")}</p>
-                    <h3>${escapeHtml(activeSection?.title || "Select a card")}</h3>
-                </div>
-                <span class="window-status">${escapeHtml(activeSection?.agent || (isSectionLoading ? "Loading" : "Lazy load"))}</span>
+        <div class="history-diagram-wrap">
+            <div class="history-diagram">
+                ${segments.length
+                    ? segments.map((segment, index) => `${segment}${index < segments.length - 1 ? '<div class="history-diagram-link" aria-hidden="true"></div>' : ""}`).join("")
+                    : '<div class="history-empty">No saved flow sections are available for this analysis.</div>'}
             </div>
-            <div class="markdown-preview ${activeMarkdown ? "" : "is-empty"}">${renderMarkdown(activeMarkdown, isSectionLoading ? "Loading this section..." : "Choose one card above to load only that saved section.")}</div>
-        </article>
+            ${renderHistoryDiagramExtras(diagram.extras, diagramOptions)}
+        </div>
     `;
 }
 
@@ -2948,17 +3170,22 @@ async function loadHistoryDetail(historyId) {
     }
 }
 
-async function loadHistorySection(historyId, sectionKey) {
+async function loadHistorySection(historyId, sectionKey, options = {}) {
+    const { openModal = false } = options;
     if (!historyId || !sectionKey || !state.history.active || state.history.activeId !== historyId) {
         return;
     }
     if (Object.prototype.hasOwnProperty.call(state.history.active.sectionMarkdown || {}, sectionKey)) {
         state.history.active.activeSectionKey = sectionKey;
         renderHistoryPage();
+        if (openModal) {
+            openHistorySectionDetail(sectionKey);
+        }
         return;
     }
     state.history.active.activeSectionKey = sectionKey;
     state.history.active.sectionLoadingKey = sectionKey;
+    let shouldOpenModal = false;
     renderHistoryPage();
     try {
         const response = await apiFetch(`/api/history/${encodeURIComponent(historyId)}/sections/${encodeURIComponent(sectionKey)}`, {
@@ -2975,6 +3202,7 @@ async function loadHistorySection(historyId, sectionKey) {
         };
         state.history.active.activeSectionKey = sectionKey;
         state.history.error = "";
+        shouldOpenModal = openModal;
     } catch (error) {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history section.");
     } finally {
@@ -2982,6 +3210,9 @@ async function loadHistorySection(historyId, sectionKey) {
             state.history.active.sectionLoadingKey = "";
         }
         renderHistoryPage();
+        if (shouldOpenModal && state.history.active && state.history.activeId === historyId) {
+            openHistorySectionDetail(sectionKey);
+        }
     }
 }
 
@@ -4143,7 +4374,7 @@ elements.historyDetail.addEventListener("click", (event) => {
     }
     const sectionButton = target.closest("[data-history-section-key]");
     if (sectionButton instanceof HTMLElement) {
-        loadHistorySection(state.history.activeId, sectionButton.dataset.historySectionKey || "").catch((error) => {
+        loadHistorySection(state.history.activeId, sectionButton.dataset.historySectionKey || "", { openModal: true }).catch((error) => {
             state.history.error = error instanceof Error ? error.message : String(error || "Could not load history section.");
             renderHistoryPage();
         });

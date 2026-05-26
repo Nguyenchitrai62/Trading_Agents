@@ -4832,6 +4832,291 @@ body.is-running .window-status {
     background: rgba(8, 14, 13, 0.72);
 }
 
+.history-flow-note {
+    padding: 8px 0 2px;
+    color: var(--muted);
+    font-size: 0.76rem;
+    letter-spacing: 0.02em;
+}
+
+.history-diagram-wrap {
+    display: grid;
+    gap: 16px;
+    overflow-x: auto;
+    overflow-y: visible;
+    padding-bottom: 4px;
+}
+
+.history-diagram {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: max-content;
+}
+
+.history-diagram-group {
+    display: grid;
+    gap: 10px;
+    align-content: center;
+}
+
+.history-diagram-group--inputs {
+    width: 132px;
+}
+
+.history-diagram-group--research,
+.history-diagram-group--risk {
+    width: 220px;
+}
+
+.history-diagram-group--trader,
+.history-diagram-group--portfolio {
+    width: 118px;
+}
+
+.history-diagram-label {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.history-diagram-stack,
+.history-diagram-single,
+.history-diagram-output {
+    display: grid;
+    gap: 8px;
+    align-content: center;
+}
+
+.history-diagram-stack--merge {
+    position: relative;
+}
+
+.history-diagram-stack--merge::after {
+    content: "";
+    position: absolute;
+    top: 10px;
+    bottom: 10px;
+    right: -2px;
+    width: 1px;
+    background: rgba(202, 211, 218, 0.28);
+}
+
+.history-diagram-merge {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: minmax(0, 1fr) 28px minmax(112px, 0.92fr);
+    align-items: center;
+}
+
+.history-diagram-merge-link,
+.history-diagram-link {
+    position: relative;
+    align-self: center;
+    width: 100%;
+    height: 1px;
+    background: rgba(202, 211, 218, 0.28);
+}
+
+.history-diagram-merge-link::after,
+.history-diagram-link::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: -1px;
+    width: 8px;
+    height: 8px;
+    border-top: 1px solid rgba(202, 211, 218, 0.28);
+    border-right: 1px solid rgba(202, 211, 218, 0.28);
+    transform: translateY(-50%) rotate(45deg);
+}
+
+.history-diagram-link {
+    flex: 0 0 34px;
+}
+
+.history-diagram-node {
+    display: grid;
+    gap: 6px;
+    min-height: 52px;
+    width: 100%;
+    padding: 8px 9px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    background: rgba(9, 15, 14, 0.86);
+    color: var(--ink);
+    text-align: left;
+    cursor: pointer;
+    transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.history-diagram-node:hover,
+.history-diagram-node:focus-visible,
+.history-diagram-node.is-active {
+    transform: translateY(-1px);
+    border-color: rgba(101, 208, 173, 0.42);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+    outline: none;
+}
+
+.history-diagram-node.is-loading {
+    border-color: rgba(245, 186, 84, 0.42);
+}
+
+.history-diagram-node.is-loaded .history-diagram-node-dot,
+.history-diagram-node.is-active .history-diagram-node-dot {
+    background: var(--accent);
+    box-shadow: 0 0 0 5px rgba(101, 208, 173, 0.1);
+}
+
+.history-diagram-node.is-loading .history-diagram-node-dot {
+    background: #f5ba54;
+    box-shadow: 0 0 0 5px rgba(245, 186, 84, 0.1);
+}
+
+.history-diagram-node--compact {
+    min-height: 42px;
+    padding: 6px 9px;
+    border-radius: 999px;
+    justify-self: start;
+}
+
+.history-diagram-node--output {
+    min-height: 58px;
+}
+
+.history-diagram-node-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.history-diagram-node-caption {
+    color: var(--muted);
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    line-height: 1.25;
+}
+
+.history-diagram-node-dot {
+    width: 7px;
+    height: 7px;
+    flex: 0 0 7px;
+    border-radius: 50%;
+    background: rgba(202, 211, 218, 0.32);
+}
+
+.history-diagram-node strong {
+    color: #f6fbff;
+    font-size: 0.84rem;
+    line-height: 1.2;
+}
+
+.history-diagram-node--compact .history-diagram-node-caption {
+    font-size: 0.58rem;
+}
+
+.history-diagram-node--compact strong {
+    font-size: 0.78rem;
+}
+
+.history-diagram-node--signal {
+    border-color: rgba(245, 186, 84, 0.24);
+}
+
+.history-diagram-node--bull {
+    border-color: rgba(61, 214, 97, 0.26);
+    background: linear-gradient(180deg, rgba(47, 168, 78, 0.08), rgba(9, 15, 14, 0.88));
+}
+
+.history-diagram-node--bear {
+    border-color: rgba(241, 98, 98, 0.24);
+    background: linear-gradient(180deg, rgba(214, 72, 72, 0.08), rgba(9, 15, 14, 0.88));
+}
+
+.history-diagram-node--debate,
+.history-diagram-node--risk {
+    border-style: dashed;
+}
+
+.history-diagram-node--plan,
+.history-diagram-node--trader,
+.history-diagram-node--decision {
+    border-color: rgba(101, 208, 173, 0.28);
+}
+
+.history-diagram-node--aggressive {
+    border-color: rgba(255, 178, 64, 0.3);
+}
+
+.history-diagram-node--neutral {
+    border-color: rgba(173, 178, 186, 0.28);
+}
+
+.history-diagram-node--conservative {
+    border-color: rgba(98, 169, 255, 0.28);
+}
+
+.history-diagram-extra {
+    display: grid;
+    gap: 8px;
+}
+
+.history-diagram-extra-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+@media (max-width: 760px) {
+    .history-diagram {
+        flex-direction: column;
+        align-items: stretch;
+        min-width: 0;
+    }
+
+    .history-diagram-group,
+    .history-diagram-group--inputs,
+    .history-diagram-group--research,
+    .history-diagram-group--risk,
+    .history-diagram-group--trader,
+    .history-diagram-group--portfolio {
+        width: 100%;
+    }
+
+    .history-diagram-link {
+        flex: 0 0 auto;
+        width: 1px;
+        height: 26px;
+        margin: 0 auto;
+    }
+
+    .history-diagram-link::after {
+        top: auto;
+        bottom: -1px;
+        right: 50%;
+        transform: translateX(50%) rotate(135deg);
+    }
+
+    .history-diagram-merge {
+        grid-template-columns: 1fr;
+    }
+
+    .history-diagram-stack--merge::after,
+    .history-diagram-merge-link {
+        display: none;
+    }
+
+    .history-diagram-output {
+        margin-top: 4px;
+    }
+}
+
 .history-section {
     padding: 14px;
     border: 1px solid var(--line);
