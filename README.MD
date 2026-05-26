@@ -9,7 +9,7 @@ This project is inspired by and originally derived from [tauricresearch/tradinga
 - The product direction is no longer a CLI-first research demo. It is now a FastAPI backend plus a standalone HTML/CSS/JavaScript frontend.
 - The primary flow is realtime streaming analysis over SSE from `/api/analyze` into dashboard panels.
 - The app is crypto-first, with BTC-style defaults, Binance/ccxt market data paths, StockTwits/Reddit/news context, and TradingView chart shortcuts.
-- Google sign-in gates analysis execution, while public history can remain readable when enabled.
+- Google sign-in gates History. Admin permission gates analysis execution.
 - Turso is used for optional persistent analysis history.
 - The frontend has been rebuilt as a dashboard with Execution Board, Backend Log, Main View, Agent Trace, Event Log, History, and Chart pages.
 
@@ -31,7 +31,7 @@ This project is inspired by and originally derived from [tauricresearch/tradinga
 - Research debate, trader plan, risk debate, and final portfolio decision panels.
 - Google-authenticated analysis execution.
 - Optional Turso-backed analysis history.
-- TradingView chart page with favorite crypto symbols and intervals.
+- TradingView chart page with editable favorite crypto symbols and intervals.
 - Pure frontend stack, suitable for static hosting on Vercel.
 
 ## Environment
@@ -47,9 +47,12 @@ Important variables:
 - `MINIMAX_API_KEY` or `MINIMAX_CN_API_KEY`: required for LLM calls.
 - `MINIMAX_BASE_URL`: optional Anthropic-compatible MiniMax endpoint override.
 - `GOOGLE_CLIENT_ID`: required for Google sign-in.
-- `GOOGLE_ALLOWED_EMAIL` or `GOOGLE_ALLOWED_EMAILS`: controls which accounts can run analysis.
+- `ADMIN_EMAILS`: comma-separated admin accounts. Defaults to `trainguyenchi30@gmail.com`.
+- `DEFAULT_HISTORY_ACCESS_DAYS`: number of recent days a normal signed-in user can view in History. Defaults to `7`.
+- `AUTH_RESTRICT_TO_ALLOWED_EMAILS`: optional sign-in allowlist mode. When `true`, only `GOOGLE_ALLOWED_EMAILS` plus admins can sign in.
+- `GOOGLE_ALLOWED_EMAIL` or `GOOGLE_ALLOWED_EMAILS`: optional allowlist used only when `AUTH_RESTRICT_TO_ALLOWED_EMAILS=true`.
 - `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`: enable persistent history.
-- `HISTORY_PUBLIC_READ`: allows unauthenticated users to view public history summaries/details when `true`.
+- `HISTORY_PUBLIC_READ`: legacy variable; History is now login-required and the backend keeps public read disabled.
 - `CORS_ALLOW_ORIGINS`: set this to the real frontend domains in production.
 
 Do not commit real `.env` secrets. The tracked `.env-example` is intentionally placeholder-only.
@@ -88,10 +91,13 @@ http://127.0.0.1:8000/health
 - `GET /health`: backend health and runtime limits.
 - `GET /api/config`: public frontend runtime config.
 - `GET /api/auth/me`: verifies the current Google ID token.
-- `GET /api/history`: lists saved analysis runs, public or authenticated depending on config.
-- `GET /api/history/{run_id}`: loads saved report sections.
-- `POST /api/analyze`: starts SSE analysis stream. Requires an authorized Google ID token.
-- `POST /api/analyze/{run_id}/cancel`: cancels an active analysis stream. Requires auth.
+- `GET /api/history`: lists saved analysis runs for the signed-in user's allowed time window.
+- `GET /api/history/{run_id}/sections`: lists saved report section cards without markdown payloads.
+- `GET /api/history/{run_id}/sections/{section_key}`: loads one saved report section on demand.
+- `GET /api/admin/users`: lists users for admins.
+- `PATCH /api/admin/users/{email}`: updates admin role and history access days for a user.
+- `POST /api/analyze`: starts SSE analysis stream. Requires admin permission.
+- `POST /api/analyze/{run_id}/cancel`: cancels an active analysis stream. Requires admin permission.
 
 ## Deployment Notes
 

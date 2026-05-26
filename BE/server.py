@@ -9,9 +9,9 @@ from fastapi.staticfiles import StaticFiles
 
 from .analysis import AnalysisService
 from .auth import AuthService
-from .config import SETTINGS, logger, resolve_minimax_settings
+from .config import DEFAULT_ANALYSTS, RESEARCH_DEPTH_OPTIONS, SETTINGS, logger, resolve_minimax_settings
 from .history import TursoHistoryStore
-from .models import AnalysisRequest, AuthSessionRequest, ChatRequest
+from .models import AdminUserAccessUpdate, AnalysisRequest, AuthSessionRequest, ChatRequest
 
 
 history_store = TursoHistoryStore(SETTINGS.turso_database_url, SETTINGS.turso_auth_token, SETTINGS.history_page_size)
@@ -112,12 +112,33 @@ def create_app() -> FastAPI:
                 "schema_ready": history_store._schema_ready,
                 "public_read": SETTINGS.history_public_read,
                 "page_size": SETTINGS.history_page_size,
+                "default_access_days": SETTINGS.default_history_access_days,
             },
             "trading_view": {
                 "symbol": SETTINGS.trading_view_symbol,
                 "interval": SETTINGS.trading_view_interval,
                 "symbols": list(SETTINGS.trading_view_symbols),
                 "intervals": list(SETTINGS.trading_view_intervals),
+            },
+            "analysis_defaults": {
+                "symbol": SETTINGS.trading_view_symbol.split(":")[-1].replace("USDT", "-USDT"),
+                "asset_type": SETTINGS.default_asset_type,
+                "lookback_days": SETTINGS.default_analysis_lookback_days,
+                "output_language": SETTINGS.default_output_language,
+                "selected_analysts": list(SETTINGS.default_selected_analysts),
+                "research_depth": SETTINGS.default_research_depth,
+                "model": SETTINGS.default_model,
+                "checkpoint_enabled": SETTINGS.default_checkpoint_enabled,
+            },
+            "analysis_options": {
+                "analysts": [
+                    {"value": value, "label": f"{value.title()} Analyst"}
+                    for value in DEFAULT_ANALYSTS
+                ],
+                "research_depths": [
+                    {"value": value, **meta}
+                    for value, meta in RESEARCH_DEPTH_OPTIONS.items()
+                ],
             },
         }
 
@@ -136,19 +157,8 @@ def create_app() -> FastAPI:
         safe_page = max(1, int(page or 1))
         safe_limit = max(1, min(int(limit or SETTINGS.history_page_size), SETTINGS.history_page_size))
         offset = (safe_page - 1) * safe_limit
-        if SETTINGS.history_public_read:
-            rows = await asyncio.to_thread(history_store.list_public_runs, safe_limit + 1, offset)
-            items = rows[:safe_limit]
-            return {
-                "items": items,
-                "configured": True,
-                "public_read": True,
-                "page": safe_page,
-                "limit": safe_limit,
-                "has_more": len(rows) > safe_limit,
-            }
         user = await auth_service.require_authorized_user(http_request)
-        rows = await asyncio.to_thread(history_store.list_runs, user["email"], safe_limit + 1, offset)
+        rows = await asyncio.to_thread(history_store.list_accessible_runs, user.get("history_access_days"), safe_limit + 1, offset)
         items = rows[:safe_limit]
         return {
             "items": items,
@@ -157,24 +167,71 @@ def create_app() -> FastAPI:
             "page": safe_page,
             "limit": safe_limit,
             "has_more": len(rows) > safe_limit,
+            "history_access_days": user.get("history_access_days"),
+            "history_access_unlimited": user.get("history_access_unlimited", False),
         }
 
     @app.get("/api/history/{run_id}")
     async def get_analysis_history(run_id: str, http_request: Request) -> dict:
         if not history_store.configured:
             raise HTTPException(status_code=503, detail="Turso history database is not configured.")
-        if SETTINGS.history_public_read:
-            result = await asyncio.to_thread(history_store.get_public_run, run_id)
-        else:
-            user = await auth_service.require_authorized_user(http_request)
-            result = await asyncio.to_thread(history_store.get_run, run_id, user["email"])
+        user = await auth_service.require_authorized_user(http_request)
+        result = await asyncio.to_thread(history_store.list_run_section_metas, run_id, user.get("history_access_days"))
         if result is None:
             raise HTTPException(status_code=404, detail="Analysis history item was not found.")
         return result
 
+    @app.get("/api/history/{run_id}/sections")
+    async def list_analysis_history_sections(run_id: str, http_request: Request) -> dict:
+        if not history_store.configured:
+            raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+        user = await auth_service.require_authorized_user(http_request)
+        result = await asyncio.to_thread(history_store.list_run_section_metas, run_id, user.get("history_access_days"))
+        if result is None:
+            raise HTTPException(status_code=404, detail="Analysis history item was not found.")
+        return result
+
+    @app.get("/api/history/{run_id}/sections/{section_key}")
+    async def get_analysis_history_section(run_id: str, section_key: str, http_request: Request) -> dict:
+        if not history_store.configured:
+            raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+        user = await auth_service.require_authorized_user(http_request)
+        result = await asyncio.to_thread(history_store.get_run_section, run_id, section_key, user.get("history_access_days"))
+        if result is None:
+            raise HTTPException(status_code=404, detail="Analysis history section was not found.")
+        return result
+
+    @app.get("/api/admin/users")
+    async def list_admin_users(http_request: Request) -> dict:
+        await auth_service.require_admin_user(http_request)
+        if not history_store.configured:
+            raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+        users = await asyncio.to_thread(
+            history_store.list_users,
+            SETTINGS.default_history_access_days,
+            SETTINGS.admin_emails,
+        )
+        return {"items": users}
+
+    @app.patch("/api/admin/users/{email}")
+    async def update_admin_user(email: str, payload: AdminUserAccessUpdate, http_request: Request) -> dict:
+        await auth_service.require_admin_user(http_request)
+        if not history_store.configured:
+            raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+        user = await asyncio.to_thread(
+            history_store.update_user_access,
+            email,
+            payload.is_admin,
+            payload.history_access_days,
+            payload.history_access_unlimited,
+            SETTINGS.default_history_access_days,
+            SETTINGS.admin_emails,
+        )
+        return {"item": user}
+
     @app.post("/api/chat")
     async def chat_completion(request: ChatRequest, http_request: Request):
-        await auth_service.require_authorized_user(http_request)
+        await auth_service.require_analysis_runner(http_request)
         if not request.messages:
             raise HTTPException(status_code=400, detail="Messages cannot be empty")
 
@@ -188,12 +245,12 @@ def create_app() -> FastAPI:
 
     @app.post("/api/analyze/{run_id}/cancel")
     async def cancel_trading_analysis(run_id: str, http_request: Request) -> dict:
-        await auth_service.require_authorized_user(http_request)
+        await auth_service.require_analysis_runner(http_request)
         return analysis_service.cancel_run(run_id)
 
     @app.post("/api/analyze")
     async def analyze_trading_agents(analysis_request: AnalysisRequest, http_request: Request):
-        user = await auth_service.require_authorized_user(http_request)
+        user = await auth_service.require_analysis_runner(http_request)
         if not analysis_service.try_reserve_analysis_slot():
             raise HTTPException(
                 status_code=429,

@@ -26,6 +26,7 @@
                 <button id="agentPageButton" class="page-tab is-active" type="button" data-page="agent">Agent</button>
                 <button id="historyPageButton" class="page-tab" type="button" data-page="history">History</button>
                 <button id="chartPageButton" class="page-tab" type="button" data-page="chart">Chart</button>
+                <button id="adminPageButton" class="page-tab hidden" type="button" data-page="admin">Admin</button>
             </nav>
 
             <div class="topbar-status" aria-live="polite">
@@ -228,10 +229,35 @@
                         <input id="chartSymbolInput" type="text" placeholder="BINANCE:BNBUSDT" aria-label="Add TradingView symbol">
                         <button id="addChartSymbolButton" class="button secondary" type="submit">Add</button>
                     </form>
+                    <form id="chartIntervalForm" class="chart-symbol-form chart-interval-form">
+                        <input id="chartIntervalInput" type="text" placeholder="30, 120, D" aria-label="Add TradingView timeframe">
+                        <button id="addChartIntervalButton" class="button secondary" type="submit">Add</button>
+                    </form>
                 </div>
                 <div class="chart-frame-wrap">
                     <iframe id="tradingViewFrame" title="TradingView BTC chart" loading="lazy" allowfullscreen></iframe>
                 </div>
+            </section>
+        </main>
+
+        <main id="adminPage" class="page-view admin-page hidden" aria-label="User administration">
+            <section class="window admin-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Access control</p>
+                        <h2>User Management</h2>
+                    </div>
+                    <div class="admin-header-actions">
+                        <span id="adminStatusText" class="window-status">Admin only</span>
+                        <button id="refreshAdminUsersButton" class="toolbar-button" type="button" aria-label="Refresh users">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+                                <path d="M21 3v6h-6"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="adminUserList" class="admin-user-list" aria-live="polite"></div>
             </section>
         </main>
     </div>

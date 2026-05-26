@@ -119,8 +119,10 @@ class AuthService:
         email_verified = payload.get("email_verified") is True or str(payload.get("email_verified") or "").lower() == "true"
         if not email or not email_verified:
             raise HTTPException(status_code=403, detail="Google account email is not verified.")
-        if email not in self.settings.google_allowed_emails:
-            raise HTTPException(status_code=403, detail="This Google account is not allowed to run analysis.")
+        if self.settings.auth_restrict_to_allowed_emails:
+            allowed_emails = self.settings.google_allowed_emails | self.settings.admin_emails
+            if email not in allowed_emails:
+                raise HTTPException(status_code=403, detail="This Google account is not allowed to sign in.")
 
         user = {
             "email": email,
@@ -130,6 +132,34 @@ class AuthService:
             "email_verified": True,
             "authorized": True,
         }
+        return self._hydrate_user_permissions(user)
+
+    def _hydrate_user_permissions(self, user: dict) -> dict:
+        email = str(user.get("email") or "").strip().lower()
+        is_admin = email in self.settings.admin_emails
+        history_access_days: int | None = None if is_admin else self.settings.default_history_access_days
+        if email and self.history_store.configured:
+            try:
+                access = self.history_store.get_user_access(
+                    email,
+                    self.settings.default_history_access_days,
+                    self.settings.admin_emails,
+                )
+                is_admin = bool(access.get("is_admin"))
+                history_access_days = access.get("history_access_days")
+            except Exception:
+                logger.warning("Could not load user access settings from history database.", exc_info=True)
+        user.update(
+            {
+                "email": email,
+                "authorized": True,
+                "is_admin": is_admin,
+                "role": "admin" if is_admin else "user",
+                "can_run_analysis": is_admin,
+                "history_access_days": history_access_days,
+                "history_access_unlimited": history_access_days is None,
+            }
+        )
         return user
 
     def _verify_session_token(self, token: str) -> dict:
@@ -147,6 +177,9 @@ class AuthService:
             raise InvalidSessionToken("Unexpected session algorithm.")
         if payload.get("iss") != "tradingagents-session" or payload.get("kind") != "frontend_session":
             raise InvalidSessionToken("Token is not a TradingAgents session.")
+        expires_at = int(payload.get("exp") or 0)
+        if expires_at and expires_at <= int(time.time()):
+            raise HTTPException(status_code=401, detail="Session has expired. Sign in with Google again.")
 
         signing_input = f"{parts[0]}.{parts[1]}".encode("utf-8")
         expected_signature = self._session_signature(signing_input)
@@ -168,7 +201,11 @@ class AuthService:
             "picture": str(user.get("picture") or ""),
             "email_verified": True,
             "authorized": True,
+            "is_admin": bool(user.get("is_admin", False)),
+            "can_run_analysis": bool(user.get("can_run_analysis", False)),
+            "history_access_days": user.get("history_access_days"),
             "iat": issued_at,
+            "exp": expires_at,
         }
         header_segment = self._base64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
         payload_segment = self._base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
@@ -197,8 +234,6 @@ class AuthService:
     def _validate_google_id_token_uncached(self, token: str) -> tuple[dict, float]:
         if not token:
             raise HTTPException(status_code=401, detail="Sign in with Google before running analysis.")
-        if not self.settings.google_allowed_emails:
-            raise HTTPException(status_code=500, detail="GOOGLE_ALLOWED_EMAIL or GOOGLE_ALLOWED_EMAILS is not configured.")
 
         payload = self._verify_google_id_token(token)
         user = self._build_user_from_payload(payload)
@@ -248,7 +283,8 @@ class AuthService:
             self._cache_user(token, user, expires_at)
             return user
 
-        raise HTTPException(status_code=401, detail="Session has expired. Sign in with Google again.")
+        self._cache_user(token, user, time.time() + self.settings.auth_session_ttl_seconds)
+        return user
 
     async def create_session(self, google_id_token: str) -> dict:
         user = await asyncio.to_thread(self._validate_google_id_token, google_id_token)
@@ -273,6 +309,7 @@ class AuthService:
             return None
 
         user = await asyncio.to_thread(self._validate_auth_token, token)
+        user = await asyncio.to_thread(self._hydrate_user_permissions, user)
         request.state.auth_user = user
         await self._persist_user_if_possible(user)
         return user
@@ -281,4 +318,16 @@ class AuthService:
         user = await self.attach_request_auth_context(request, required=True)
         if user is None:
             raise HTTPException(status_code=401, detail="Sign in with Google before running analysis.")
+        return user
+
+    async def require_analysis_runner(self, request: Request) -> dict:
+        user = await self.require_authorized_user(request)
+        if not user.get("can_run_analysis"):
+            raise HTTPException(status_code=403, detail="Admin permission is required to run analysis.")
+        return user
+
+    async def require_admin_user(self, request: Request) -> dict:
+        user = await self.require_authorized_user(request)
+        if not user.get("is_admin"):
+            raise HTTPException(status_code=403, detail="Admin permission is required.")
         return user

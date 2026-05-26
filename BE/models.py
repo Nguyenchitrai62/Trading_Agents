@@ -93,3 +93,9 @@ class AuthSessionRequest(BaseModel):
         if not normalized:
             raise ValueError("id_token is required")
         return normalized
+
+
+class AdminUserAccessUpdate(BaseModel):
+    is_admin: bool | None = None
+    history_access_days: int | None = Field(default=None, ge=1)
+    history_access_unlimited: bool = False

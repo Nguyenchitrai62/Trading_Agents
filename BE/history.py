@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 
@@ -165,6 +165,8 @@ class TursoHistoryStore:
                     name TEXT,
                     picture TEXT,
                     email_verified INTEGER NOT NULL DEFAULT 0,
+                    is_admin INTEGER NOT NULL DEFAULT 0,
+                    history_access_days INTEGER,
                     first_seen_at TEXT NOT NULL,
                     last_seen_at TEXT NOT NULL
                 )
@@ -184,6 +186,10 @@ class TursoHistoryStore:
             user_columns = self._table_columns("auth_users")
             if "email_verified" not in user_columns:
                 migration_statements.append(("ALTER TABLE auth_users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0", None))
+            if "is_admin" not in user_columns:
+                migration_statements.append(("ALTER TABLE auth_users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0", None))
+            if "history_access_days" not in user_columns:
+                migration_statements.append(("ALTER TABLE auth_users ADD COLUMN history_access_days INTEGER", None))
             if migration_statements:
                 self._execute_many(migration_statements)
             self._execute(
@@ -209,13 +215,19 @@ class TursoHistoryStore:
         self._execute(
             """
             INSERT INTO auth_users (
-                email, google_sub, name, picture, email_verified, first_seen_at, last_seen_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                email, google_sub, name, picture, email_verified, is_admin,
+                history_access_days, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(email) DO UPDATE SET
                 google_sub = excluded.google_sub,
                 name = excluded.name,
                 picture = excluded.picture,
                 email_verified = excluded.email_verified,
+                is_admin = CASE WHEN excluded.is_admin = 1 THEN 1 ELSE auth_users.is_admin END,
+                history_access_days = CASE
+                    WHEN excluded.is_admin = 1 THEN NULL
+                    ELSE COALESCE(auth_users.history_access_days, excluded.history_access_days)
+                END,
                 last_seen_at = excluded.last_seen_at
             """,
             [
@@ -224,10 +236,117 @@ class TursoHistoryStore:
                 user.get("name"),
                 user.get("picture"),
                 bool(user.get("email_verified", True)),
+                bool(user.get("is_admin", False)),
+                user.get("history_access_days"),
                 seen_at,
                 seen_at,
             ],
         )
+
+    def _format_user_access(
+        self,
+        row: dict | None,
+        email: str,
+        default_history_access_days: int,
+        admin_emails: frozenset[str],
+    ) -> dict:
+        normalized_email = email.strip().lower()
+        is_seed_admin = normalized_email in admin_emails
+        is_admin = is_seed_admin or bool(row.get("is_admin") if row else False)
+        raw_days = row.get("history_access_days") if row else None
+        history_access_days = None if is_admin else raw_days or default_history_access_days
+        return {
+            "email": normalized_email,
+            "google_sub": row.get("google_sub") if row else None,
+            "name": row.get("name") if row else "",
+            "picture": row.get("picture") if row else "",
+            "email_verified": bool(row.get("email_verified") if row else True),
+            "is_admin": is_admin,
+            "role": "admin" if is_admin else "user",
+            "can_run_analysis": is_admin,
+            "history_access_days": history_access_days,
+            "history_access_unlimited": history_access_days is None,
+            "first_seen_at": row.get("first_seen_at") if row else None,
+            "last_seen_at": row.get("last_seen_at") if row else None,
+            "is_seed_admin": is_seed_admin,
+        }
+
+    def get_user_access(
+        self,
+        email: str,
+        default_history_access_days: int,
+        admin_emails: frozenset[str],
+    ) -> dict:
+        self.ensure_schema()
+        normalized_email = email.strip().lower()
+        rows = self._query_rows(
+            """
+            SELECT email, google_sub, name, picture, email_verified, is_admin,
+                history_access_days, first_seen_at, last_seen_at
+            FROM auth_users
+            WHERE email = ?
+            LIMIT 1
+            """,
+            [normalized_email],
+        )
+        return self._format_user_access(rows[0] if rows else None, normalized_email, default_history_access_days, admin_emails)
+
+    def list_users(self, default_history_access_days: int, admin_emails: frozenset[str]) -> list[dict]:
+        self.ensure_schema()
+        rows = self._query_rows(
+            """
+            SELECT email, google_sub, name, picture, email_verified, is_admin,
+                history_access_days, first_seen_at, last_seen_at
+            FROM auth_users
+            ORDER BY last_seen_at DESC
+            """
+        )
+        users = [self._format_user_access(row, row["email"], default_history_access_days, admin_emails) for row in rows]
+        seen = {user["email"] for user in users}
+        for email in sorted(admin_emails - seen):
+            users.append(self._format_user_access(None, email, default_history_access_days, admin_emails))
+        return users
+
+    def update_user_access(
+        self,
+        email: str,
+        is_admin: bool | None,
+        history_access_days: int | None,
+        history_access_unlimited: bool,
+        default_history_access_days: int,
+        admin_emails: frozenset[str],
+    ) -> dict:
+        self.ensure_schema()
+        normalized_email = email.strip().lower()
+        current = self.get_user_access(normalized_email, default_history_access_days, admin_emails)
+        effective_is_admin = current["is_seed_admin"] or (bool(is_admin) if is_admin is not None else bool(current["is_admin"]))
+        if effective_is_admin or history_access_unlimited:
+            effective_days = None
+        elif history_access_days is not None:
+            effective_days = max(1, int(history_access_days))
+        else:
+            effective_days = current.get("history_access_days") or default_history_access_days
+
+        now = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        self._execute(
+            """
+            INSERT INTO auth_users (
+                email, google_sub, name, picture, email_verified, is_admin,
+                history_access_days, first_seen_at, last_seen_at
+            ) VALUES (?, NULL, '', '', 0, ?, ?, ?, ?)
+            ON CONFLICT(email) DO UPDATE SET
+                is_admin = excluded.is_admin,
+                history_access_days = excluded.history_access_days
+            """,
+            [normalized_email, effective_is_admin, effective_days, now, now],
+        )
+        return self.get_user_access(normalized_email, default_history_access_days, admin_emails)
+
+    @staticmethod
+    def _history_cutoff(history_access_days: int | None) -> str | None:
+        if history_access_days is None:
+            return None
+        return (datetime.utcnow() - timedelta(days=max(1, int(history_access_days)))).replace(microsecond=0).isoformat() + "Z"
 
     def save_analysis(
         self,
@@ -359,6 +478,87 @@ class TursoHistoryStore:
             """,
             [safe_limit, offset],
         )
+
+    def list_accessible_runs(self, history_access_days: int | None, limit: int | None = None, offset: int = 0) -> list[dict]:
+        self.ensure_schema()
+        safe_limit = limit or self.page_size
+        cutoff = self._history_cutoff(history_access_days)
+        where_clause = "WHERE r.created_at >= ?" if cutoff else ""
+        args: list[object] = [cutoff] if cutoff else []
+        args.extend([safe_limit, offset])
+        return self._query_rows(
+            f"""
+            SELECT
+                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
+                r.output_language, r.research_depth, r.model, r.signal,
+                r.elapsed_seconds, r.created_at, r.section_count, r.user_email,
+                (
+                    SELECT s.markdown
+                    FROM analysis_sections s
+                    WHERE s.run_id = r.id AND s.section_key = 'final_trade_decision'
+                    ORDER BY s.display_order DESC
+                    LIMIT 1
+                ) AS final_markdown
+            FROM analysis_runs r
+            {where_clause}
+            ORDER BY r.created_at DESC
+            LIMIT ?
+            OFFSET ?
+            """,
+            args,
+        )
+
+    def get_accessible_run_meta(self, run_id: str, history_access_days: int | None) -> dict | None:
+        self.ensure_schema()
+        cutoff = self._history_cutoff(history_access_days)
+        where_clause = "AND created_at >= ?" if cutoff else ""
+        args: list[object] = [run_id]
+        if cutoff:
+            args.append(cutoff)
+        runs = self._query_rows(
+            f"""
+            SELECT id, symbol, asset_type, analysis_date, lookback_days,
+                output_language, research_depth, model, signal, elapsed_seconds,
+                created_at, section_count, user_email
+            FROM analysis_runs
+            WHERE id = ? {where_clause}
+            LIMIT 1
+            """,
+            args,
+        )
+        return runs[0] if runs else None
+
+    def list_run_section_metas(self, run_id: str, history_access_days: int | None) -> dict | None:
+        item = self.get_accessible_run_meta(run_id, history_access_days)
+        if item is None:
+            return None
+        sections = self._query_rows(
+            """
+            SELECT section_key, title, agent, team, created_at
+            FROM analysis_sections
+            WHERE run_id = ?
+            ORDER BY display_order ASC
+            """,
+            [run_id],
+        )
+        return {"item": item, "sections": sections}
+
+    def get_run_section(self, run_id: str, section_key: str, history_access_days: int | None) -> dict | None:
+        item = self.get_accessible_run_meta(run_id, history_access_days)
+        if item is None:
+            return None
+        sections = self._query_rows(
+            """
+            SELECT section_key, title, agent, team, markdown, created_at
+            FROM analysis_sections
+            WHERE run_id = ? AND section_key = ?
+            LIMIT 1
+            """,
+            [run_id, section_key],
+        )
+        if not sections:
+            return None
+        return {"item": item, "section": sections[0]}
 
     def get_run(self, run_id: str, user_email: str) -> dict | None:
         self.ensure_schema()

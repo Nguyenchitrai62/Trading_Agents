@@ -157,13 +157,14 @@ textarea {
 }
 .chart-controls {
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(260px, 0.7fr);
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.82fr) minmax(230px, 0.74fr) minmax(190px, 0.6fr);
     gap: 10px;
     margin-bottom: 10px;
 }
 .chart-symbol-list,
 .chart-interval-list,
-.chart-symbol-form {
+.chart-symbol-form,
+.chart-favorite-item {
     display: flex;
     min-width: 0;
     gap: 8px;
@@ -188,6 +189,37 @@ textarea {
     font-size: 0.82rem;
     white-space: nowrap;
     transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+.chart-favorite-item {
+    flex: 0 0 auto;
+    padding: 3px;
+    border-radius: 999px;
+    background: rgba(18, 30, 46, 0.52);
+    border: 1px solid transparent;
+}
+.chart-favorite-item.is-active {
+    border-color: rgba(101, 208, 173, 0.36);
+    background: rgba(101, 208, 173, 0.12);
+}
+.chart-favorite-item .chart-chip {
+    padding-inline: 10px;
+}
+.chart-mini-action {
+    min-width: 30px;
+    min-height: 30px;
+    padding: 0 8px;
+    border: 1px solid rgba(115, 142, 178, 0.16);
+    border-radius: 999px;
+    background: rgba(8, 14, 13, 0.5);
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 0.68rem;
+}
+.chart-mini-action:hover,
+.chart-mini-action:focus-visible {
+    color: var(--ink);
+    border-color: rgba(101, 208, 173, 0.36);
+    outline: none;
 }
 .chart-chip:hover,
 .chart-chip:focus-visible,
@@ -238,7 +270,7 @@ textarea {
         justify-content: flex-start;
     }
     .chart-controls {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 @media (max-width: 720px) {
@@ -249,6 +281,9 @@ textarea {
     .chart-symbol-form {
         flex-direction: column;
         align-items: stretch;
+    }
+    .chart-controls {
+        grid-template-columns: 1fr;
     }
 }
 
@@ -1372,6 +1407,148 @@ p {
 
 .hidden {
     display: none;
+}
+
+.history-section-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.history-section-card {
+    min-height: 104px;
+    padding: 12px;
+    display: grid;
+    align-content: space-between;
+    gap: 8px;
+    text-align: left;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: rgba(14, 24, 38, 0.84);
+    color: var(--ink);
+    cursor: pointer;
+}
+
+.history-section-card:hover,
+.history-section-card:focus-visible,
+.history-section-card.is-active {
+    border-color: var(--line-strong);
+    background: rgba(20, 35, 54, 0.96);
+    outline: none;
+}
+
+.history-section-card span {
+    width: fit-content;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(88, 166, 255, 0.12);
+    color: var(--accent);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.history-section-card strong {
+    font-size: 0.92rem;
+    line-height: 1.24;
+}
+
+.history-section-card small {
+    color: var(--muted);
+    font-size: 0.74rem;
+}
+
+.history-section-lazy {
+    min-height: 260px;
+}
+
+.admin-page,
+.admin-window {
+    height: 100%;
+    min-height: 0;
+}
+
+.admin-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.admin-user-list {
+    display: grid;
+    gap: 10px;
+    min-height: 0;
+    overflow: auto;
+}
+
+.admin-user-card {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.2fr) minmax(110px, 0.4fr) minmax(150px, 0.58fr) minmax(130px, 0.48fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: rgba(14, 24, 38, 0.86);
+}
+
+.admin-user-main,
+.admin-control {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+}
+
+.admin-user-main strong,
+.admin-user-main span,
+.admin-user-main small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.admin-user-main span,
+.admin-user-main small,
+.admin-control span {
+    color: var(--muted);
+    font-size: 0.76rem;
+}
+
+.admin-control input[type="number"] {
+    width: 100%;
+    min-height: 38px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface-1);
+    color: var(--ink);
+}
+
+.admin-toggle {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+}
+
+.admin-toggle input {
+    width: 18px;
+    height: 18px;
+}
+
+.admin-save-button {
+    min-width: 82px;
+}
+
+@media (max-width: 980px) {
+    .admin-user-card {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .admin-user-card {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (max-width: 1280px) {

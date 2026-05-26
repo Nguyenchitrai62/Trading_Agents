@@ -21,6 +21,26 @@ CPU_THREAD_ENV_VARS = (
     "VECLIB_MAXIMUM_THREADS",
 )
 DEFAULT_ANALYSTS = ("market", "social", "news", "fundamentals")
+APP_TITLE = "TradingAgents Analysis API"
+APP_VERSION = "0.1.0"
+DEFAULT_MODEL = "MiniMax-M2.7"
+DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
+DEFAULT_ASSET_TYPE = "crypto"
+DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
+DEFAULT_RESEARCH_DEPTH = "quick"
+DEFAULT_CHECKPOINT_ENABLED = False
+DEFAULT_HISTORY_PAGE_SIZE = 10
+DEFAULT_HISTORY_ACCESS_DAYS = 7
+DEFAULT_ADMIN_EMAILS = ("trainguyenchi30@gmail.com",)
+DEFAULT_TRADING_VIEW_SYMBOL = "BINANCE:BTCUSDT"
+DEFAULT_TRADING_VIEW_INTERVAL = "60"
+DEFAULT_TRADING_VIEW_SYMBOLS = (
+    "BINANCE:BTCUSDT",
+    "BINANCE:ETHUSDT",
+    "BINANCE:SOLUSDT",
+    "BINANCE:XRPUSDT",
+)
+DEFAULT_TRADING_VIEW_INTERVALS = ("5", "15", "60", "240", "D")
 RESEARCH_DEPTH_OPTIONS = {
     "quick": {
         "label": "Quick",
@@ -234,6 +254,9 @@ class BackendSettings:
     default_selected_analysts: tuple[str, ...]
     default_research_depth: str
     default_checkpoint_enabled: bool
+    default_history_access_days: int
+    admin_emails: frozenset[str]
+    auth_restrict_to_allowed_emails: bool
     google_allowed_email: str
     google_allowed_emails: frozenset[str]
     google_client_id: str
@@ -278,26 +301,34 @@ class BackendSettings:
         cors_allow_origins = tuple(_configured_cors_origins())
         allow_all_origins = not cors_allow_origins or cors_allow_origins == ("*",)
         default_model = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
+        admin_emails = frozenset(
+            email.lower() for email in _env_csv("ADMIN_EMAILS", ",".join(DEFAULT_ADMIN_EMAILS))
+        )
         google_allowed_email = os.getenv("GOOGLE_ALLOWED_EMAIL", "").strip().lower()
         google_allowed_emails = frozenset(
             email.lower() for email in _env_csv("GOOGLE_ALLOWED_EMAILS", google_allowed_email)
         )
+        trading_view_symbols = tuple(_env_csv("TRADING_VIEW_SYMBOLS")) or DEFAULT_TRADING_VIEW_SYMBOLS
+        trading_view_intervals = tuple(_env_csv("TRADING_VIEW_INTERVALS")) or DEFAULT_TRADING_VIEW_INTERVALS
 
         return cls(
             root_dir=ROOT_DIR,
             frontend_dir=ROOT_DIR / "FE",
             image_dir=ROOT_DIR / "image",
             index_file=ROOT_DIR / "index.html",
-            app_title="TradingAgents Analysis API",
-            app_version="0.1.0",
+            app_title=APP_TITLE,
+            app_version=APP_VERSION,
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
             default_model=default_model,
-            default_analysis_lookback_days=7,
-            default_asset_type="crypto",
-            default_output_language="Vietnamese",
+            default_analysis_lookback_days=DEFAULT_ANALYSIS_LOOKBACK_DAYS,
+            default_asset_type=DEFAULT_ASSET_TYPE,
+            default_output_language=DEFAULT_OUTPUT_LANGUAGE,
             default_selected_analysts=DEFAULT_ANALYSTS,
-            default_research_depth="medium",
-            default_checkpoint_enabled=False,
+            default_research_depth=os.getenv("DEFAULT_RESEARCH_DEPTH", DEFAULT_RESEARCH_DEPTH).strip() or DEFAULT_RESEARCH_DEPTH,
+            default_checkpoint_enabled=DEFAULT_CHECKPOINT_ENABLED,
+            default_history_access_days=max(1, _env_int("DEFAULT_HISTORY_ACCESS_DAYS", DEFAULT_HISTORY_ACCESS_DAYS)),
+            admin_emails=admin_emails,
+            auth_restrict_to_allowed_emails=_env_bool("AUTH_RESTRICT_TO_ALLOWED_EMAILS", False),
             google_allowed_email=google_allowed_email,
             google_allowed_emails=google_allowed_emails,
             google_client_id=os.getenv("GOOGLE_CLIENT_ID", "").strip(),
@@ -329,23 +360,18 @@ class BackendSettings:
             auth_session_secret=auth_session_secret,
             auth_session_persistent=auth_session_persistent,
             auth_session_ttl_seconds=max(3600, _env_int("AUTH_SESSION_TTL_SECONDS", 60 * 60 * 24 * 7)),
-            history_public_read=_env_bool("HISTORY_PUBLIC_READ", True),
-            history_page_size=10,
+            history_public_read=False,
+            history_page_size=max(1, _env_int("HISTORY_PAGE_SIZE", DEFAULT_HISTORY_PAGE_SIZE)),
             droppable_sse_events=frozenset({"analysis_log", "agent_trace"}),
             cors_allow_origins=cors_allow_origins,
             allow_all_origins=allow_all_origins,
             minimax_base_url=os.getenv("MINIMAX_BASE_URL", "").strip(),
             minimax_api_key=os.getenv("MINIMAX_API_KEY", "").strip(),
             minimax_cn_api_key=os.getenv("MINIMAX_CN_API_KEY", "").strip(),
-            trading_view_symbol=os.getenv("TRADING_VIEW_SYMBOL", "BINANCE:BTCUSDT"),
-            trading_view_interval=os.getenv("TRADING_VIEW_INTERVAL", "60"),
-            trading_view_symbols=(
-                "BINANCE:BTCUSDT",
-                "BINANCE:ETHUSDT",
-                "BINANCE:SOLUSDT",
-                "BINANCE:XRPUSDT",
-            ),
-            trading_view_intervals=("5", "15", "60", "240", "D"),
+            trading_view_symbol=os.getenv("TRADING_VIEW_SYMBOL", DEFAULT_TRADING_VIEW_SYMBOL),
+            trading_view_interval=os.getenv("TRADING_VIEW_INTERVAL", DEFAULT_TRADING_VIEW_INTERVAL),
+            trading_view_symbols=trading_view_symbols,
+            trading_view_intervals=trading_view_intervals,
             port=_env_int("PORT", 8000),
         )
 
@@ -396,7 +422,9 @@ if not SETTINGS.auth_session_persistent:
 
 __all__ = [
     "CPU_THREAD_ENV_VARS",
+    "DEFAULT_ADMIN_EMAILS",
     "DEFAULT_ANALYSTS",
+    "DEFAULT_HISTORY_ACCESS_DAYS",
     "RESEARCH_DEPTH_OPTIONS",
     "ROOT_DIR",
     "SECTION_META",

@@ -4,11 +4,42 @@
     // apiBaseUrl: "http://localhost:8000",
     provider: "minimax",
     defaultModel: "MiniMax-M2.7",
+    app: {
+        pages: ["agent", "history", "chart", "admin"],
+        defaultPage: "agent",
+        coreAnalysts: ["market", "social", "news"],
+        traceDisplayLimit: 14,
+        logDisplayLimit: 12,
+        executionLogDisplayLimit: 80,
+    },
+    auth: {
+        storageKey: "tradingagents.googleAuth",
+        requireLoginForHistory: true,
+    },
+    history: {
+        pageSize: 10,
+        requireLogin: true,
+    },
     tradingView: {
         symbol: "BINANCE:BTCUSDT",
         interval: "60",
         symbols: ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"],
         intervals: ["5", "15", "60", "240", "D"],
+        symbolsStorageKey: "tradingagents.chartSymbols",
+        intervalsStorageKey: "tradingagents.chartIntervals",
+        intervalLabels: {
+            "1": "1m",
+            "3": "3m",
+            "5": "5m",
+            "15": "15m",
+            "30": "30m",
+            "60": "1h",
+            "120": "2h",
+            "240": "4h",
+            D: "1D",
+            W: "1W",
+            M: "1M",
+        },
     },
     analysisDefaults: {
         // FE form defaults live here; backend /api/config should not override them.

@@ -58,28 +58,41 @@ const STATUS_LABELS = {
     completed: "done",
 };
 
-const CORE_ANALYSTS = ["market", "social", "news"];
-const CUSTOM_LOOKBACK_VALUE = "__custom__";
-const TRACE_DISPLAY_LIMIT = 14;
-const LOG_DISPLAY_LIMIT = 12;
-const EXECUTION_LOG_DISPLAY_LIMIT = 80;
-const HISTORY_PAGE_SIZE = 10;
-const AUTH_STORAGE_KEY = "tradingagents.googleAuth";
-const CHART_SYMBOLS_STORAGE_KEY = "tradingagents.chartSymbols";
-const PAGES = ["agent", "history", "chart"];
 const FRONTEND_BOOTSTRAP = window.TRADINGAGENTS_CONFIG || {};
-const DEFAULT_CHART_SYMBOLS = Array.isArray(FRONTEND_BOOTSTRAP.tradingView?.symbols)
-    ? FRONTEND_BOOTSTRAP.tradingView.symbols
+const APP_SETTINGS = FRONTEND_BOOTSTRAP.app || {};
+const AUTH_SETTINGS = FRONTEND_BOOTSTRAP.auth || {};
+const HISTORY_SETTINGS = FRONTEND_BOOTSTRAP.history || {};
+const TRADING_VIEW_SETTINGS = FRONTEND_BOOTSTRAP.tradingView || FRONTEND_BOOTSTRAP.trading_view || {};
+const CORE_ANALYSTS = Array.isArray(APP_SETTINGS.coreAnalysts) ? APP_SETTINGS.coreAnalysts : ["market", "social", "news"];
+const CUSTOM_LOOKBACK_VALUE = "__custom__";
+const TRACE_DISPLAY_LIMIT = Number(APP_SETTINGS.traceDisplayLimit || APP_SETTINGS.trace_display_limit || 14);
+const LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.logDisplayLimit || APP_SETTINGS.log_display_limit || 12);
+const EXECUTION_LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.executionLogDisplayLimit || APP_SETTINGS.execution_log_display_limit || 80);
+const HISTORY_PAGE_SIZE = Number(HISTORY_SETTINGS.pageSize || HISTORY_SETTINGS.page_size || 10);
+const AUTH_STORAGE_KEY = AUTH_SETTINGS.storageKey || AUTH_SETTINGS.storage_key || "tradingagents.googleAuth";
+const CHART_SYMBOLS_STORAGE_KEY = TRADING_VIEW_SETTINGS.symbolsStorageKey || TRADING_VIEW_SETTINGS.symbols_storage_key || "tradingagents.chartSymbols";
+const CHART_INTERVALS_STORAGE_KEY = TRADING_VIEW_SETTINGS.intervalsStorageKey || TRADING_VIEW_SETTINGS.intervals_storage_key || "tradingagents.chartIntervals";
+const PAGES = Array.isArray(APP_SETTINGS.pages) && APP_SETTINGS.pages.length ? APP_SETTINGS.pages : ["agent", "history", "chart", "admin"];
+const DEFAULT_CHART_SYMBOLS = Array.isArray(TRADING_VIEW_SETTINGS.symbols)
+    ? TRADING_VIEW_SETTINGS.symbols
     : ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"];
-const DEFAULT_CHART_INTERVALS = Array.isArray(FRONTEND_BOOTSTRAP.tradingView?.intervals)
-    ? FRONTEND_BOOTSTRAP.tradingView.intervals.map(String)
+const DEFAULT_CHART_INTERVALS = Array.isArray(TRADING_VIEW_SETTINGS.intervals)
+    ? TRADING_VIEW_SETTINGS.intervals.map(String)
     : ["5", "15", "60", "240", "D"];
+const DEFAULT_CHART_INTERVAL = String(TRADING_VIEW_SETTINGS.interval || "60");
 const CHART_INTERVAL_LABELS = {
+    "1": "1m",
+    "3": "3m",
     "5": "5m",
     "15": "15m",
+    "30": "30m",
     "60": "1h",
+    "120": "2h",
     "240": "4h",
     D: "1D",
+    W: "1W",
+    M: "1M",
+    ...(TRADING_VIEW_SETTINGS.intervalLabels || TRADING_VIEW_SETTINGS.interval_labels || {}),
 };
 
 const DETAIL_PANEL_META = {
@@ -97,9 +110,10 @@ const DETAIL_PANEL_META = {
 const state = {
     config: null,
     apiBaseUrl: getConfiguredApiBaseUrl(),
-    page: "agent",
+    page: APP_SETTINGS.defaultPage || APP_SETTINGS.default_page || "agent",
     auth: createInitialAuthState(),
     history: createEmptyHistoryState(),
+    admin: createEmptyAdminState(),
     chart: createInitialChartState(),
     isBusy: false,
     controller: null,
@@ -118,9 +132,11 @@ const elements = {
     agentPageButton: document.getElementById("agentPageButton"),
     historyPageButton: document.getElementById("historyPageButton"),
     chartPageButton: document.getElementById("chartPageButton"),
+    adminPageButton: document.getElementById("adminPageButton"),
     agentPage: document.getElementById("agentPage"),
     historyPage: document.getElementById("historyPage"),
     chartPage: document.getElementById("chartPage"),
+    adminPage: document.getElementById("adminPage"),
     authStatusText: document.getElementById("authStatusText"),
     googleSignInButton: document.getElementById("googleSignInButton"),
     authProfile: document.getElementById("authProfile"),
@@ -140,6 +156,12 @@ const elements = {
     chartSymbolForm: document.getElementById("chartSymbolForm"),
     chartSymbolInput: document.getElementById("chartSymbolInput"),
     addChartSymbolButton: document.getElementById("addChartSymbolButton"),
+    chartIntervalForm: document.getElementById("chartIntervalForm"),
+    chartIntervalInput: document.getElementById("chartIntervalInput"),
+    addChartIntervalButton: document.getElementById("addChartIntervalButton"),
+    refreshAdminUsersButton: document.getElementById("refreshAdminUsersButton"),
+    adminUserList: document.getElementById("adminUserList"),
+    adminStatusText: document.getElementById("adminStatusText"),
     phaseText: document.getElementById("phaseText"),
     progressText: document.getElementById("progressText"),
     progressFill: document.getElementById("progressFill"),
@@ -251,6 +273,16 @@ function createEmptyHistoryState() {
     };
 }
 
+function createEmptyAdminState() {
+    return {
+        loaded: false,
+        loading: false,
+        users: [],
+        error: "",
+        savingEmail: "",
+    };
+}
+
 function normalizeTradingViewSymbol(value = "") {
     const raw = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
     if (!raw) {
@@ -269,24 +301,63 @@ function normalizeTradingViewSymbol(value = "") {
 function readStoredChartSymbols() {
     const raw = safeReadLocalStorage(CHART_SYMBOLS_STORAGE_KEY);
     if (!raw) {
-        return [];
+        return null;
     }
     try {
         return JSON.parse(raw).map(normalizeTradingViewSymbol).filter(Boolean);
     } catch {
         safeRemoveLocalStorage(CHART_SYMBOLS_STORAGE_KEY);
-        return [];
+        return null;
+    }
+}
+
+function normalizeTradingViewInterval(value = "") {
+    const raw = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+    if (!raw) {
+        return "";
+    }
+    const aliases = {
+        "1M": "1",
+        "3M": "3",
+        "5M": "5",
+        "15M": "15",
+        "30M": "30",
+        "1H": "60",
+        "2H": "120",
+        "4H": "240",
+        "1D": "D",
+        "1W": "W",
+        "1MO": "M",
+    };
+    return aliases[raw] || raw;
+}
+
+function readStoredChartIntervals() {
+    const raw = safeReadLocalStorage(CHART_INTERVALS_STORAGE_KEY);
+    if (!raw) {
+        return null;
+    }
+    try {
+        return JSON.parse(raw).map(normalizeTradingViewInterval).filter(Boolean);
+    } catch {
+        safeRemoveLocalStorage(CHART_INTERVALS_STORAGE_KEY);
+        return null;
     }
 }
 
 function createInitialChartState() {
-    const symbols = [...new Set([...DEFAULT_CHART_SYMBOLS, ...readStoredChartSymbols()])];
+    const storedSymbols = readStoredChartSymbols();
+    const storedIntervals = readStoredChartIntervals();
+    const symbols = [...new Set((storedSymbols && storedSymbols.length ? storedSymbols : DEFAULT_CHART_SYMBOLS).map(normalizeTradingViewSymbol).filter(Boolean))];
+    const intervals = [...new Set((storedIntervals && storedIntervals.length ? storedIntervals : DEFAULT_CHART_INTERVALS).map(normalizeTradingViewInterval).filter(Boolean))];
     return {
         loaded: false,
         symbol: symbols[0],
-        interval: "60",
+        interval: normalizeTradingViewInterval(DEFAULT_CHART_INTERVAL) || intervals[0] || "60",
         symbols,
-        intervals: DEFAULT_CHART_INTERVALS,
+        intervals,
+        editingSymbol: "",
+        editingInterval: "",
     };
 }
 
@@ -407,6 +478,10 @@ function createInitialAuthState() {
         user: null,
         status: stored ? "stored" : "signed_out",
         isAuthorized: false,
+        canRunAnalysis: false,
+        isAdmin: false,
+        historyAccessDays: null,
+        historyAccessUnlimited: false,
         initialized: false,
         error: "",
     };
@@ -712,7 +787,9 @@ function normalizeFrontendConfig() {
         },
         history: {
             configured: Boolean(source.history?.configured ?? false),
-            public_read: Boolean(source.history?.publicRead ?? source.history?.public_read ?? true),
+            public_read: Boolean(source.history?.publicRead ?? source.history?.public_read ?? false),
+            require_login: Boolean(source.history?.requireLogin ?? source.history?.require_login ?? true),
+            page_size: Number(source.history?.pageSize || source.history?.page_size || HISTORY_PAGE_SIZE),
         },
         trading_view: {
             symbol: tradingView.symbol || "BINANCE:BTCUSDT",
@@ -798,17 +875,26 @@ function initializeChartFromConfig(config) {
     const tradingView = config?.trading_view || {};
     const configuredSymbols = Array.isArray(tradingView.symbols) ? tradingView.symbols : DEFAULT_CHART_SYMBOLS;
     const storedSymbols = readStoredChartSymbols();
-    const symbols = [
-        normalizeTradingViewSymbol(tradingView.symbol || ""),
-        ...configuredSymbols.map(normalizeTradingViewSymbol),
-        ...storedSymbols,
-    ].filter(Boolean);
+    const storedIntervals = readStoredChartIntervals();
+    const symbols = storedSymbols && storedSymbols.length
+        ? storedSymbols
+        : [
+            normalizeTradingViewSymbol(tradingView.symbol || ""),
+            ...configuredSymbols.map(normalizeTradingViewSymbol),
+        ].filter(Boolean);
     state.chart.symbols = [...new Set(symbols)];
-    state.chart.intervals = Array.isArray(tradingView.intervals) && tradingView.intervals.length
-        ? tradingView.intervals.map(String)
-        : DEFAULT_CHART_INTERVALS;
+    const configuredIntervals = Array.isArray(tradingView.intervals) && tradingView.intervals.length
+        ? tradingView.intervals.map(normalizeTradingViewInterval)
+        : DEFAULT_CHART_INTERVALS.map(normalizeTradingViewInterval);
+    state.chart.intervals = [...new Set(storedIntervals && storedIntervals.length ? storedIntervals : configuredIntervals)].filter(Boolean);
     state.chart.symbol = normalizeTradingViewSymbol(tradingView.symbol || state.chart.symbol) || state.chart.symbols[0];
-    state.chart.interval = String(tradingView.interval || state.chart.interval || "60");
+    if (!state.chart.symbols.includes(state.chart.symbol)) {
+        state.chart.symbols.unshift(state.chart.symbol);
+    }
+    state.chart.interval = normalizeTradingViewInterval(tradingView.interval || state.chart.interval || DEFAULT_CHART_INTERVAL) || state.chart.intervals[0] || "60";
+    if (!state.chart.intervals.includes(state.chart.interval)) {
+        state.chart.intervals.unshift(state.chart.interval);
+    }
 }
 
 function buildApiUrlFromBase(baseUrl, path) {
@@ -834,7 +920,11 @@ function getGoogleClientId() {
 }
 
 function canReadHistory() {
-    return Boolean(state.auth.isAuthorized || state.config?.history?.public_read);
+    return Boolean(state.auth.isAuthorized);
+}
+
+function canOpenAdminPage() {
+    return Boolean(state.auth.isAdmin);
 }
 
 function getAuthHeaders() {
@@ -889,11 +979,19 @@ function applyBackendSession(sessionPayload, fallbackProfile = null) {
         ...decodeJwtPayload(sessionToken),
         ...(sessionPayload?.user || {}),
     });
-    state.auth.user = sessionPayload?.user || state.auth.user;
-    state.auth.isAuthorized = Boolean(sessionPayload?.user?.authorized ?? true);
+    applyAuthUser(sessionPayload?.user || state.auth.user || {});
     state.auth.status = state.auth.isAuthorized ? "authorized" : "forbidden";
     state.auth.error = "";
     persistAuthState();
+}
+
+function applyAuthUser(user = {}) {
+    state.auth.user = user;
+    state.auth.isAuthorized = Boolean(user.authorized ?? user.email);
+    state.auth.canRunAnalysis = Boolean(user.can_run_analysis || user.is_admin);
+    state.auth.isAdmin = Boolean(user.is_admin);
+    state.auth.historyAccessDays = user.history_access_days ?? null;
+    state.auth.historyAccessUnlimited = Boolean(user.history_access_unlimited || user.history_access_days == null);
 }
 
 function clearAuthState() {
@@ -903,6 +1001,10 @@ function clearAuthState() {
         user: null,
         status: "signed_out",
         isAuthorized: false,
+        canRunAnalysis: false,
+        isAdmin: false,
+        historyAccessDays: null,
+        historyAccessUnlimited: false,
         initialized: state.auth.initialized,
         error: "",
     };
@@ -911,8 +1013,12 @@ function clearAuthState() {
     if (window.google?.accounts?.id) {
         window.google.accounts.id.disableAutoSelect();
     }
+    if (state.page === "history" || state.page === "admin") {
+        state.page = APP_SETTINGS.defaultPage || APP_SETTINGS.default_page || "agent";
+    }
     renderAuthState();
     renderHistoryPage();
+    renderAdminPage();
 }
 
 async function validateAuthSession() {
@@ -940,9 +1046,8 @@ async function validateAuthSession() {
             throw new Error(message);
         }
         const user = await response.json();
-        state.auth.user = user;
+        applyAuthUser(user);
         state.auth.profile = normalizeAuthProfile({ ...state.auth.profile, ...user });
-        state.auth.isAuthorized = Boolean(user.authorized);
         state.auth.status = state.auth.isAuthorized ? "authorized" : "forbidden";
         persistAuthState();
         renderAuthState();
@@ -972,7 +1077,7 @@ async function setGoogleCredential(idToken) {
 
 async function ensureAuthorizedSession() {
     if (!state.auth.idToken) {
-        throw new Error("Sign in with Google before running analysis.");
+        throw new Error("Sign in with Google before continuing.");
     }
     if (isBackendSessionProfile(state.auth.profile || {})) {
         const authorized = await validateAuthSession();
@@ -986,7 +1091,15 @@ async function ensureAuthorizedSession() {
     }
     const authorized = await validateAuthSession();
     if (!authorized) {
-        throw new Error(state.auth.error || "This Google account is not allowed to run analysis.");
+        throw new Error(state.auth.error || "Sign in with Google before continuing.");
+    }
+    return true;
+}
+
+async function ensureCanRunAnalysis() {
+    await ensureAuthorizedSession();
+    if (!state.auth.canRunAnalysis) {
+        throw new Error("Admin permission is required to run analysis.");
     }
     return true;
 }
@@ -1055,8 +1168,8 @@ function initializeGoogleAuth() {
 }
 
 function updateActionAvailability() {
-    const canRun = Boolean(state.config && state.auth.isAuthorized);
-    const runButtonLabel = state.isBusy ? "Stop analysis" : canRun ? "Run analysis" : "Sign in with Google to run analysis.";
+    const canRun = Boolean(state.config && state.auth.canRunAnalysis);
+    const runButtonLabel = state.isBusy ? "Stop analysis" : canRun ? "Run analysis" : "Admin permission is required to run analysis.";
 
     elements.runAnalysisButton.disabled = !state.isBusy && !canRun;
     elements.runAnalysisButton.dataset.state = state.isBusy ? "running" : "idle";
@@ -1067,7 +1180,7 @@ function updateActionAvailability() {
     elements.saveConfigButton.disabled = state.isBusy;
     elements.openConfigButton.disabled = state.isBusy;
     elements.runAnalysisButton.title = runButtonLabel;
-    elements.runFromModalButton.title = canRun ? "Apply and run" : "Sign in with the authorized Google account to run analysis.";
+    elements.runFromModalButton.title = canRun ? "Apply and run" : "Admin permission is required to run analysis.";
 }
 
 function renderAuthState() {
@@ -1084,7 +1197,8 @@ function renderAuthState() {
         label = "Checking Google";
         status = "running";
     } else if (state.auth.isAuthorized && email) {
-        label = email;
+        const accessLabel = state.auth.isAdmin ? "admin" : state.auth.canRunAnalysis ? "can run" : "history";
+        label = `${email} - ${accessLabel}`;
         status = "completed";
     } else if (state.auth.status === "forbidden") {
         label = email ? `${email} not allowed` : "Google auth failed";
@@ -1121,6 +1235,12 @@ function renderAuthState() {
     }
     elements.signOutButton.classList.toggle("hidden", !showProfile);
     elements.googleSignInButton.classList.toggle("hidden", showProfile);
+    if (elements.adminPageButton instanceof HTMLElement) {
+        elements.adminPageButton.classList.toggle("hidden", !state.auth.isAdmin);
+    }
+    if (state.page === "admin" && !state.auth.isAdmin) {
+        state.page = APP_SETTINGS.defaultPage || APP_SETTINGS.default_page || "agent";
+    }
     updateActionAvailability();
 }
 
@@ -1797,6 +1917,12 @@ function openBackendIssueAlert(message) {
     showModal(elements.alertModal);
 }
 
+function openAuthRequiredAlert(message = "Sign in with Google to view History.") {
+    elements.alertTitle.textContent = "Sign In Required";
+    elements.alertMessage.textContent = message;
+    showModal(elements.alertModal);
+}
+
 function closeAlertModal() {
     hideModal(elements.alertModal);
 }
@@ -1828,7 +1954,7 @@ function getCheckedAnalysts() {
 
 function getSelectedDepth() {
     const checked = elements.depthOptions.querySelector('input[name="researchDepth"]:checked');
-    return checked ? checked.value : "medium";
+    return checked ? checked.value : state.config?.analysis_defaults?.research_depth || "quick";
 }
 
 function getOutputLanguage() {
@@ -2524,15 +2650,19 @@ function renderPageShell() {
         agent: elements.agentPage,
         history: elements.historyPage,
         chart: elements.chartPage,
+        admin: elements.adminPage,
     };
     Object.entries(pagePanels).forEach(([page, panel]) => {
         if (panel instanceof HTMLElement) {
             panel.classList.toggle("hidden", page !== state.page);
         }
     });
-    [elements.agentPageButton, elements.historyPageButton, elements.chartPageButton].forEach((button) => {
+    [elements.agentPageButton, elements.historyPageButton, elements.chartPageButton, elements.adminPageButton].forEach((button) => {
         if (!(button instanceof HTMLElement)) {
             return;
+        }
+        if (button.dataset.page === "admin") {
+            button.classList.toggle("hidden", !state.auth.isAdmin);
         }
         const isActive = button.dataset.page === state.page;
         button.classList.toggle("is-active", isActive);
@@ -2565,6 +2695,18 @@ function buildHistorySummaryDetail(item) {
     };
 }
 
+function getHistorySectionLabel(section = {}) {
+    const agentLabel = getCompactAgentLabel(section.agent || "");
+    if (agentLabel) {
+        return agentLabel;
+    }
+    return String(section.title || section.section_key || "Section")
+        .replace(/ Analysis$/, "")
+        .replace(/ Research$/, "")
+        .replace(/ Plan$/, "")
+        .replace(/ Decision$/, "");
+}
+
 function selectHistorySummary(historyId) {
     const item = state.history.items.find((entry) => entry.id === historyId);
     if (!item) {
@@ -2584,7 +2726,7 @@ function renderHistoryPage() {
     const history = state.history;
     if (!canReadHistory()) {
         elements.historyStatusText.textContent = "Sign in required";
-        elements.historyList.innerHTML = '<div class="history-empty">Sign in with the authorized Google account.</div>';
+        elements.historyList.innerHTML = '<div class="history-empty">Sign in with Google to view saved analyses.</div>';
         elements.historyDetailTitle.textContent = "Analysis Detail";
         elements.historyDetail.innerHTML = '<div class="history-empty">History is available after sign-in.</div>';
         return;
@@ -2634,6 +2776,40 @@ function renderHistoryPage() {
     const item = history.active.item || {};
     const sections = history.active.sections || [];
     elements.historyDetailTitle.textContent = `${history.active.summaryOnly ? "Final Summary" : "Analysis Detail"} - ${item.symbol || "Analysis"} - ${item.analysis_date || ""}`.trim();
+
+    if (history.active.summaryOnly) {
+        elements.historyDetail.innerHTML = `
+            <div class="history-detail-meta">
+                <span>${escapeHtml(item.signal || "Completed")}</span>
+                <span>${escapeHtml(item.research_depth || "-")}</span>
+                <span>${escapeHtml(String(item.lookback_days || "-"))}d</span>
+                <span>${escapeHtml(formatHistoryTimestamp(item.created_at))}</span>
+            </div>
+            ${sections
+                .map(
+                    (section) => `
+                        <article class="history-section">
+                            <div class="history-section-header">
+                                <div>
+                                    <p class="window-kicker">${escapeHtml(section.team || "Analysis")}</p>
+                                    <h3>${escapeHtml(section.title || section.section_key || "Section")}</h3>
+                                </div>
+                                <span class="window-status">${escapeHtml(section.agent || "Agent")}</span>
+                            </div>
+                            <div class="markdown-preview">${renderMarkdown(section.markdown || "", "No markdown saved for this section.")}</div>
+                        </article>
+                    `,
+                )
+                .join("")}
+        `;
+        return;
+    }
+
+    const sectionMarkdown = history.active.sectionMarkdown || {};
+    const activeSectionKey = history.active.activeSectionKey || "";
+    const activeSection = sections.find((section) => section.section_key === activeSectionKey);
+    const activeMarkdown = activeSectionKey ? sectionMarkdown[activeSectionKey] || "" : "";
+    const isSectionLoading = Boolean(history.active.sectionLoadingKey);
     elements.historyDetail.innerHTML = `
         <div class="history-detail-meta">
             <span>${escapeHtml(item.signal || "Completed")}</span>
@@ -2641,22 +2817,35 @@ function renderHistoryPage() {
             <span>${escapeHtml(String(item.lookback_days || "-"))}d</span>
             <span>${escapeHtml(formatHistoryTimestamp(item.created_at))}</span>
         </div>
-        ${sections
-            .map(
-                (section) => `
-                    <article class="history-section">
-                        <div class="history-section-header">
-                            <div>
-                                <p class="window-kicker">${escapeHtml(section.team || "Analysis")}</p>
-                                <h3>${escapeHtml(section.title || section.section_key || "Section")}</h3>
-                            </div>
-                            <span class="window-status">${escapeHtml(section.agent || "Agent")}</span>
-                        </div>
-                        <div class="markdown-preview">${renderMarkdown(section.markdown || "", "No markdown saved for this section.")}</div>
-                    </article>
-                `,
-            )
-            .join("")}
+        <div class="history-section-card-grid">
+            ${sections
+                .map((section) => {
+                    const sectionKey = section.section_key || "";
+                    const isActive = sectionKey === activeSectionKey;
+                    const isLoaded = Boolean(sectionMarkdown[sectionKey]);
+                    const loading = history.active.sectionLoadingKey === sectionKey;
+                    return `
+                        <button class="history-section-card ${isActive ? "is-active" : ""}" type="button"
+                            data-history-section-key="${escapeHtml(sectionKey)}"
+                            aria-label="Load ${escapeHtml(section.title || sectionKey)}">
+                            <span>${escapeHtml(getHistorySectionLabel(section))}</span>
+                            <strong>${escapeHtml(section.title || sectionKey)}</strong>
+                            <small>${escapeHtml(section.agent || section.team || "Agent")}${loading ? " - loading" : isLoaded ? " - loaded" : ""}</small>
+                        </button>
+                    `;
+                })
+                .join("")}
+        </div>
+        <article class="history-section history-section-lazy">
+            <div class="history-section-header">
+                <div>
+                    <p class="window-kicker">${escapeHtml(activeSection?.team || "History section")}</p>
+                    <h3>${escapeHtml(activeSection?.title || "Select a card")}</h3>
+                </div>
+                <span class="window-status">${escapeHtml(activeSection?.agent || (isSectionLoading ? "Loading" : "Lazy load"))}</span>
+            </div>
+            <div class="markdown-preview ${activeMarkdown ? "" : "is-empty"}">${renderMarkdown(activeMarkdown, isSectionLoading ? "Loading this section..." : "Choose one card above to load only that saved section.")}</div>
+        </article>
     `;
 }
 
@@ -2665,7 +2854,12 @@ async function loadHistoryList(force = false) {
         renderHistoryPage();
         return;
     }
-    if (!state.config?.history?.public_read) {
+    if (!state.auth.idToken && !state.auth.isAuthorized) {
+        openAuthRequiredAlert();
+        renderHistoryPage();
+        return;
+    }
+    if (!canReadHistory()) {
         await ensureAuthorizedSession();
     }
     state.history.loading = true;
@@ -2697,7 +2891,12 @@ async function loadHistoryDetail(historyId) {
     if (!historyId) {
         return;
     }
-    if (!state.config?.history?.public_read) {
+    if (!state.auth.idToken && !state.auth.isAuthorized) {
+        openAuthRequiredAlert();
+        renderHistoryPage();
+        return;
+    }
+    if (!canReadHistory()) {
         await ensureAuthorizedSession();
     }
     state.history.activeId = historyId;
@@ -2705,19 +2904,63 @@ async function loadHistoryDetail(historyId) {
     state.history.detailLoading = true;
     renderHistoryPage();
     try {
-        const response = await apiFetch(`/api/history/${encodeURIComponent(historyId)}`, {
+        const response = await apiFetch(`/api/history/${encodeURIComponent(historyId)}/sections`, {
             headers: getAuthHeaders(),
             cache: "no-store",
         });
         if (!response.ok) {
             throw new Error(await readResponseError(response));
         }
-        state.history.active = await response.json();
+        const payload = await response.json();
+        state.history.active = {
+            ...payload,
+            summaryOnly: false,
+            sectionMarkdown: {},
+            activeSectionKey: "",
+            sectionLoadingKey: "",
+        };
         state.history.error = "";
     } catch (error) {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history detail.");
     } finally {
         state.history.detailLoading = false;
+        renderHistoryPage();
+    }
+}
+
+async function loadHistorySection(historyId, sectionKey) {
+    if (!historyId || !sectionKey || !state.history.active || state.history.activeId !== historyId) {
+        return;
+    }
+    if (Object.prototype.hasOwnProperty.call(state.history.active.sectionMarkdown || {}, sectionKey)) {
+        state.history.active.activeSectionKey = sectionKey;
+        renderHistoryPage();
+        return;
+    }
+    state.history.active.activeSectionKey = sectionKey;
+    state.history.active.sectionLoadingKey = sectionKey;
+    renderHistoryPage();
+    try {
+        const response = await apiFetch(`/api/history/${encodeURIComponent(historyId)}/sections/${encodeURIComponent(sectionKey)}`, {
+            headers: getAuthHeaders(),
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+        const payload = await response.json();
+        state.history.active.sectionMarkdown = {
+            ...(state.history.active.sectionMarkdown || {}),
+            [sectionKey]: payload.section?.markdown || "",
+        };
+        state.history.active.activeSectionKey = sectionKey;
+        state.history.error = "";
+    } catch (error) {
+        state.history.error = error instanceof Error ? error.message : String(error || "Could not load history section.");
+    } finally {
+        if (state.history.active) {
+            state.history.active.sectionLoadingKey = "";
+        }
         renderHistoryPage();
     }
 }
@@ -2728,6 +2971,11 @@ function getChartSymbolLabel(symbol = "") {
     return ticker.replace(/USDT$/, "");
 }
 
+function getChartIntervalLabel(interval = "") {
+    const normalized = normalizeTradingViewInterval(interval);
+    return CHART_INTERVAL_LABELS[normalized] || normalized;
+}
+
 function getTradingViewEmbedUrl() {
     const symbol = encodeURIComponent(state.chart.symbol || "BINANCE:BTCUSDT");
     const interval = encodeURIComponent(state.chart.interval || "60");
@@ -2735,8 +2983,11 @@ function getTradingViewEmbedUrl() {
 }
 
 function persistChartSymbols() {
-    const customSymbols = state.chart.symbols.filter((symbol) => !DEFAULT_CHART_SYMBOLS.includes(symbol));
-    safeWriteLocalStorage(CHART_SYMBOLS_STORAGE_KEY, JSON.stringify(customSymbols));
+    safeWriteLocalStorage(CHART_SYMBOLS_STORAGE_KEY, JSON.stringify(state.chart.symbols));
+}
+
+function persistChartIntervals() {
+    safeWriteLocalStorage(CHART_INTERVALS_STORAGE_KEY, JSON.stringify(state.chart.intervals));
 }
 
 function renderChartControls() {
@@ -2746,22 +2997,32 @@ function renderChartControls() {
     elements.chartSymbolList.innerHTML = state.chart.symbols
         .map(
             (symbol) => `
-                <button type="button" class="chart-chip ${symbol === state.chart.symbol ? "is-active" : ""}" data-chart-symbol="${escapeHtml(symbol)}">
-                    ${escapeHtml(getChartSymbolLabel(symbol))}
-                </button>
+                <div class="chart-favorite-item ${symbol === state.chart.symbol ? "is-active" : ""}">
+                    <button type="button" class="chart-chip" data-chart-symbol="${escapeHtml(symbol)}">
+                        ${escapeHtml(getChartSymbolLabel(symbol))}
+                    </button>
+                    <button type="button" class="chart-mini-action" data-chart-symbol-edit="${escapeHtml(symbol)}" aria-label="Edit ${escapeHtml(symbol)}">Edit</button>
+                    <button type="button" class="chart-mini-action" data-chart-symbol-remove="${escapeHtml(symbol)}" aria-label="Remove ${escapeHtml(symbol)}">X</button>
+                </div>
             `,
         )
         .join("");
     elements.chartIntervalList.innerHTML = state.chart.intervals
         .map(
             (interval) => `
-                <button type="button" class="chart-chip ${interval === state.chart.interval ? "is-active" : ""}" data-chart-interval="${escapeHtml(interval)}">
-                    ${escapeHtml(CHART_INTERVAL_LABELS[interval] || interval)}
-                </button>
+                <div class="chart-favorite-item ${interval === state.chart.interval ? "is-active" : ""}">
+                    <button type="button" class="chart-chip" data-chart-interval="${escapeHtml(interval)}">
+                        ${escapeHtml(getChartIntervalLabel(interval))}
+                    </button>
+                    <button type="button" class="chart-mini-action" data-chart-interval-edit="${escapeHtml(interval)}" aria-label="Edit ${escapeHtml(interval)} timeframe">Edit</button>
+                    <button type="button" class="chart-mini-action" data-chart-interval-remove="${escapeHtml(interval)}" aria-label="Remove ${escapeHtml(interval)} timeframe">X</button>
+                </div>
             `,
         )
         .join("");
-    elements.chartStatusText.textContent = `${getChartSymbolLabel(state.chart.symbol)} - ${CHART_INTERVAL_LABELS[state.chart.interval] || state.chart.interval}`;
+    elements.addChartSymbolButton.textContent = state.chart.editingSymbol ? "Save" : "Add";
+    elements.addChartIntervalButton.textContent = state.chart.editingInterval ? "Save" : "Add";
+    elements.chartStatusText.textContent = `${getChartSymbolLabel(state.chart.symbol)} - ${getChartIntervalLabel(state.chart.interval)}`;
 }
 
 function refreshTradingViewChart() {
@@ -2795,7 +3056,14 @@ function setChartSymbol(symbol) {
 }
 
 function setChartInterval(interval) {
-    const normalized = String(interval || "60");
+    const normalized = normalizeTradingViewInterval(interval || "60");
+    if (!normalized) {
+        return;
+    }
+    if (!state.chart.intervals.includes(normalized)) {
+        state.chart.intervals = [...state.chart.intervals, normalized];
+        persistChartIntervals();
+    }
     state.chart.interval = normalized;
     refreshTradingViewChart();
 }
@@ -2806,12 +3074,233 @@ function addChartSymbolFromInput() {
     if (!normalized) {
         return;
     }
-    setChartSymbol(normalized);
+    if (state.chart.editingSymbol) {
+        const previous = state.chart.editingSymbol;
+        state.chart.symbols = state.chart.symbols.map((symbol) => (symbol === previous ? normalized : symbol));
+        state.chart.symbols = [...new Set(state.chart.symbols)];
+        if (state.chart.symbol === previous) {
+            state.chart.symbol = normalized;
+        }
+        state.chart.editingSymbol = "";
+        persistChartSymbols();
+        refreshTradingViewChart();
+    } else {
+        setChartSymbol(normalized);
+    }
     elements.chartSymbolInput.value = "";
+}
+
+function editChartSymbol(symbol) {
+    state.chart.editingSymbol = normalizeTradingViewSymbol(symbol);
+    elements.chartSymbolInput.value = state.chart.editingSymbol;
+    elements.chartSymbolInput.focus();
+    renderChartControls();
+}
+
+function removeChartSymbol(symbol) {
+    const normalized = normalizeTradingViewSymbol(symbol);
+    if (state.chart.symbols.length <= 1) {
+        return;
+    }
+    state.chart.symbols = state.chart.symbols.filter((item) => item !== normalized);
+    if (state.chart.symbol === normalized) {
+        state.chart.symbol = state.chart.symbols[0];
+    }
+    if (state.chart.editingSymbol === normalized) {
+        state.chart.editingSymbol = "";
+        elements.chartSymbolInput.value = "";
+    }
+    persistChartSymbols();
+    refreshTradingViewChart();
+}
+
+function addChartIntervalFromInput() {
+    const normalized = normalizeTradingViewInterval(elements.chartIntervalInput?.value || "");
+    if (!normalized) {
+        return;
+    }
+    if (state.chart.editingInterval) {
+        const previous = state.chart.editingInterval;
+        state.chart.intervals = state.chart.intervals.map((interval) => (interval === previous ? normalized : interval));
+        state.chart.intervals = [...new Set(state.chart.intervals)];
+        if (state.chart.interval === previous) {
+            state.chart.interval = normalized;
+        }
+        state.chart.editingInterval = "";
+        persistChartIntervals();
+        refreshTradingViewChart();
+    } else {
+        setChartInterval(normalized);
+    }
+    elements.chartIntervalInput.value = "";
+}
+
+function editChartInterval(interval) {
+    state.chart.editingInterval = normalizeTradingViewInterval(interval);
+    elements.chartIntervalInput.value = state.chart.editingInterval;
+    elements.chartIntervalInput.focus();
+    renderChartControls();
+}
+
+function removeChartInterval(interval) {
+    const normalized = normalizeTradingViewInterval(interval);
+    if (state.chart.intervals.length <= 1) {
+        return;
+    }
+    state.chart.intervals = state.chart.intervals.filter((item) => item !== normalized);
+    if (state.chart.interval === normalized) {
+        state.chart.interval = state.chart.intervals[0];
+    }
+    if (state.chart.editingInterval === normalized) {
+        state.chart.editingInterval = "";
+        elements.chartIntervalInput.value = "";
+    }
+    persistChartIntervals();
+    refreshTradingViewChart();
+}
+
+function renderAdminPage() {
+    if (!(elements.adminUserList instanceof HTMLElement)) {
+        return;
+    }
+    if (!state.auth.isAdmin) {
+        elements.adminStatusText.textContent = "Admin only";
+        elements.adminUserList.innerHTML = '<div class="history-empty">Admin permission is required.</div>';
+        return;
+    }
+    if (state.admin.loading) {
+        elements.adminStatusText.textContent = "Loading users";
+        elements.adminUserList.innerHTML = '<div class="history-empty">Loading users...</div>';
+        return;
+    }
+    if (state.admin.error) {
+        elements.adminStatusText.textContent = "Admin issue";
+        elements.adminUserList.innerHTML = `<div class="history-empty">${escapeHtml(state.admin.error)}</div>`;
+        return;
+    }
+    if (!state.admin.users.length) {
+        elements.adminStatusText.textContent = state.admin.loaded ? "No users" : "Waiting";
+        elements.adminUserList.innerHTML = '<div class="history-empty">No users have signed in yet.</div>';
+        return;
+    }
+    elements.adminStatusText.textContent = `${state.admin.users.length} users`;
+    elements.adminUserList.innerHTML = state.admin.users
+        .map((user) => {
+            const email = user.email || "";
+            const unlimited = Boolean(user.history_access_unlimited || user.history_access_days == null);
+            const isAdmin = Boolean(user.is_admin);
+            const isSeedAdmin = Boolean(user.is_seed_admin);
+            const isSaving = state.admin.savingEmail === email;
+            return `
+                <article class="admin-user-card" data-admin-email="${escapeHtml(email)}">
+                    <div class="admin-user-main">
+                        <strong>${escapeHtml(email || "Unknown user")}</strong>
+                        <span>${escapeHtml(user.name || "Google user")} - ${escapeHtml(user.role || "user")}</span>
+                        <small>Last seen: ${escapeHtml(formatHistoryTimestamp(user.last_seen_at || ""))}</small>
+                    </div>
+                    <label class="admin-control admin-toggle">
+                        <span>Admin</span>
+                        <input type="checkbox" data-admin-field="is_admin" ${isAdmin ? "checked" : ""} ${isSeedAdmin ? "disabled" : ""}>
+                    </label>
+                    <label class="admin-control admin-toggle">
+                        <span>Unlimited history</span>
+                        <input type="checkbox" data-admin-field="history_unlimited" ${unlimited ? "checked" : ""}>
+                    </label>
+                    <label class="admin-control">
+                        <span>History days</span>
+                        <input type="number" min="1" step="1" data-admin-field="history_days" value="${escapeHtml(String(user.history_access_days || state.config?.history?.default_access_days || 7))}" ${unlimited ? "disabled" : ""}>
+                    </label>
+                    <button class="button secondary admin-save-button" type="button" data-admin-save-user="${escapeHtml(email)}" ${isSaving ? "disabled" : ""}>${isSaving ? "Saving" : "Save"}</button>
+                </article>
+            `;
+        })
+        .join("");
+}
+
+async function loadAdminUsers(force = false) {
+    if (!state.auth.isAdmin) {
+        openAuthRequiredAlert("Admin permission is required to open user management.");
+        return;
+    }
+    if (state.admin.loading || (state.admin.loaded && !force)) {
+        renderAdminPage();
+        return;
+    }
+    state.admin.loading = true;
+    state.admin.error = "";
+    renderAdminPage();
+    try {
+        const response = await apiFetch("/api/admin/users", {
+            headers: getAuthHeaders(),
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+        const payload = await response.json();
+        state.admin.users = payload.items || [];
+        state.admin.loaded = true;
+    } catch (error) {
+        state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
+    } finally {
+        state.admin.loading = false;
+        renderAdminPage();
+    }
+}
+
+async function saveAdminUser(email) {
+    const card = Array.from(elements.adminUserList?.querySelectorAll("[data-admin-email]") || [])
+        .find((item) => item instanceof HTMLElement && item.dataset.adminEmail === email);
+    if (!(card instanceof HTMLElement)) {
+        return;
+    }
+    const isAdminInput = card.querySelector('[data-admin-field="is_admin"]');
+    const unlimitedInput = card.querySelector('[data-admin-field="history_unlimited"]');
+    const daysInput = card.querySelector('[data-admin-field="history_days"]');
+    const isAdmin = isAdminInput instanceof HTMLInputElement ? isAdminInput.checked : false;
+    const unlimited = unlimitedInput instanceof HTMLInputElement ? unlimitedInput.checked : false;
+    const days = daysInput instanceof HTMLInputElement ? Number(daysInput.value || 7) : 7;
+    state.admin.savingEmail = email;
+    renderAdminPage();
+    try {
+        const response = await apiFetch(`/api/admin/users/${encodeURIComponent(email)}`, {
+            method: "PATCH",
+            headers: {
+                "Content-Type": "application/json",
+                ...getAuthHeaders(),
+            },
+            body: JSON.stringify({
+                is_admin: isAdmin,
+                history_access_days: unlimited ? null : Math.max(1, days),
+                history_access_unlimited: unlimited,
+            }),
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+        const payload = await response.json();
+        const updated = payload.item;
+        state.admin.users = state.admin.users.map((user) => (user.email === email ? updated : user));
+        state.admin.error = "";
+    } catch (error) {
+        state.admin.error = error instanceof Error ? error.message : String(error || "Could not save user.");
+    } finally {
+        state.admin.savingEmail = "";
+        renderAdminPage();
+    }
 }
 
 function switchPage(page) {
     if (!PAGES.includes(page)) {
+        return;
+    }
+    if (page === "history" && !state.auth.idToken && !state.auth.isAuthorized) {
+        openAuthRequiredAlert();
+        return;
+    }
+    if (page === "admin" && !canOpenAdminPage()) {
+        openAuthRequiredAlert("Admin permission is required to open user management.");
         return;
     }
     state.page = page;
@@ -2824,6 +3313,12 @@ function switchPage(page) {
     }
     if (page === "chart") {
         loadTradingViewChart();
+    }
+    if (page === "admin") {
+        loadAdminUsers().catch((error) => {
+            state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
+            renderAdminPage();
+        });
     }
 }
 
@@ -2861,6 +3356,7 @@ function renderAll() {
     renderPageShell();
     renderAuthState();
     renderHistoryPage();
+    renderAdminPage();
     renderChartControls();
     renderTopNotice();
     renderProgress();
@@ -3190,7 +3686,7 @@ async function runAnalysis() {
         return;
     }
 
-    await ensureAuthorizedSession();
+    await ensureCanRunAnalysis();
 
     const runId = createRunId();
     const controller = new AbortController();
@@ -3295,6 +3791,10 @@ elements.pageTabs.addEventListener("click", (event) => {
     }
 });
 elements.refreshHistoryButton.addEventListener("click", () => {
+    if (!state.auth.idToken && !state.auth.isAuthorized) {
+        openAuthRequiredAlert();
+        return;
+    }
     state.history = { ...createEmptyHistoryState(), activeId: state.history.activeId };
     loadHistoryList(true).catch((error) => {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not refresh history.");
@@ -3333,9 +3833,32 @@ elements.historyList.addEventListener("keydown", (event) => {
         selectHistorySummary(summaryButton.dataset.historySummaryId);
     }
 });
+elements.historyDetail.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const sectionButton = target.closest("[data-history-section-key]");
+    if (sectionButton instanceof HTMLElement) {
+        loadHistorySection(state.history.activeId, sectionButton.dataset.historySectionKey || "").catch((error) => {
+            state.history.error = error instanceof Error ? error.message : String(error || "Could not load history section.");
+            renderHistoryPage();
+        });
+    }
+});
 elements.chartSymbolList.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const removeButton = target.closest("[data-chart-symbol-remove]");
+    if (removeButton instanceof HTMLElement) {
+        removeChartSymbol(removeButton.dataset.chartSymbolRemove || "");
+        return;
+    }
+    const editButton = target.closest("[data-chart-symbol-edit]");
+    if (editButton instanceof HTMLElement) {
+        editChartSymbol(editButton.dataset.chartSymbolEdit || "");
         return;
     }
     const button = target.closest("[data-chart-symbol]");
@@ -3348,6 +3871,16 @@ elements.chartIntervalList.addEventListener("click", (event) => {
     if (!(target instanceof HTMLElement)) {
         return;
     }
+    const removeButton = target.closest("[data-chart-interval-remove]");
+    if (removeButton instanceof HTMLElement) {
+        removeChartInterval(removeButton.dataset.chartIntervalRemove || "");
+        return;
+    }
+    const editButton = target.closest("[data-chart-interval-edit]");
+    if (editButton instanceof HTMLElement) {
+        editChartInterval(editButton.dataset.chartIntervalEdit || "");
+        return;
+    }
     const button = target.closest("[data-chart-interval]");
     if (button instanceof HTMLElement) {
         setChartInterval(button.dataset.chartInterval || "60");
@@ -3356,6 +3889,42 @@ elements.chartIntervalList.addEventListener("click", (event) => {
 elements.chartSymbolForm.addEventListener("submit", (event) => {
     event.preventDefault();
     addChartSymbolFromInput();
+});
+elements.chartIntervalForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    addChartIntervalFromInput();
+});
+elements.refreshAdminUsersButton.addEventListener("click", () => {
+    state.admin.loaded = false;
+    loadAdminUsers(true).catch((error) => {
+        state.admin.error = error instanceof Error ? error.message : String(error || "Could not refresh users.");
+        renderAdminPage();
+    });
+});
+elements.adminUserList.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) {
+        return;
+    }
+    const card = target.closest("[data-admin-email]");
+    if (!(card instanceof HTMLElement)) {
+        return;
+    }
+    const unlimitedInput = card.querySelector('[data-admin-field="history_unlimited"]');
+    const daysInput = card.querySelector('[data-admin-field="history_days"]');
+    if (unlimitedInput instanceof HTMLInputElement && daysInput instanceof HTMLInputElement) {
+        daysInput.disabled = unlimitedInput.checked;
+    }
+});
+elements.adminUserList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const saveButton = target.closest("[data-admin-save-user]");
+    if (saveButton instanceof HTMLElement) {
+        saveAdminUser(saveButton.dataset.adminSaveUser || "");
+    }
 });
 elements.runAnalysisButton.addEventListener("click", async () => {
     if (state.isBusy) {
