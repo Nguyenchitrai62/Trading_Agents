@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import math
 from typing import Annotated
@@ -76,10 +76,10 @@ _CRYPTO_TIMEFRAME_MINUTES = {
     "1d": 1440,
 }
 
-_CRYPTO_MARKET_HARD_CANDLE_LIMIT = 199
 _CRYPTO_OHLCV_PREVIEW_ROWS = 18
 _CRYPTO_INDICATOR_PREVIEW_ROWS = 12
 _BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+_BINANCE_KLINES_REQUEST_LIMIT = 1000
 _BINANCE_USER_AGENT = "tradingagents/0.2"
 
 
@@ -151,10 +151,10 @@ def _coerce_positive_int(value: object, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
-def _select_memory_safe_crypto_window(
+def _select_crypto_window(
     lookback_days: int,
     available_timeframes: dict | None,
-    max_candles: int = _CRYPTO_MARKET_HARD_CANDLE_LIMIT,
+    requested_timeframe: str,
 ) -> dict[str, int | str]:
     supported = [
         timeframe
@@ -162,43 +162,33 @@ def _select_memory_safe_crypto_window(
         if timeframe in (available_timeframes or {})
     ]
     if not supported:
-        raise ValueError("No supported crypto timeframes are available for memory-safe OHLCV fetching.")
+        raise ValueError("No supported crypto timeframes are available for OHLCV fetching.")
 
-    capped_max_candles = min(max(10, max_candles), _CRYPTO_MARKET_HARD_CANDLE_LIMIT)
-    lookback_minutes = max(1, lookback_days) * 24 * 60
-    candidates: list[tuple[int, int, str]] = []
-
-    for timeframe in supported:
-        minutes = _CRYPTO_TIMEFRAME_MINUTES[timeframe]
-        candle_limit = math.ceil(lookback_minutes / minutes)
-        if 10 <= candle_limit <= capped_max_candles:
-            candidates.append((candle_limit, -minutes, timeframe))
-
-    if not candidates:
+    normalized_timeframe = requested_timeframe.strip().lower() or "1h"
+    if normalized_timeframe not in supported:
         supported_examples = ", ".join(supported)
         raise ValueError(
-            "Unable to select a memory-safe crypto timeframe under 200 candles "
-            f"for lookback_days={lookback_days}. Supported exchange timeframes: {supported_examples}"
+            f"Timeframe '{requested_timeframe}' is not available. Supported exchange timeframes: {supported_examples}"
         )
 
-    candle_limit, negative_minutes, timeframe = max(candidates)
+    lookback_minutes = max(1, lookback_days) * 24 * 60
+    minutes = _CRYPTO_TIMEFRAME_MINUTES[normalized_timeframe]
+    candle_limit = max(1, math.ceil(lookback_minutes / minutes))
     return {
         "lookback_days": lookback_days,
-        "max_candles": capped_max_candles,
-        "timeframe": timeframe,
+        "timeframe": normalized_timeframe,
         "limit": candle_limit,
-        "minutes": -negative_minutes,
+        "minutes": minutes,
     }
 
 
-def _resolve_active_crypto_window(available_timeframes: dict | None) -> dict[str, int | str]:
+def _resolve_active_crypto_window(
+    available_timeframes: dict | None,
+    requested_timeframe: str,
+) -> dict[str, int | str]:
     config = get_config()
     lookback_days = _coerce_positive_int(config.get("crypto_market_lookback_days"), 7)
-    max_candles = _coerce_positive_int(
-        config.get("crypto_market_max_candles"),
-        _CRYPTO_MARKET_HARD_CANDLE_LIMIT,
-    )
-    return _select_memory_safe_crypto_window(lookback_days, available_timeframes, max_candles)
+    return _select_crypto_window(lookback_days, available_timeframes, requested_timeframe)
 
 
 def _resolve_indicator_fetch_plan(
@@ -248,7 +238,7 @@ def _fetch_ohlcv_frame(
             )
 
         available_timeframes = exchange.timeframes or {}
-        policy = _resolve_active_crypto_window(available_timeframes)
+        policy = _resolve_active_crypto_window(available_timeframes, timeframe)
         effective_timeframe = str(policy["timeframe"])
         analysis_limit = int(policy["limit"])
         effective_limit = max(analysis_limit, _coerce_positive_int(fetch_limit, analysis_limit))
@@ -290,30 +280,11 @@ def _fetch_binance_ohlcv_frame(
     fetch_limit: int | None = None,
 ):
     api_symbol, market_symbol = _normalize_binance_symbol(symbol)
-    policy = _resolve_active_crypto_window(_CRYPTO_TIMEFRAME_MINUTES)
+    policy = _resolve_active_crypto_window(_CRYPTO_TIMEFRAME_MINUTES, timeframe)
     effective_timeframe = str(policy["timeframe"])
     analysis_limit = int(policy["limit"])
-    effective_limit = min(
-        _CRYPTO_MARKET_HARD_CANDLE_LIMIT,
-        max(analysis_limit, _coerce_positive_int(fetch_limit, analysis_limit)),
-    )
-    query = urlencode(
-        {
-            "symbol": api_symbol,
-            "interval": effective_timeframe,
-            "limit": effective_limit,
-        }
-    )
-    request = Request(
-        f"{_BINANCE_KLINES_URL}?{query}",
-        headers={"User-Agent": _BINANCE_USER_AGENT, "Accept": "application/json"},
-    )
-
-    try:
-        with urlopen(request, timeout=12.0) as response:
-            candles = json.loads(response.read())
-    except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
-        raise RuntimeError(f"Binance OHLCV fetch failed for {market_symbol}: {exc}") from exc
+    effective_limit = max(analysis_limit, _coerce_positive_int(fetch_limit, analysis_limit))
+    candles = _fetch_binance_klines(api_symbol, effective_timeframe, effective_limit)
 
     if not isinstance(candles, list) or not candles:
         raise ValueError(f"No OHLCV data returned for {market_symbol} on binance ({effective_timeframe}).")
@@ -348,6 +319,54 @@ def _fetch_binance_ohlcv_frame(
     policy["requested_timeframe"] = timeframe
     policy["requested_limit"] = limit
     return None, market_symbol, frame, policy
+
+
+def _fetch_binance_klines(
+    api_symbol: str,
+    timeframe: str,
+    candle_count: int,
+) -> list[list]:
+    interval_ms = _CRYPTO_TIMEFRAME_MINUTES[timeframe] * 60 * 1000
+    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    next_start_ms = end_ms - (max(1, candle_count) * interval_ms)
+    candles: list[list] = []
+
+    while len(candles) < candle_count and next_start_ms < end_ms:
+        batch_limit = min(_BINANCE_KLINES_REQUEST_LIMIT, candle_count - len(candles))
+        query = urlencode(
+            {
+                "symbol": api_symbol,
+                "interval": timeframe,
+                "startTime": next_start_ms,
+                "endTime": end_ms,
+                "limit": batch_limit,
+            }
+        )
+        request = Request(
+            f"{_BINANCE_KLINES_URL}?{query}",
+            headers={"User-Agent": _BINANCE_USER_AGENT, "Accept": "application/json"},
+        )
+
+        try:
+            with urlopen(request, timeout=12.0) as response:
+                batch = json.loads(response.read())
+        except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
+            raise RuntimeError(f"Binance OHLCV fetch failed for {api_symbol}: {exc}") from exc
+
+        if not batch:
+            break
+        if isinstance(batch, dict):
+            message = batch.get("msg") or batch
+            raise ValueError(f"Binance rejected pair '{api_symbol}': {message}")
+
+        candles.extend(batch)
+        last_open_time = int(batch[-1][0])
+        following_start_ms = last_open_time + interval_ms
+        if following_start_ms <= next_start_ms:
+            break
+        next_start_ms = following_start_ms
+
+    return candles[-candle_count:]
 
 
 def _prepare_indicator_frame(frame: pd.DataFrame) -> pd.DataFrame:

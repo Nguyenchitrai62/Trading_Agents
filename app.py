@@ -22,6 +22,30 @@ from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from pydantic import BaseModel, Field, field_validator
 
+ROOT_DIR = Path(__file__).resolve().parent
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv(ROOT_DIR / ".env.enterprise", override=False)
+
+
+def _apply_cpu_thread_guardrail() -> None:
+    raw_threads = os.getenv("ANALYSIS_CPU_THREADS", "1").strip() or "1"
+    try:
+        threads = max(1, int(raw_threads))
+    except ValueError:
+        threads = 1
+    thread_value = str(threads)
+    for name in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        os.environ[name] = thread_value
+
+
+_apply_cpu_thread_guardrail()
+
 try:
     from tradingagents.default_config import DEFAULT_CONFIG
     from tradingagents.graph.analyst_execution import ANALYST_NODE_SPECS
@@ -44,7 +68,6 @@ except ModuleNotFoundError as exc:
     TradingAgentsGraph = None
     ANALYSIS_RUNTIME_IMPORT_ERROR = exc
 
-ROOT_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = ROOT_DIR / "FE"
 IMAGE_DIR = ROOT_DIR / "image"
 INDEX_FILE = ROOT_DIR / "index.html"
@@ -104,10 +127,6 @@ SECTION_META = {
         "team": "Portfolio Management",
     },
 }
-
-load_dotenv(ROOT_DIR / ".env")
-load_dotenv(ROOT_DIR / ".env.enterprise", override=False)
-
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name, "").strip()
@@ -173,8 +192,7 @@ def _default_resource_constrained_mode() -> bool:
     ):
         return True
     memory_limit = _memory_limit_mb()
-    threshold_mb = _env_int("ANALYSIS_RESOURCE_CONSTRAINED_MEMORY_MB", 1536)
-    return memory_limit is not None and memory_limit <= threshold_mb
+    return memory_limit is not None and memory_limit <= 1536
 
 
 def _process_rss_mb() -> int | None:
@@ -213,7 +231,8 @@ RESOURCE_CONSTRAINED_MODE = _env_bool(
     "ANALYSIS_RESOURCE_CONSTRAINED",
     _default_resource_constrained_mode(),
 )
-DEFAULT_RESEARCH_DEPTH = "quick" if RESOURCE_CONSTRAINED_MODE else "medium"
+ANALYSIS_CPU_THREADS = max(1, _env_int("ANALYSIS_CPU_THREADS", 1))
+DEFAULT_RESEARCH_DEPTH = "medium"
 DEFAULT_SELECTED_ANALYSTS = DEFAULT_ANALYSTS.copy()
 DEFAULT_CHECKPOINT_ENABLED = False
 STREAM_HEARTBEAT_SECONDS = max(1.0, _env_float("ANALYSIS_STREAM_HEARTBEAT_SECONDS", 2.0))
@@ -229,24 +248,9 @@ ANALYSIS_SSE_QUEUE_MAXSIZE = max(
     8,
     _env_int("ANALYSIS_SSE_QUEUE_MAXSIZE", 32 if RESOURCE_CONSTRAINED_MODE else 128),
 )
-ANALYSIS_MAX_DEPTH_ROUNDS = max(
-    1,
-    _env_int(
-        "ANALYSIS_MAX_DEPTH_ROUNDS",
-        2 if RESOURCE_CONSTRAINED_MODE else max(option["rounds"] for option in RESEARCH_DEPTH_OPTIONS.values()),
-    ),
-)
 ANALYSIS_LLM_MAX_TOKENS = max(
     512,
-    _env_int("ANALYSIS_LLM_MAX_TOKENS", 6000 if RESOURCE_CONSTRAINED_MODE else 24000),
-)
-ANALYSIS_NEWS_ARTICLE_LIMIT = max(
-    2,
-    _env_int("ANALYSIS_NEWS_ARTICLE_LIMIT", 3 if RESOURCE_CONSTRAINED_MODE else 12),
-)
-ANALYSIS_GLOBAL_NEWS_ARTICLE_LIMIT = max(
-    2,
-    _env_int("ANALYSIS_GLOBAL_NEWS_ARTICLE_LIMIT", 2 if RESOURCE_CONSTRAINED_MODE else 8),
+    _env_int("ANALYSIS_LLM_MAX_TOKENS", 8000),
 )
 ANALYSIS_TRACE_CHAR_LIMIT = max(
     400,
@@ -284,7 +288,7 @@ class AnalysisRequest(BaseModel):
     asset_type: Literal["crypto"] = DEFAULT_ASSET_TYPE
     run_id: str | None = Field(default=None, max_length=120)
     analysis_date: str = Field(default_factory=lambda: date.today().isoformat())
-    lookback_days: int = Field(default=DEFAULT_ANALYSIS_LOOKBACK_DAYS, ge=1, le=90)
+    lookback_days: int = Field(default=DEFAULT_ANALYSIS_LOOKBACK_DAYS, ge=1)
     output_language: str = Field(default=DEFAULT_OUTPUT_LANGUAGE)
     selected_analysts: List[Literal["market", "social", "news", "fundamentals"]] = Field(
         default_factory=lambda: DEFAULT_SELECTED_ANALYSTS.copy(),
@@ -435,10 +439,8 @@ def build_analysis_runtime_profile(request: AnalysisRequest) -> dict:
     requested_rounds = RESEARCH_DEPTH_OPTIONS[request.research_depth]["rounds"]
     return {
         "requested_rounds": requested_rounds,
-        "effective_rounds": min(requested_rounds, ANALYSIS_MAX_DEPTH_ROUNDS),
+        "effective_rounds": requested_rounds,
         "llm_max_tokens": ANALYSIS_LLM_MAX_TOKENS,
-        "news_article_limit": ANALYSIS_NEWS_ARTICLE_LIMIT,
-        "global_news_article_limit": ANALYSIS_GLOBAL_NEWS_ARTICLE_LIMIT,
     }
 
 
@@ -651,10 +653,7 @@ def build_analysis_config(request: AnalysisRequest, settings: dict, runtime_prof
             "max_debate_rounds": runtime_profile["effective_rounds"],
             "max_risk_discuss_rounds": runtime_profile["effective_rounds"],
             "global_news_lookback_days": request.lookback_days,
-            "news_article_limit": runtime_profile["news_article_limit"],
-            "global_news_article_limit": runtime_profile["global_news_article_limit"],
             "crypto_market_lookback_days": request.lookback_days,
-            "crypto_market_max_candles": 199,
             "analysis_llm_max_tokens": runtime_profile["llm_max_tokens"],
             "checkpoint_enabled": request.checkpoint_enabled,
         }
@@ -1192,24 +1191,6 @@ def run_trading_analysis(
             },
         )
 
-    if runtime_profile["effective_rounds"] < runtime_profile["requested_rounds"]:
-        emit_analysis_log(
-            "Research depth capped for the current deployment footprint.",
-            "prepare",
-            "warning",
-            requested_rounds=runtime_profile["requested_rounds"],
-            effective_rounds=runtime_profile["effective_rounds"],
-        )
-        emit(
-            "warning",
-            {
-                "message": (
-                    "Research depth was reduced automatically to fit the current deployment size. "
-                    f"Requested {runtime_profile['requested_rounds']} round(s), running {runtime_profile['effective_rounds']}."
-                ),
-            },
-        )
-
     ensure_not_cancelled()
 
     config = build_analysis_config(request, settings, runtime_profile)
@@ -1556,8 +1537,8 @@ async def health_check() -> dict:
         "provider": settings["provider"],
         "resource_constrained": RESOURCE_CONSTRAINED_MODE,
         "analysis_limits": {
+            "cpu_threads": ANALYSIS_CPU_THREADS,
             "max_concurrent_runs": ANALYSIS_MAX_CONCURRENT_RUNS,
-            "depth_rounds_cap": ANALYSIS_MAX_DEPTH_ROUNDS,
             "llm_max_tokens": ANALYSIS_LLM_MAX_TOKENS,
         },
         "modes": ["analysis", "chat"],

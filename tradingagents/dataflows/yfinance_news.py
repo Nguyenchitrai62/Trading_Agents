@@ -67,10 +67,9 @@ def get_news_yfinance(
     Returns:
         Formatted string containing news articles
     """
-    article_limit = get_config()["news_article_limit"]
     try:
         stock = yf.Ticker(ticker)
-        news = yf_retry(lambda: stock.get_news(count=article_limit))
+        news = yf_retry(lambda: stock.get_news())
 
         if not news:
             return f"No news found for {ticker}"
@@ -120,8 +119,8 @@ def get_global_news_yfinance(
         curr_date: Current date in yyyy-mm-dd format
         look_back_days: Number of days to look back. ``None`` falls back to
             ``global_news_lookback_days`` from the active config.
-        limit: Maximum number of articles to return. ``None`` falls back to
-            ``global_news_article_limit`` from the active config.
+        limit: Optional maximum number of articles to return. ``None`` leaves
+            article count to the provider/library default.
 
     Returns:
         Formatted string containing global news articles
@@ -129,8 +128,6 @@ def get_global_news_yfinance(
     config = get_config()
     if look_back_days is None:
         look_back_days = config["global_news_lookback_days"]
-    if limit is None:
-        limit = config["global_news_article_limit"]
     search_queries = config["global_news_queries"]
 
     all_news = []
@@ -138,11 +135,17 @@ def get_global_news_yfinance(
 
     try:
         for query in search_queries:
-            search = yf_retry(lambda q=query: yf.Search(
-                query=q,
-                news_count=limit,
-                enable_fuzzy_query=True,
-            ))
+            if limit is None:
+                search = yf_retry(lambda q=query: yf.Search(
+                    query=q,
+                    enable_fuzzy_query=True,
+                ))
+            else:
+                search = yf_retry(lambda q=query: yf.Search(
+                    query=q,
+                    news_count=limit,
+                    enable_fuzzy_query=True,
+                ))
 
             if search.news:
                 for article in search.news:
@@ -158,7 +161,7 @@ def get_global_news_yfinance(
                         seen_titles.add(title)
                         all_news.append(article)
 
-            if len(all_news) >= limit:
+            if limit is not None and len(all_news) >= limit:
                 break
 
         if not all_news:
@@ -170,7 +173,8 @@ def get_global_news_yfinance(
         start_date = start_dt.strftime("%Y-%m-%d")
 
         news_str = ""
-        for article in all_news[:limit]:
+        articles_to_render = all_news if limit is None else all_news[:limit]
+        for article in articles_to_render:
             # Handle both flat and nested structures
             if "content" in article:
                 data = _extract_article_data(article)

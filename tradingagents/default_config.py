@@ -76,16 +76,13 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "max_recur_limit": 100,
     "analyst_concurrency_limit": 1,
     # News / data fetching parameters tuned for crypto-first analysis.
-    # Token-level news still matters, but macro flow should stay compact so
-    # prompts can reserve more room for market structure and debate.
-    "news_article_limit": 12,             # max articles per symbol-specific news pull
-    "global_news_article_limit": 8,       # max articles for macro / cross-asset news
+    # Article counts are left to the provider/tool defaults unless an agent
+    # explicitly requests a limit through the tool interface.
     "global_news_lookback_days": 7,       # macro news lookback window
-    # Crypto market-data policy: select the densest single timeframe whose
-    # candle count still stays below the hard memory ceiling for the active
-    # lookback window.
+    # Crypto market-data policy: fetch the full active lookback window at the
+    # timeframe requested by the agent/tool call, paginating provider requests
+    # when needed.
     "crypto_market_lookback_days": 7,
-    "crypto_market_max_candles": 199,
     # High-trust reference sites that analysts should prioritize when the
     # current model/runtime has web access or can otherwise cross-check live
     # market context. This is a preference list, not a whitelist.
