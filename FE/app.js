@@ -929,6 +929,7 @@ function renderGoogleSignInFallback(message = "Google sign-in is not ready.") {
     if (!(elements.googleSignInButton instanceof HTMLElement)) {
         return;
     }
+    elements.googleSignInButton.classList.add("is-fallback");
     elements.googleSignInButton.innerHTML = `<button class="google-login-fallback" type="button">Sign in with Google</button>`;
     const button = elements.googleSignInButton.querySelector("button");
     if (button instanceof HTMLButtonElement) {
@@ -968,14 +969,14 @@ function initializeGoogleAuth() {
             },
         });
         if (elements.googleSignInButton instanceof HTMLElement) {
+            elements.googleSignInButton.classList.remove("is-fallback");
+            elements.googleSignInButton.title = "Sign in with Google";
             elements.googleSignInButton.innerHTML = "";
             window.google.accounts.id.renderButton(elements.googleSignInButton, {
-                type: "standard",
+                type: "icon",
                 theme: "filled_black",
                 size: "large",
-                shape: "pill",
-                text: "signin_with",
-                width: 224,
+                shape: "circle",
             });
         }
         renderAuthState();
