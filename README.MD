@@ -9,7 +9,7 @@ This project is inspired by and originally derived from [tauricresearch/tradinga
 - The product direction is no longer a CLI-first research demo. It is now a FastAPI backend plus a standalone HTML/CSS/JavaScript frontend.
 - The primary flow is realtime streaming analysis over SSE from `/api/analyze` into dashboard panels.
 - The app is crypto-first, with BTC-style defaults, Binance/ccxt market data paths, StockTwits/Reddit/news context, and TradingView chart shortcuts.
-- Google sign-in gates History. Admin permission gates analysis execution.
+- Google sign-in gates History. Admin-managed run permission gates analysis execution.
 - Turso is used for optional persistent analysis history.
 - The frontend has been rebuilt as a dashboard with Execution Board, Backend Log, Main View, Agent Trace, Event Log, History, and Chart pages.
 
@@ -29,9 +29,9 @@ This project is inspired by and originally derived from [tauricresearch/tradinga
 - Configurable symbol, analysis date, lookback window, output language, analysts, model, research depth, and checkpoint toggle.
 - Analyst reports for market, sentiment, news, and fundamentals.
 - Research debate, trader plan, risk debate, and final portfolio decision panels.
-- Google-authenticated analysis execution.
+- Google-authenticated analysis execution with admin-managed run permission.
 - Optional Turso-backed analysis history.
-- TradingView chart page with editable favorite crypto symbols and intervals.
+- TradingView chart page with a draggable favorite symbol watchlist; timeframes are handled inside the embedded chart.
 - Pure frontend stack, suitable for static hosting on Vercel.
 
 ## Environment
@@ -95,9 +95,9 @@ http://127.0.0.1:8000/health
 - `GET /api/history/{run_id}/sections`: lists saved report section cards without markdown payloads.
 - `GET /api/history/{run_id}/sections/{section_key}`: loads one saved report section on demand.
 - `GET /api/admin/users`: lists users for admins.
-- `PATCH /api/admin/users/{email}`: updates admin role and history access days for a user.
-- `POST /api/analyze`: starts SSE analysis stream. Requires admin permission.
-- `POST /api/analyze/{run_id}/cancel`: cancels an active analysis stream. Requires admin permission.
+- `PATCH /api/admin/users/{email}`: updates admin role, run-analysis permission, and history access for a user.
+- `POST /api/analyze`: starts SSE analysis stream. Requires run-analysis permission.
+- `POST /api/analyze/{run_id}/cancel`: cancels an active analysis stream. Requires run-analysis permission.
 
 ## Deployment Notes
 

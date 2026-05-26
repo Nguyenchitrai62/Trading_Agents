@@ -26,7 +26,6 @@
                 <button id="agentPageButton" class="page-tab is-active" type="button" data-page="agent">Agent</button>
                 <button id="historyPageButton" class="page-tab" type="button" data-page="history">History</button>
                 <button id="chartPageButton" class="page-tab" type="button" data-page="chart">Chart</button>
-                <button id="adminPageButton" class="page-tab hidden" type="button" data-page="admin">Admin</button>
             </nav>
 
             <div class="topbar-status" aria-live="polite">
@@ -37,13 +36,14 @@
             </div>
 
             <div class="topbar-actions">
+                <button id="adminPageButton" class="admin-topbar-button hidden" type="button" data-page="admin" aria-label="Open admin management">Admin</button>
                 <div id="googleSignInButton" class="google-signin-button"></div>
                 <div id="authProfile" class="auth-profile hidden" aria-label="Signed-in Google profile">
                     <span class="auth-avatar-wrap">
                         <img id="authProfileAvatar" class="auth-avatar hidden" alt="" referrerpolicy="no-referrer">
                         <span id="authProfileInitial" class="auth-avatar-initial">G</span>
                     </span>
-                    <span id="authProfileEmail" class="auth-profile-email"></span>
+                    <span id="authProfileEmail" class="auth-profile-email visually-hidden"></span>
                     <button id="signOutButton" class="auth-signout-button" type="button" aria-label="Sign out">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M10 17l5-5-5-5"></path>
@@ -222,20 +222,23 @@
                     </div>
                     <span id="chartStatusText" class="window-status">Waiting</span>
                 </div>
-                <div class="chart-controls" aria-label="TradingView quick controls">
-                    <div id="chartSymbolList" class="chart-symbol-list" aria-label="Favorite symbols"></div>
-                    <div id="chartIntervalList" class="chart-interval-list" aria-label="Favorite timeframes"></div>
-                    <form id="chartSymbolForm" class="chart-symbol-form">
-                        <input id="chartSymbolInput" type="text" placeholder="BINANCE:BNBUSDT" aria-label="Add TradingView symbol">
-                        <button id="addChartSymbolButton" class="button secondary" type="submit">Add</button>
-                    </form>
-                    <form id="chartIntervalForm" class="chart-symbol-form chart-interval-form">
-                        <input id="chartIntervalInput" type="text" placeholder="30, 120, D" aria-label="Add TradingView timeframe">
-                        <button id="addChartIntervalButton" class="button secondary" type="submit">Add</button>
-                    </form>
-                </div>
-                <div class="chart-frame-wrap">
-                    <iframe id="tradingViewFrame" title="TradingView BTC chart" loading="lazy" allowfullscreen></iframe>
+                <div class="chart-workspace">
+                    <div class="chart-main-pane">
+                        <div class="chart-frame-wrap">
+                            <iframe id="tradingViewFrame" title="TradingView BTC chart" loading="lazy" allowfullscreen></iframe>
+                        </div>
+                    </div>
+                    <aside class="chart-symbol-panel" aria-label="Favorite symbols">
+                        <div class="chart-symbol-panel-header">
+                            <p class="window-kicker">Watchlist</p>
+                            <h3>Symbols</h3>
+                        </div>
+                        <div id="chartSymbolList" class="chart-symbol-list" aria-label="Favorite symbols"></div>
+                        <form id="chartSymbolForm" class="chart-symbol-form">
+                            <input id="chartSymbolInput" type="text" placeholder="BINANCE:BNBUSDT" aria-label="Add TradingView symbol">
+                            <button id="addChartSymbolButton" class="button secondary" type="submit">Add</button>
+                        </form>
+                    </aside>
                 </div>
             </section>
         </main>

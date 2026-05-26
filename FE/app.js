@@ -68,32 +68,15 @@ const CUSTOM_LOOKBACK_VALUE = "__custom__";
 const TRACE_DISPLAY_LIMIT = Number(APP_SETTINGS.traceDisplayLimit || APP_SETTINGS.trace_display_limit || 14);
 const LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.logDisplayLimit || APP_SETTINGS.log_display_limit || 12);
 const EXECUTION_LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.executionLogDisplayLimit || APP_SETTINGS.execution_log_display_limit || 80);
+const MIN_ANALYSIS_STOP_DELAY_MS = Math.max(0, Number(APP_SETTINGS.minStopDelayMs || APP_SETTINGS.min_stop_delay_ms || 5000));
 const HISTORY_PAGE_SIZE = Number(HISTORY_SETTINGS.pageSize || HISTORY_SETTINGS.page_size || 10);
 const AUTH_STORAGE_KEY = AUTH_SETTINGS.storageKey || AUTH_SETTINGS.storage_key || "tradingagents.googleAuth";
 const CHART_SYMBOLS_STORAGE_KEY = TRADING_VIEW_SETTINGS.symbolsStorageKey || TRADING_VIEW_SETTINGS.symbols_storage_key || "tradingagents.chartSymbols";
-const CHART_INTERVALS_STORAGE_KEY = TRADING_VIEW_SETTINGS.intervalsStorageKey || TRADING_VIEW_SETTINGS.intervals_storage_key || "tradingagents.chartIntervals";
 const PAGES = Array.isArray(APP_SETTINGS.pages) && APP_SETTINGS.pages.length ? APP_SETTINGS.pages : ["agent", "history", "chart", "admin"];
 const DEFAULT_CHART_SYMBOLS = Array.isArray(TRADING_VIEW_SETTINGS.symbols)
     ? TRADING_VIEW_SETTINGS.symbols
     : ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"];
-const DEFAULT_CHART_INTERVALS = Array.isArray(TRADING_VIEW_SETTINGS.intervals)
-    ? TRADING_VIEW_SETTINGS.intervals.map(String)
-    : ["5", "15", "60", "240", "D"];
 const DEFAULT_CHART_INTERVAL = String(TRADING_VIEW_SETTINGS.interval || "60");
-const CHART_INTERVAL_LABELS = {
-    "1": "1m",
-    "3": "3m",
-    "5": "5m",
-    "15": "15m",
-    "30": "30m",
-    "60": "1h",
-    "120": "2h",
-    "240": "4h",
-    D: "1D",
-    W: "1W",
-    M: "1M",
-    ...(TRADING_VIEW_SETTINGS.intervalLabels || TRADING_VIEW_SETTINGS.interval_labels || {}),
-};
 
 const DETAIL_PANEL_META = {
     bullResearch: { title: "Bull Researcher", subtitle: "Research Chamber" },
@@ -119,6 +102,9 @@ const state = {
     controller: null,
     activeRunId: null,
     stopRequested: false,
+    analysisStartedAt: 0,
+    stopAvailableAt: 0,
+    stopAvailabilityTimer: null,
     activeDetail: null,
     run: createEmptyRunState(),
 };
@@ -152,13 +138,9 @@ const elements = {
     chartStatusText: document.getElementById("chartStatusText"),
     tradingViewFrame: document.getElementById("tradingViewFrame"),
     chartSymbolList: document.getElementById("chartSymbolList"),
-    chartIntervalList: document.getElementById("chartIntervalList"),
     chartSymbolForm: document.getElementById("chartSymbolForm"),
     chartSymbolInput: document.getElementById("chartSymbolInput"),
     addChartSymbolButton: document.getElementById("addChartSymbolButton"),
-    chartIntervalForm: document.getElementById("chartIntervalForm"),
-    chartIntervalInput: document.getElementById("chartIntervalInput"),
-    addChartIntervalButton: document.getElementById("addChartIntervalButton"),
     refreshAdminUsersButton: document.getElementById("refreshAdminUsersButton"),
     adminUserList: document.getElementById("adminUserList"),
     adminStatusText: document.getElementById("adminStatusText"),
@@ -332,32 +314,22 @@ function normalizeTradingViewInterval(value = "") {
     return aliases[raw] || raw;
 }
 
-function readStoredChartIntervals() {
-    const raw = safeReadLocalStorage(CHART_INTERVALS_STORAGE_KEY);
-    if (!raw) {
-        return null;
-    }
-    try {
-        return JSON.parse(raw).map(normalizeTradingViewInterval).filter(Boolean);
-    } catch {
-        safeRemoveLocalStorage(CHART_INTERVALS_STORAGE_KEY);
-        return null;
-    }
-}
-
 function createInitialChartState() {
     const storedSymbols = readStoredChartSymbols();
-    const storedIntervals = readStoredChartIntervals();
     const symbols = [...new Set((storedSymbols && storedSymbols.length ? storedSymbols : DEFAULT_CHART_SYMBOLS).map(normalizeTradingViewSymbol).filter(Boolean))];
-    const intervals = [...new Set((storedIntervals && storedIntervals.length ? storedIntervals : DEFAULT_CHART_INTERVALS).map(normalizeTradingViewInterval).filter(Boolean))];
     return {
         loaded: false,
         symbol: symbols[0],
-        interval: normalizeTradingViewInterval(DEFAULT_CHART_INTERVAL) || intervals[0] || "60",
+        interval: normalizeTradingViewInterval(DEFAULT_CHART_INTERVAL) || "60",
         symbols,
-        intervals,
-        editingSymbol: "",
-        editingInterval: "",
+        draggingSymbol: "",
+        dragOriginalSymbols: [],
+        dragCommitted: false,
+        dragPointerSymbol: "",
+        dragPointerStartX: 0,
+        dragPointerStartY: 0,
+        dragPointerActive: false,
+        suppressNextSymbolClick: false,
     };
 }
 
@@ -795,7 +767,6 @@ function normalizeFrontendConfig() {
             symbol: tradingView.symbol || "BINANCE:BTCUSDT",
             interval: tradingView.interval || "60",
             symbols: tradingView.symbols || DEFAULT_CHART_SYMBOLS,
-            intervals: tradingView.intervals || DEFAULT_CHART_INTERVALS,
         },
         analysis_defaults: {
             symbol: String(defaults.symbol || "BTC-USDT").trim().toUpperCase(),
@@ -875,7 +846,6 @@ function initializeChartFromConfig(config) {
     const tradingView = config?.trading_view || {};
     const configuredSymbols = Array.isArray(tradingView.symbols) ? tradingView.symbols : DEFAULT_CHART_SYMBOLS;
     const storedSymbols = readStoredChartSymbols();
-    const storedIntervals = readStoredChartIntervals();
     const symbols = storedSymbols && storedSymbols.length
         ? storedSymbols
         : [
@@ -883,18 +853,11 @@ function initializeChartFromConfig(config) {
             ...configuredSymbols.map(normalizeTradingViewSymbol),
         ].filter(Boolean);
     state.chart.symbols = [...new Set(symbols)];
-    const configuredIntervals = Array.isArray(tradingView.intervals) && tradingView.intervals.length
-        ? tradingView.intervals.map(normalizeTradingViewInterval)
-        : DEFAULT_CHART_INTERVALS.map(normalizeTradingViewInterval);
-    state.chart.intervals = [...new Set(storedIntervals && storedIntervals.length ? storedIntervals : configuredIntervals)].filter(Boolean);
     state.chart.symbol = normalizeTradingViewSymbol(tradingView.symbol || state.chart.symbol) || state.chart.symbols[0];
     if (!state.chart.symbols.includes(state.chart.symbol)) {
         state.chart.symbols.unshift(state.chart.symbol);
     }
-    state.chart.interval = normalizeTradingViewInterval(tradingView.interval || state.chart.interval || DEFAULT_CHART_INTERVAL) || state.chart.intervals[0] || "60";
-    if (!state.chart.intervals.includes(state.chart.interval)) {
-        state.chart.intervals.unshift(state.chart.interval);
-    }
+    state.chart.interval = normalizeTradingViewInterval(tradingView.interval || state.chart.interval || DEFAULT_CHART_INTERVAL) || "60";
 }
 
 function buildApiUrlFromBase(baseUrl, path) {
@@ -933,6 +896,17 @@ function getAuthHeaders() {
     }
     return {
         Authorization: `Bearer ${state.auth.idToken}`,
+    };
+}
+
+function getAdminAuthHeaders(extraHeaders = {}) {
+    const authHeaders = getAuthHeaders();
+    if (!authHeaders.Authorization) {
+        throw new Error("Admin API calls require an authenticated session header.");
+    }
+    return {
+        ...extraHeaders,
+        ...authHeaders,
     };
 }
 
@@ -1099,7 +1073,7 @@ async function ensureAuthorizedSession() {
 async function ensureCanRunAnalysis() {
     await ensureAuthorizedSession();
     if (!state.auth.canRunAnalysis) {
-        throw new Error("Admin permission is required to run analysis.");
+        throw new Error("Run analysis permission is required.");
     }
     return true;
 }
@@ -1167,20 +1141,56 @@ function initializeGoogleAuth() {
     }
 }
 
+function getStopDelayRemainingMs() {
+    if (!state.isBusy || !state.stopAvailableAt) {
+        return 0;
+    }
+    return Math.max(0, state.stopAvailableAt - Date.now());
+}
+
+function clearStopAvailabilityTimer() {
+    if (state.stopAvailabilityTimer) {
+        window.clearTimeout(state.stopAvailabilityTimer);
+        state.stopAvailabilityTimer = null;
+    }
+}
+
+function scheduleStopAvailabilityRefresh() {
+    clearStopAvailabilityTimer();
+    const remainingMs = getStopDelayRemainingMs();
+    if (!state.isBusy || remainingMs <= 0) {
+        return;
+    }
+    state.stopAvailabilityTimer = window.setTimeout(() => {
+        state.stopAvailabilityTimer = null;
+        updateActionAvailability();
+    }, Math.min(remainingMs, 1000));
+}
+
 function updateActionAvailability() {
     const canRun = Boolean(state.config && state.auth.canRunAnalysis);
-    const runButtonLabel = state.isBusy ? "Stop analysis" : canRun ? "Run analysis" : "Admin permission is required to run analysis.";
+    const stopRemainingMs = getStopDelayRemainingMs();
+    const canStop = state.isBusy && stopRemainingMs <= 0;
+    const stopRemainingSeconds = Math.ceil(stopRemainingMs / 1000);
+    const runButtonLabel = state.isBusy
+        ? canStop
+            ? "Stop analysis"
+            : `Stop available in ${stopRemainingSeconds}s`
+        : canRun
+        ? "Run analysis"
+        : "Run analysis permission is required.";
 
-    elements.runAnalysisButton.disabled = !state.isBusy && !canRun;
+    elements.runAnalysisButton.disabled = state.isBusy ? !canStop : !canRun;
     elements.runAnalysisButton.dataset.state = state.isBusy ? "running" : "idle";
     elements.runAnalysisButton.classList.toggle("is-running", state.isBusy);
     elements.runAnalysisButton.setAttribute("aria-label", runButtonLabel);
     elements.runFromModalButton.disabled = state.isBusy || !canRun;
-    elements.stopAnalysisButton.disabled = !state.isBusy;
+    elements.stopAnalysisButton.disabled = !canStop;
     elements.saveConfigButton.disabled = state.isBusy;
     elements.openConfigButton.disabled = state.isBusy;
     elements.runAnalysisButton.title = runButtonLabel;
-    elements.runFromModalButton.title = canRun ? "Apply and run" : "Admin permission is required to run analysis.";
+    elements.runFromModalButton.title = canRun ? "Apply and run" : "Run analysis permission is required.";
+    scheduleStopAvailabilityRefresh();
 }
 
 function renderAuthState() {
@@ -1217,6 +1227,7 @@ function renderAuthState() {
         elements.authProfile.classList.toggle("hidden", !showProfile);
         elements.authProfile.dataset.state = status;
         elements.authProfile.title = state.auth.error || profileLabel;
+        elements.authProfile.setAttribute("aria-label", showProfile ? `Signed in as ${profileLabel}` : "Signed-in Google profile");
     }
     if (elements.authProfileEmail instanceof HTMLElement) {
         elements.authProfileEmail.textContent = profileLabel;
@@ -1857,6 +1868,11 @@ function appendLog(label, payload, options = {}) {
 
 function setBusy(isBusy) {
     state.isBusy = isBusy;
+    if (!isBusy) {
+        clearStopAvailabilityTimer();
+        state.analysisStartedAt = 0;
+        state.stopAvailableAt = 0;
+    }
     document.body.classList.toggle("is-running", isBusy);
     updateActionAvailability();
 }
@@ -2971,11 +2987,6 @@ function getChartSymbolLabel(symbol = "") {
     return ticker.replace(/USDT$/, "");
 }
 
-function getChartIntervalLabel(interval = "") {
-    const normalized = normalizeTradingViewInterval(interval);
-    return CHART_INTERVAL_LABELS[normalized] || normalized;
-}
-
 function getTradingViewEmbedUrl() {
     const symbol = encodeURIComponent(state.chart.symbol || "BINANCE:BTCUSDT");
     const interval = encodeURIComponent(state.chart.interval || "60");
@@ -2986,43 +2997,26 @@ function persistChartSymbols() {
     safeWriteLocalStorage(CHART_SYMBOLS_STORAGE_KEY, JSON.stringify(state.chart.symbols));
 }
 
-function persistChartIntervals() {
-    safeWriteLocalStorage(CHART_INTERVALS_STORAGE_KEY, JSON.stringify(state.chart.intervals));
-}
-
 function renderChartControls() {
-    if (!(elements.chartSymbolList instanceof HTMLElement) || !(elements.chartIntervalList instanceof HTMLElement)) {
+    if (!(elements.chartSymbolList instanceof HTMLElement)) {
         return;
     }
     elements.chartSymbolList.innerHTML = state.chart.symbols
         .map(
             (symbol) => `
-                <div class="chart-favorite-item ${symbol === state.chart.symbol ? "is-active" : ""}">
+                <div class="chart-symbol-item ${symbol === state.chart.symbol ? "is-active" : ""} ${symbol === state.chart.draggingSymbol ? "is-dragging" : ""}"
+                    data-chart-symbol-item="${escapeHtml(symbol)}">
+                    <span class="chart-drag-handle" aria-hidden="true">::</span>
                     <button type="button" class="chart-chip" data-chart-symbol="${escapeHtml(symbol)}">
                         ${escapeHtml(getChartSymbolLabel(symbol))}
                     </button>
-                    <button type="button" class="chart-mini-action" data-chart-symbol-edit="${escapeHtml(symbol)}" aria-label="Edit ${escapeHtml(symbol)}">Edit</button>
                     <button type="button" class="chart-mini-action" data-chart-symbol-remove="${escapeHtml(symbol)}" aria-label="Remove ${escapeHtml(symbol)}">X</button>
                 </div>
             `,
         )
         .join("");
-    elements.chartIntervalList.innerHTML = state.chart.intervals
-        .map(
-            (interval) => `
-                <div class="chart-favorite-item ${interval === state.chart.interval ? "is-active" : ""}">
-                    <button type="button" class="chart-chip" data-chart-interval="${escapeHtml(interval)}">
-                        ${escapeHtml(getChartIntervalLabel(interval))}
-                    </button>
-                    <button type="button" class="chart-mini-action" data-chart-interval-edit="${escapeHtml(interval)}" aria-label="Edit ${escapeHtml(interval)} timeframe">Edit</button>
-                    <button type="button" class="chart-mini-action" data-chart-interval-remove="${escapeHtml(interval)}" aria-label="Remove ${escapeHtml(interval)} timeframe">X</button>
-                </div>
-            `,
-        )
-        .join("");
-    elements.addChartSymbolButton.textContent = state.chart.editingSymbol ? "Save" : "Add";
-    elements.addChartIntervalButton.textContent = state.chart.editingInterval ? "Save" : "Add";
-    elements.chartStatusText.textContent = `${getChartSymbolLabel(state.chart.symbol)} - ${getChartIntervalLabel(state.chart.interval)}`;
+    elements.addChartSymbolButton.textContent = "Add";
+    elements.chartStatusText.textContent = getChartSymbolLabel(state.chart.symbol);
 }
 
 function refreshTradingViewChart() {
@@ -3055,46 +3049,14 @@ function setChartSymbol(symbol) {
     refreshTradingViewChart();
 }
 
-function setChartInterval(interval) {
-    const normalized = normalizeTradingViewInterval(interval || "60");
-    if (!normalized) {
-        return;
-    }
-    if (!state.chart.intervals.includes(normalized)) {
-        state.chart.intervals = [...state.chart.intervals, normalized];
-        persistChartIntervals();
-    }
-    state.chart.interval = normalized;
-    refreshTradingViewChart();
-}
-
 function addChartSymbolFromInput() {
     const value = elements.chartSymbolInput?.value || "";
     const normalized = normalizeTradingViewSymbol(value);
     if (!normalized) {
         return;
     }
-    if (state.chart.editingSymbol) {
-        const previous = state.chart.editingSymbol;
-        state.chart.symbols = state.chart.symbols.map((symbol) => (symbol === previous ? normalized : symbol));
-        state.chart.symbols = [...new Set(state.chart.symbols)];
-        if (state.chart.symbol === previous) {
-            state.chart.symbol = normalized;
-        }
-        state.chart.editingSymbol = "";
-        persistChartSymbols();
-        refreshTradingViewChart();
-    } else {
-        setChartSymbol(normalized);
-    }
+    setChartSymbol(normalized);
     elements.chartSymbolInput.value = "";
-}
-
-function editChartSymbol(symbol) {
-    state.chart.editingSymbol = normalizeTradingViewSymbol(symbol);
-    elements.chartSymbolInput.value = state.chart.editingSymbol;
-    elements.chartSymbolInput.focus();
-    renderChartControls();
 }
 
 function removeChartSymbol(symbol) {
@@ -3106,57 +3068,208 @@ function removeChartSymbol(symbol) {
     if (state.chart.symbol === normalized) {
         state.chart.symbol = state.chart.symbols[0];
     }
-    if (state.chart.editingSymbol === normalized) {
-        state.chart.editingSymbol = "";
-        elements.chartSymbolInput.value = "";
-    }
     persistChartSymbols();
     refreshTradingViewChart();
 }
 
-function addChartIntervalFromInput() {
-    const normalized = normalizeTradingViewInterval(elements.chartIntervalInput?.value || "");
-    if (!normalized) {
+function animateChartSymbolLayout(renderCallback = renderChartControls) {
+    if (!(elements.chartSymbolList instanceof HTMLElement)) {
+        renderCallback();
         return;
     }
-    if (state.chart.editingInterval) {
-        const previous = state.chart.editingInterval;
-        state.chart.intervals = state.chart.intervals.map((interval) => (interval === previous ? normalized : interval));
-        state.chart.intervals = [...new Set(state.chart.intervals)];
-        if (state.chart.interval === previous) {
-            state.chart.interval = normalized;
-        }
-        state.chart.editingInterval = "";
-        persistChartIntervals();
-        refreshTradingViewChart();
-    } else {
-        setChartInterval(normalized);
-    }
-    elements.chartIntervalInput.value = "";
+    const beforeRects = new Map(
+        Array.from(elements.chartSymbolList.querySelectorAll("[data-chart-symbol-item]")).map((item) => [
+            item instanceof HTMLElement ? item.dataset.chartSymbolItem || "" : "",
+            item instanceof HTMLElement ? item.getBoundingClientRect() : null,
+        ]),
+    );
+    renderCallback();
+    window.requestAnimationFrame(() => {
+        elements.chartSymbolList.querySelectorAll("[data-chart-symbol-item]").forEach((item) => {
+            if (!(item instanceof HTMLElement)) {
+                return;
+            }
+            const before = beforeRects.get(item.dataset.chartSymbolItem || "");
+            if (!before) {
+                return;
+            }
+            const after = item.getBoundingClientRect();
+            const deltaY = before.top - after.top;
+            if (Math.abs(deltaY) < 1) {
+                return;
+            }
+            item.style.transition = "none";
+            item.style.transform = `translateY(${deltaY}px)`;
+            item.getBoundingClientRect();
+            window.requestAnimationFrame(() => {
+                item.style.transition = "";
+                item.style.transform = "";
+            });
+        });
+    });
 }
 
-function editChartInterval(interval) {
-    state.chart.editingInterval = normalizeTradingViewInterval(interval);
-    elements.chartIntervalInput.value = state.chart.editingInterval;
-    elements.chartIntervalInput.focus();
+function getChartDragInsertionIndex(clientY) {
+    if (!(elements.chartSymbolList instanceof HTMLElement) || !state.chart.draggingSymbol) {
+        return -1;
+    }
+    const rows = Array.from(elements.chartSymbolList.querySelectorAll("[data-chart-symbol-item]"))
+        .filter((item) => item instanceof HTMLElement && item.dataset.chartSymbolItem !== state.chart.draggingSymbol);
+    const symbolsWithoutDragged = state.chart.symbols.filter((symbol) => symbol !== state.chart.draggingSymbol);
+    let insertionIndex = symbolsWithoutDragged.length;
+    for (const row of rows) {
+        const symbol = row.dataset.chartSymbolItem || "";
+        const rect = row.getBoundingClientRect();
+        if (clientY < rect.top + rect.height / 2) {
+            insertionIndex = symbolsWithoutDragged.indexOf(symbol);
+            break;
+        }
+    }
+    return Math.max(0, Math.min(insertionIndex, symbolsWithoutDragged.length));
+}
+
+function moveChartSymbolToIndex(sourceSymbol, insertionIndex, persistOrder = false) {
+    const source = normalizeTradingViewSymbol(sourceSymbol);
+    if (!source || insertionIndex < 0) {
+        return;
+    }
+    const current = state.chart.symbols;
+    if (!current.includes(source)) {
+        return;
+    }
+    const nextSymbols = current.filter((symbol) => symbol !== source);
+    const safeIndex = Math.max(0, Math.min(insertionIndex, nextSymbols.length));
+    nextSymbols.splice(safeIndex, 0, source);
+    if (nextSymbols.join("|") === current.join("|")) {
+        return;
+    }
+    state.chart.symbols = nextSymbols;
+    if (persistOrder) {
+        persistChartSymbols();
+    }
+    animateChartSymbolLayout();
+}
+
+function moveChartSymbol(sourceSymbol, targetSymbol) {
+    const source = normalizeTradingViewSymbol(sourceSymbol);
+    const target = normalizeTradingViewSymbol(targetSymbol);
+    const symbolsWithoutSource = state.chart.symbols.filter((symbol) => symbol !== source);
+    moveChartSymbolToIndex(source, symbolsWithoutSource.indexOf(target), true);
+}
+
+function finalizeChartSymbolDrag(commitOrder) {
+    if (!commitOrder && Array.isArray(state.chart.dragOriginalSymbols) && state.chart.dragOriginalSymbols.length) {
+        state.chart.symbols = [...state.chart.dragOriginalSymbols];
+    }
+    state.chart.draggingSymbol = "";
+    state.chart.dragOriginalSymbols = [];
+    state.chart.dragCommitted = false;
+    if (elements.chartSymbolList instanceof HTMLElement) {
+        elements.chartSymbolList.classList.remove("is-dragging");
+    }
     renderChartControls();
 }
 
-function removeChartInterval(interval) {
-    const normalized = normalizeTradingViewInterval(interval);
-    if (state.chart.intervals.length <= 1) {
+function isPointerInsideChartSymbolList(clientX, clientY) {
+    if (!(elements.chartSymbolList instanceof HTMLElement) || !clientX || !clientY) {
+        return false;
+    }
+    const rect = elements.chartSymbolList.getBoundingClientRect();
+    return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+}
+
+function updateChartSymbolDragPosition(event) {
+    if (!state.chart.draggingSymbol || !isPointerInsideChartSymbolList(event.clientX, event.clientY)) {
+        return false;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+    }
+    moveChartSymbolToIndex(state.chart.draggingSymbol, getChartDragInsertionIndex(event.clientY));
+    return true;
+}
+
+function commitChartSymbolDrag(event) {
+    if (!state.chart.draggingSymbol || !isPointerInsideChartSymbolList(event.clientX, event.clientY)) {
+        return false;
+    }
+    event.preventDefault();
+    moveChartSymbolToIndex(state.chart.draggingSymbol, getChartDragInsertionIndex(event.clientY));
+    state.chart.dragCommitted = true;
+    persistChartSymbols();
+    finalizeChartSymbolDrag(true);
+    return true;
+}
+
+function resetChartPointerDrag() {
+    state.chart.dragPointerSymbol = "";
+    state.chart.dragPointerStartX = 0;
+    state.chart.dragPointerStartY = 0;
+    state.chart.dragPointerActive = false;
+}
+
+function beginChartPointerDrag(symbol, event) {
+    const normalized = normalizeTradingViewSymbol(symbol);
+    if (!normalized || !state.chart.symbols.includes(normalized)) {
         return;
     }
-    state.chart.intervals = state.chart.intervals.filter((item) => item !== normalized);
-    if (state.chart.interval === normalized) {
-        state.chart.interval = state.chart.intervals[0];
+    state.chart.dragPointerSymbol = normalized;
+    state.chart.dragPointerStartX = event.clientX;
+    state.chart.dragPointerStartY = event.clientY;
+    state.chart.dragOriginalSymbols = [...state.chart.symbols];
+    state.chart.dragCommitted = false;
+    state.chart.dragPointerActive = false;
+}
+
+function activateChartPointerDrag() {
+    if (!state.chart.dragPointerSymbol || state.chart.dragPointerActive) {
+        return;
     }
-    if (state.chart.editingInterval === normalized) {
-        state.chart.editingInterval = "";
-        elements.chartIntervalInput.value = "";
+    state.chart.dragPointerActive = true;
+    state.chart.draggingSymbol = state.chart.dragPointerSymbol;
+    if (elements.chartSymbolList instanceof HTMLElement) {
+        elements.chartSymbolList.classList.add("is-dragging");
+        const item = Array.from(elements.chartSymbolList.querySelectorAll("[data-chart-symbol-item]"))
+            .find((node) => node instanceof HTMLElement && node.dataset.chartSymbolItem === state.chart.draggingSymbol);
+        if (item instanceof HTMLElement) {
+            item.classList.add("is-dragging");
+        }
     }
-    persistChartIntervals();
-    refreshTradingViewChart();
+}
+
+function updateChartPointerDrag(event) {
+    if (!state.chart.dragPointerSymbol) {
+        return;
+    }
+    const deltaX = event.clientX - state.chart.dragPointerStartX;
+    const deltaY = event.clientY - state.chart.dragPointerStartY;
+    if (!state.chart.dragPointerActive && Math.hypot(deltaX, deltaY) < 5) {
+        return;
+    }
+    event.preventDefault();
+    activateChartPointerDrag();
+    moveChartSymbolToIndex(state.chart.dragPointerSymbol, getChartDragInsertionIndex(event.clientY));
+}
+
+function finishChartPointerDrag(commitOrder) {
+    if (!state.chart.dragPointerSymbol) {
+        return;
+    }
+    const wasActive = state.chart.dragPointerActive;
+    if (wasActive && commitOrder) {
+        state.chart.dragCommitted = true;
+        persistChartSymbols();
+        state.chart.suppressNextSymbolClick = true;
+        finalizeChartSymbolDrag(true);
+    } else if (wasActive) {
+        state.chart.suppressNextSymbolClick = true;
+        finalizeChartSymbolDrag(false);
+    } else {
+        state.chart.dragOriginalSymbols = [];
+        state.chart.dragCommitted = false;
+    }
+    resetChartPointerDrag();
 }
 
 function renderAdminPage() {
@@ -3189,32 +3302,93 @@ function renderAdminPage() {
             const email = user.email || "";
             const unlimited = Boolean(user.history_access_unlimited || user.history_access_days == null);
             const isAdmin = Boolean(user.is_admin);
+            const canRunAnalysis = isAdmin || Boolean(user.can_run_analysis);
             const isSeedAdmin = Boolean(user.is_seed_admin);
             const isSaving = state.admin.savingEmail === email;
+            const roleLabel = isAdmin ? "Admin" : canRunAnalysis ? "Can run" : "History only";
+            const dayValue = user.history_access_days || state.config?.history?.default_access_days || 7;
             return `
-                <article class="admin-user-card" data-admin-email="${escapeHtml(email)}">
+                <article class="admin-user-card ${isAdmin ? "is-admin-role" : ""} ${canRunAnalysis ? "can-run-analysis" : ""} ${unlimited ? "is-history-unlimited" : ""}" data-admin-email="${escapeHtml(email)}" data-seed-admin="${isSeedAdmin ? "true" : "false"}">
                     <div class="admin-user-main">
-                        <strong>${escapeHtml(email || "Unknown user")}</strong>
-                        <span>${escapeHtml(user.name || "Google user")} - ${escapeHtml(user.role || "user")}</span>
+                        <div class="admin-user-title">
+                            <strong>${escapeHtml(email || "Unknown user")}</strong>
+                            <span class="admin-role-badge">${escapeHtml(roleLabel)}</span>
+                        </div>
+                        <span>${escapeHtml(user.name || "Google user")}</span>
                         <small>Last seen: ${escapeHtml(formatHistoryTimestamp(user.last_seen_at || ""))}</small>
                     </div>
-                    <label class="admin-control admin-toggle">
-                        <span>Admin</span>
-                        <input type="checkbox" data-admin-field="is_admin" ${isAdmin ? "checked" : ""} ${isSeedAdmin ? "disabled" : ""}>
-                    </label>
-                    <label class="admin-control admin-toggle">
-                        <span>Unlimited history</span>
-                        <input type="checkbox" data-admin-field="history_unlimited" ${unlimited ? "checked" : ""}>
-                    </label>
-                    <label class="admin-control">
-                        <span>History days</span>
-                        <input type="number" min="1" step="1" data-admin-field="history_days" value="${escapeHtml(String(user.history_access_days || state.config?.history?.default_access_days || 7))}" ${unlimited ? "disabled" : ""}>
-                    </label>
+                    <div class="admin-permission-panel" aria-label="User permissions">
+                        <label class="admin-switch">
+                            <input type="checkbox" data-admin-field="can_run_analysis" ${canRunAnalysis ? "checked" : ""} ${isAdmin ? "disabled" : ""}>
+                            <span><strong>Run agent</strong><small>Can start analysis jobs</small></span>
+                        </label>
+                        <label class="admin-switch">
+                            <input type="checkbox" data-admin-field="is_admin" ${isAdmin ? "checked" : ""} ${isSeedAdmin ? "disabled" : ""}>
+                            <span><strong>Admin</strong><small>Manage users and access</small></span>
+                        </label>
+                    </div>
+                    <div class="admin-history-panel" aria-label="History access">
+                        <label class="admin-switch admin-unlimited-switch">
+                            <input type="checkbox" data-admin-field="history_unlimited" ${unlimited ? "checked" : ""} ${isAdmin ? "disabled" : ""}>
+                            <span><strong>Unlimited history</strong><small>View all saved runs</small></span>
+                        </label>
+                        <label class="admin-days-field">
+                            <span>History window</span>
+                            <div class="admin-days-input-wrap">
+                                <input type="number" min="1" step="1" data-admin-field="history_days" value="${escapeHtml(String(dayValue))}" ${unlimited ? "disabled" : ""}>
+                                <small>days</small>
+                            </div>
+                        </label>
+                    </div>
                     <button class="button secondary admin-save-button" type="button" data-admin-save-user="${escapeHtml(email)}" ${isSaving ? "disabled" : ""}>${isSaving ? "Saving" : "Save"}</button>
                 </article>
             `;
         })
         .join("");
+}
+
+function syncAdminCardControls(card) {
+    if (!(card instanceof HTMLElement)) {
+        return;
+    }
+    const isSeedAdmin = card.dataset.seedAdmin === "true";
+    const isAdminInput = card.querySelector('[data-admin-field="is_admin"]');
+    const canRunInput = card.querySelector('[data-admin-field="can_run_analysis"]');
+    const unlimitedInput = card.querySelector('[data-admin-field="history_unlimited"]');
+    const daysInput = card.querySelector('[data-admin-field="history_days"]');
+    const isAdmin = isAdminInput instanceof HTMLInputElement && isAdminInput.checked;
+    if (isSeedAdmin && isAdminInput instanceof HTMLInputElement) {
+        isAdminInput.checked = true;
+        isAdminInput.disabled = true;
+    }
+    if (canRunInput instanceof HTMLInputElement) {
+        if (isAdmin || isSeedAdmin) {
+            canRunInput.checked = true;
+            canRunInput.disabled = true;
+        } else {
+            canRunInput.disabled = false;
+        }
+    }
+    if (unlimitedInput instanceof HTMLInputElement) {
+        if (isAdmin || isSeedAdmin) {
+            unlimitedInput.checked = true;
+            unlimitedInput.disabled = true;
+        } else {
+            unlimitedInput.disabled = false;
+        }
+    }
+    const historyUnlimited = unlimitedInput instanceof HTMLInputElement && unlimitedInput.checked;
+    if (daysInput instanceof HTMLInputElement) {
+        daysInput.disabled = historyUnlimited;
+        daysInput.setAttribute("aria-disabled", historyUnlimited ? "true" : "false");
+    }
+    card.classList.toggle("is-admin-role", isAdmin || isSeedAdmin);
+    card.classList.toggle("can-run-analysis", Boolean(canRunInput instanceof HTMLInputElement && canRunInput.checked));
+    card.classList.toggle("is-history-unlimited", historyUnlimited);
+    const roleBadge = card.querySelector(".admin-role-badge");
+    if (roleBadge instanceof HTMLElement) {
+        roleBadge.textContent = isAdmin || isSeedAdmin ? "Admin" : canRunInput instanceof HTMLInputElement && canRunInput.checked ? "Can run" : "History only";
+    }
 }
 
 async function loadAdminUsers(force = false) {
@@ -3231,7 +3405,7 @@ async function loadAdminUsers(force = false) {
     renderAdminPage();
     try {
         const response = await apiFetch("/api/admin/users", {
-            headers: getAuthHeaders(),
+            headers: getAdminAuthHeaders(),
             cache: "no-store",
         });
         if (!response.ok) {
@@ -3255,9 +3429,11 @@ async function saveAdminUser(email) {
         return;
     }
     const isAdminInput = card.querySelector('[data-admin-field="is_admin"]');
+    const canRunInput = card.querySelector('[data-admin-field="can_run_analysis"]');
     const unlimitedInput = card.querySelector('[data-admin-field="history_unlimited"]');
     const daysInput = card.querySelector('[data-admin-field="history_days"]');
     const isAdmin = isAdminInput instanceof HTMLInputElement ? isAdminInput.checked : false;
+    const canRunAnalysis = canRunInput instanceof HTMLInputElement ? canRunInput.checked : false;
     const unlimited = unlimitedInput instanceof HTMLInputElement ? unlimitedInput.checked : false;
     const days = daysInput instanceof HTMLInputElement ? Number(daysInput.value || 7) : 7;
     state.admin.savingEmail = email;
@@ -3265,12 +3441,10 @@ async function saveAdminUser(email) {
     try {
         const response = await apiFetch(`/api/admin/users/${encodeURIComponent(email)}`, {
             method: "PATCH",
-            headers: {
-                "Content-Type": "application/json",
-                ...getAuthHeaders(),
-            },
+            headers: getAdminAuthHeaders({ "Content-Type": "application/json" }),
             body: JSON.stringify({
                 is_admin: isAdmin,
+                can_run_analysis: isAdmin || canRunAnalysis,
                 history_access_days: unlimited ? null : Math.max(1, days),
                 history_access_unlimited: unlimited,
             }),
@@ -3697,6 +3871,8 @@ async function runAnalysis() {
     state.controller = controller;
     state.activeRunId = runId;
     state.stopRequested = false;
+    state.analysisStartedAt = Date.now();
+    state.stopAvailableAt = state.analysisStartedAt + MIN_ANALYSIS_STOP_DELAY_MS;
     setBusy(true);
     renderAll();
 
@@ -3753,6 +3929,10 @@ function stopActiveAnalysis() {
     if (!state.isBusy) {
         return;
     }
+    if (getStopDelayRemainingMs() > 0) {
+        updateActionAvailability();
+        return;
+    }
     const runId = state.activeRunId;
     const message = "Stop requested from the frontend.";
     state.stopRequested = true;
@@ -3790,6 +3970,7 @@ elements.pageTabs.addEventListener("click", (event) => {
         switchPage(button.dataset.page || "agent");
     }
 });
+elements.adminPageButton.addEventListener("click", () => switchPage("admin"));
 elements.refreshHistoryButton.addEventListener("click", () => {
     if (!state.auth.idToken && !state.auth.isAuthorized) {
         openAuthRequiredAlert();
@@ -3847,6 +4028,11 @@ elements.historyDetail.addEventListener("click", (event) => {
     }
 });
 elements.chartSymbolList.addEventListener("click", (event) => {
+    if (state.chart.suppressNextSymbolClick) {
+        state.chart.suppressNextSymbolClick = false;
+        event.preventDefault();
+        return;
+    }
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
         return;
@@ -3856,43 +4042,96 @@ elements.chartSymbolList.addEventListener("click", (event) => {
         removeChartSymbol(removeButton.dataset.chartSymbolRemove || "");
         return;
     }
-    const editButton = target.closest("[data-chart-symbol-edit]");
-    if (editButton instanceof HTMLElement) {
-        editChartSymbol(editButton.dataset.chartSymbolEdit || "");
-        return;
-    }
     const button = target.closest("[data-chart-symbol]");
     if (button instanceof HTMLElement) {
         setChartSymbol(button.dataset.chartSymbol || "");
     }
 });
-elements.chartIntervalList.addEventListener("click", (event) => {
+elements.chartSymbolList.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || event.button !== 0) {
+        return;
+    }
+    if (target.closest("[data-chart-symbol-remove]")) {
+        return;
+    }
+    const item = target.closest("[data-chart-symbol-item]");
+    if (!(item instanceof HTMLElement)) {
+        return;
+    }
+    beginChartPointerDrag(item.dataset.chartSymbolItem || "", event);
+});
+elements.chartSymbolList.addEventListener("mousedown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement) || event.button !== 0) {
+        return;
+    }
+    if (target.closest("[data-chart-symbol-remove]")) {
+        return;
+    }
+    const item = target.closest("[data-chart-symbol-item]");
+    if (!(item instanceof HTMLElement)) {
+        return;
+    }
+    beginChartPointerDrag(item.dataset.chartSymbolItem || "", event);
+});
+elements.chartSymbolList.addEventListener("dragstart", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
         return;
     }
-    const removeButton = target.closest("[data-chart-interval-remove]");
-    if (removeButton instanceof HTMLElement) {
-        removeChartInterval(removeButton.dataset.chartIntervalRemove || "");
+    const item = target.closest("[data-chart-symbol-item]");
+    if (!(item instanceof HTMLElement)) {
         return;
     }
-    const editButton = target.closest("[data-chart-interval-edit]");
-    if (editButton instanceof HTMLElement) {
-        editChartInterval(editButton.dataset.chartIntervalEdit || "");
-        return;
+    state.chart.draggingSymbol = item.dataset.chartSymbolItem || "";
+    state.chart.dragOriginalSymbols = [...state.chart.symbols];
+    state.chart.dragCommitted = false;
+    elements.chartSymbolList.classList.add("is-dragging");
+    item.classList.add("is-dragging");
+    if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", state.chart.draggingSymbol);
     }
-    const button = target.closest("[data-chart-interval]");
-    if (button instanceof HTMLElement) {
-        setChartInterval(button.dataset.chartInterval || "60");
+});
+elements.chartSymbolList.addEventListener("dragover", (event) => {
+    updateChartSymbolDragPosition(event);
+});
+elements.chartSymbolList.addEventListener("drop", (event) => {
+    commitChartSymbolDrag(event);
+});
+elements.chartSymbolList.addEventListener("drag", (event) => {
+    updateChartSymbolDragPosition(event);
+});
+elements.chartSymbolList.addEventListener("dragend", () => {
+    if (state.chart.draggingSymbol) {
+        finalizeChartSymbolDrag(state.chart.dragCommitted);
     }
+});
+document.addEventListener("dragover", (event) => {
+    updateChartSymbolDragPosition(event);
+});
+document.addEventListener("drop", (event) => {
+    commitChartSymbolDrag(event);
+});
+document.addEventListener("pointermove", (event) => {
+    updateChartPointerDrag(event);
+});
+document.addEventListener("pointerup", () => {
+    finishChartPointerDrag(true);
+});
+document.addEventListener("pointercancel", () => {
+    finishChartPointerDrag(false);
+});
+document.addEventListener("mousemove", (event) => {
+    updateChartPointerDrag(event);
+});
+document.addEventListener("mouseup", () => {
+    finishChartPointerDrag(true);
 });
 elements.chartSymbolForm.addEventListener("submit", (event) => {
     event.preventDefault();
     addChartSymbolFromInput();
-});
-elements.chartIntervalForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    addChartIntervalFromInput();
 });
 elements.refreshAdminUsersButton.addEventListener("click", () => {
     state.admin.loaded = false;
@@ -3910,11 +4149,7 @@ elements.adminUserList.addEventListener("change", (event) => {
     if (!(card instanceof HTMLElement)) {
         return;
     }
-    const unlimitedInput = card.querySelector('[data-admin-field="history_unlimited"]');
-    const daysInput = card.querySelector('[data-admin-field="history_days"]');
-    if (unlimitedInput instanceof HTMLInputElement && daysInput instanceof HTMLInputElement) {
-        daysInput.disabled = unlimitedInput.checked;
-    }
+    syncAdminCardControls(card);
 });
 elements.adminUserList.addEventListener("click", (event) => {
     const target = event.target;

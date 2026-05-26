@@ -137,6 +137,7 @@ class AuthService:
     def _hydrate_user_permissions(self, user: dict) -> dict:
         email = str(user.get("email") or "").strip().lower()
         is_admin = email in self.settings.admin_emails
+        can_run_analysis = is_admin
         history_access_days: int | None = None if is_admin else self.settings.default_history_access_days
         if email and self.history_store.configured:
             try:
@@ -146,16 +147,18 @@ class AuthService:
                     self.settings.admin_emails,
                 )
                 is_admin = bool(access.get("is_admin"))
+                can_run_analysis = bool(access.get("can_run_analysis"))
                 history_access_days = access.get("history_access_days")
             except Exception:
                 logger.warning("Could not load user access settings from history database.", exc_info=True)
+        can_run_analysis = can_run_analysis or is_admin
         user.update(
             {
                 "email": email,
                 "authorized": True,
                 "is_admin": is_admin,
-                "role": "admin" if is_admin else "user",
-                "can_run_analysis": is_admin,
+                "role": "admin" if is_admin else "runner" if can_run_analysis else "user",
+                "can_run_analysis": can_run_analysis,
                 "history_access_days": history_access_days,
                 "history_access_unlimited": history_access_days is None,
             }
@@ -204,6 +207,7 @@ class AuthService:
             "is_admin": bool(user.get("is_admin", False)),
             "can_run_analysis": bool(user.get("can_run_analysis", False)),
             "history_access_days": user.get("history_access_days"),
+            "history_access_unlimited": bool(user.get("history_access_unlimited", user.get("history_access_days") is None)),
             "iat": issued_at,
             "exp": expires_at,
         }
@@ -323,7 +327,7 @@ class AuthService:
     async def require_analysis_runner(self, request: Request) -> dict:
         user = await self.require_authorized_user(request)
         if not user.get("can_run_analysis"):
-            raise HTTPException(status_code=403, detail="Admin permission is required to run analysis.")
+            raise HTTPException(status_code=403, detail="Run analysis permission is required.")
         return user
 
     async def require_admin_user(self, request: Request) -> dict:

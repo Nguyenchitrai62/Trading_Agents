@@ -118,7 +118,6 @@ def create_app() -> FastAPI:
                 "symbol": SETTINGS.trading_view_symbol,
                 "interval": SETTINGS.trading_view_interval,
                 "symbols": list(SETTINGS.trading_view_symbols),
-                "intervals": list(SETTINGS.trading_view_intervals),
             },
             "analysis_defaults": {
                 "symbol": SETTINGS.trading_view_symbol.split(":")[-1].replace("USDT", "-USDT"),
@@ -222,6 +221,7 @@ def create_app() -> FastAPI:
             history_store.update_user_access,
             email,
             payload.is_admin,
+            payload.can_run_analysis,
             payload.history_access_days,
             payload.history_access_unlimited,
             SETTINGS.default_history_access_days,

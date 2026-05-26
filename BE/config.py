@@ -40,7 +40,6 @@ DEFAULT_TRADING_VIEW_SYMBOLS = (
     "BINANCE:SOLUSDT",
     "BINANCE:XRPUSDT",
 )
-DEFAULT_TRADING_VIEW_INTERVALS = ("5", "15", "60", "240", "D")
 RESEARCH_DEPTH_OPTIONS = {
     "quick": {
         "label": "Quick",
@@ -287,7 +286,6 @@ class BackendSettings:
     trading_view_symbol: str
     trading_view_interval: str
     trading_view_symbols: tuple[str, ...]
-    trading_view_intervals: tuple[str, ...]
     port: int
 
     @classmethod
@@ -309,7 +307,6 @@ class BackendSettings:
             email.lower() for email in _env_csv("GOOGLE_ALLOWED_EMAILS", google_allowed_email)
         )
         trading_view_symbols = tuple(_env_csv("TRADING_VIEW_SYMBOLS")) or DEFAULT_TRADING_VIEW_SYMBOLS
-        trading_view_intervals = tuple(_env_csv("TRADING_VIEW_INTERVALS")) or DEFAULT_TRADING_VIEW_INTERVALS
 
         return cls(
             root_dir=ROOT_DIR,
@@ -371,7 +368,6 @@ class BackendSettings:
             trading_view_symbol=os.getenv("TRADING_VIEW_SYMBOL", DEFAULT_TRADING_VIEW_SYMBOL),
             trading_view_interval=os.getenv("TRADING_VIEW_INTERVAL", DEFAULT_TRADING_VIEW_INTERVAL),
             trading_view_symbols=trading_view_symbols,
-            trading_view_intervals=trading_view_intervals,
             port=_env_int("PORT", 8000),
         )
 

@@ -166,6 +166,8 @@ class TursoHistoryStore:
                     picture TEXT,
                     email_verified INTEGER NOT NULL DEFAULT 0,
                     is_admin INTEGER NOT NULL DEFAULT 0,
+                    can_run_analysis INTEGER NOT NULL DEFAULT 0,
+                    history_access_unlimited INTEGER NOT NULL DEFAULT 0,
                     history_access_days INTEGER,
                     first_seen_at TEXT NOT NULL,
                     last_seen_at TEXT NOT NULL
@@ -188,6 +190,10 @@ class TursoHistoryStore:
                 migration_statements.append(("ALTER TABLE auth_users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0", None))
             if "is_admin" not in user_columns:
                 migration_statements.append(("ALTER TABLE auth_users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0", None))
+            if "can_run_analysis" not in user_columns:
+                migration_statements.append(("ALTER TABLE auth_users ADD COLUMN can_run_analysis INTEGER NOT NULL DEFAULT 0", None))
+            if "history_access_unlimited" not in user_columns:
+                migration_statements.append(("ALTER TABLE auth_users ADD COLUMN history_access_unlimited INTEGER NOT NULL DEFAULT 0", None))
             if "history_access_days" not in user_columns:
                 migration_statements.append(("ALTER TABLE auth_users ADD COLUMN history_access_days INTEGER", None))
             if migration_statements:
@@ -216,16 +222,24 @@ class TursoHistoryStore:
             """
             INSERT INTO auth_users (
                 email, google_sub, name, picture, email_verified, is_admin,
-                history_access_days, first_seen_at, last_seen_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                can_run_analysis, history_access_unlimited, history_access_days, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(email) DO UPDATE SET
                 google_sub = excluded.google_sub,
                 name = excluded.name,
                 picture = excluded.picture,
                 email_verified = excluded.email_verified,
                 is_admin = CASE WHEN excluded.is_admin = 1 THEN 1 ELSE auth_users.is_admin END,
+                can_run_analysis = CASE
+                    WHEN excluded.is_admin = 1 THEN 1
+                    ELSE auth_users.can_run_analysis
+                END,
+                history_access_unlimited = CASE
+                    WHEN excluded.is_admin = 1 THEN 1
+                    ELSE auth_users.history_access_unlimited
+                END,
                 history_access_days = CASE
-                    WHEN excluded.is_admin = 1 THEN NULL
+                    WHEN excluded.is_admin = 1 OR auth_users.history_access_unlimited = 1 THEN NULL
                     ELSE COALESCE(auth_users.history_access_days, excluded.history_access_days)
                 END,
                 last_seen_at = excluded.last_seen_at
@@ -237,6 +251,8 @@ class TursoHistoryStore:
                 user.get("picture"),
                 bool(user.get("email_verified", True)),
                 bool(user.get("is_admin", False)),
+                bool(user.get("can_run_analysis", False)),
+                bool(user.get("history_access_unlimited", False)),
                 user.get("history_access_days"),
                 seen_at,
                 seen_at,
@@ -253,8 +269,10 @@ class TursoHistoryStore:
         normalized_email = email.strip().lower()
         is_seed_admin = normalized_email in admin_emails
         is_admin = is_seed_admin or bool(row.get("is_admin") if row else False)
+        can_run_analysis = is_admin or bool(row.get("can_run_analysis") if row else False)
+        history_access_unlimited = is_admin or bool(row.get("history_access_unlimited") if row else False)
         raw_days = row.get("history_access_days") if row else None
-        history_access_days = None if is_admin else raw_days or default_history_access_days
+        history_access_days = None if history_access_unlimited else raw_days or default_history_access_days
         return {
             "email": normalized_email,
             "google_sub": row.get("google_sub") if row else None,
@@ -262,10 +280,10 @@ class TursoHistoryStore:
             "picture": row.get("picture") if row else "",
             "email_verified": bool(row.get("email_verified") if row else True),
             "is_admin": is_admin,
-            "role": "admin" if is_admin else "user",
-            "can_run_analysis": is_admin,
+            "role": "admin" if is_admin else "runner" if can_run_analysis else "user",
+            "can_run_analysis": can_run_analysis,
             "history_access_days": history_access_days,
-            "history_access_unlimited": history_access_days is None,
+            "history_access_unlimited": history_access_unlimited,
             "first_seen_at": row.get("first_seen_at") if row else None,
             "last_seen_at": row.get("last_seen_at") if row else None,
             "is_seed_admin": is_seed_admin,
@@ -282,7 +300,7 @@ class TursoHistoryStore:
         rows = self._query_rows(
             """
             SELECT email, google_sub, name, picture, email_verified, is_admin,
-                history_access_days, first_seen_at, last_seen_at
+                can_run_analysis, history_access_unlimited, history_access_days, first_seen_at, last_seen_at
             FROM auth_users
             WHERE email = ?
             LIMIT 1
@@ -296,7 +314,7 @@ class TursoHistoryStore:
         rows = self._query_rows(
             """
             SELECT email, google_sub, name, picture, email_verified, is_admin,
-                history_access_days, first_seen_at, last_seen_at
+                can_run_analysis, history_access_unlimited, history_access_days, first_seen_at, last_seen_at
             FROM auth_users
             ORDER BY last_seen_at DESC
             """
@@ -311,6 +329,7 @@ class TursoHistoryStore:
         self,
         email: str,
         is_admin: bool | None,
+        can_run_analysis: bool | None,
         history_access_days: int | None,
         history_access_unlimited: bool,
         default_history_access_days: int,
@@ -320,7 +339,11 @@ class TursoHistoryStore:
         normalized_email = email.strip().lower()
         current = self.get_user_access(normalized_email, default_history_access_days, admin_emails)
         effective_is_admin = current["is_seed_admin"] or (bool(is_admin) if is_admin is not None else bool(current["is_admin"]))
-        if effective_is_admin or history_access_unlimited:
+        effective_can_run_analysis = effective_is_admin or (
+            bool(can_run_analysis) if can_run_analysis is not None else bool(current.get("can_run_analysis"))
+        )
+        effective_history_unlimited = effective_is_admin or bool(history_access_unlimited)
+        if effective_history_unlimited:
             effective_days = None
         elif history_access_days is not None:
             effective_days = max(1, int(history_access_days))
@@ -332,13 +355,15 @@ class TursoHistoryStore:
             """
             INSERT INTO auth_users (
                 email, google_sub, name, picture, email_verified, is_admin,
-                history_access_days, first_seen_at, last_seen_at
-            ) VALUES (?, NULL, '', '', 0, ?, ?, ?, ?)
+                can_run_analysis, history_access_unlimited, history_access_days, first_seen_at, last_seen_at
+            ) VALUES (?, NULL, '', '', 0, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(email) DO UPDATE SET
                 is_admin = excluded.is_admin,
+                can_run_analysis = excluded.can_run_analysis,
+                history_access_unlimited = excluded.history_access_unlimited,
                 history_access_days = excluded.history_access_days
             """,
-            [normalized_email, effective_is_admin, effective_days, now, now],
+            [normalized_email, effective_is_admin, effective_can_run_analysis, effective_history_unlimited, effective_days, now, now],
         )
         return self.get_user_access(normalized_email, default_history_access_days, admin_emails)
 

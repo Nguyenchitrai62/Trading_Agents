@@ -11,6 +11,7 @@
         traceDisplayLimit: 14,
         logDisplayLimit: 12,
         executionLogDisplayLimit: 80,
+        minStopDelayMs: 5000,
     },
     auth: {
         storageKey: "tradingagents.googleAuth",
@@ -24,22 +25,7 @@
         symbol: "BINANCE:BTCUSDT",
         interval: "60",
         symbols: ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"],
-        intervals: ["5", "15", "60", "240", "D"],
         symbolsStorageKey: "tradingagents.chartSymbols",
-        intervalsStorageKey: "tradingagents.chartIntervals",
-        intervalLabels: {
-            "1": "1m",
-            "3": "3m",
-            "5": "5m",
-            "15": "15m",
-            "30": "30m",
-            "60": "1h",
-            "120": "2h",
-            "240": "4h",
-            D: "1D",
-            W: "1W",
-            M: "1M",
-        },
     },
     analysisDefaults: {
         // FE form defaults live here; backend /api/config should not override them.
