@@ -4891,48 +4891,31 @@ body.is-running .window-status {
 .history-diagram-wrap {
     display: grid;
     gap: 12px;
-    overflow-x: hidden;
+    overflow-x: auto;
     overflow-y: visible;
-    padding-bottom: 4px;
+    padding: 20px 0 4px;
 }
 
 .history-diagram {
-    --history-node-width: 104px;
+    --history-node-width: 108px;
     --history-node-height: 62px;
-    --history-stage-gap: 12px;
-    display: grid;
-    grid-template-columns: minmax(352px, 2.25fr) minmax(24px, 0.14fr) minmax(104px, 0.72fr);
-    grid-auto-rows: auto;
+    --history-research-width: 160px;
+    --history-connector-width: clamp(26px, 3.4vw, 46px);
+    display: flex;
     align-items: center;
-    gap: 12px 4px;
-    width: 100%;
-    max-width: 100%;
-    min-height: 300px;
+    gap: 0;
+    width: max-content;
+    min-width: 100%;
+    max-width: none;
+    min-height: 0;
     margin: 0 auto;
 }
 
-.history-diagram--count-1 {
-    grid-template-columns: minmax(352px, 1fr);
-}
-
-.history-diagram--count-3,
-.history-diagram--count-5 {
-    grid-template-columns: minmax(352px, 2.25fr) minmax(24px, 0.14fr) minmax(104px, 0.72fr) minmax(24px, 0.14fr) minmax(104px, 0.72fr);
-}
-
-.history-diagram--count-4 {
-    grid-template-columns: minmax(352px, 2.25fr) minmax(24px, 0.14fr) minmax(104px, 0.72fr);
-}
-
-.history-diagram--count-5 {
-    grid-template-rows: auto minmax(34px, auto) auto;
-}
-
-.history-diagram--count-4 {
-    grid-template-rows: auto minmax(34px, auto) auto;
-}
-
 .history-diagram-stage-slot {
+    display: grid;
+    align-items: center;
+    justify-items: center;
+    flex: 0 0 auto;
     min-width: 0;
 }
 
@@ -4941,8 +4924,9 @@ body.is-running .window-status {
 }
 
 .history-diagram-group {
+    position: relative;
     display: grid;
-    gap: 7px;
+    gap: 0;
     align-content: center;
     justify-items: center;
     width: 100%;
@@ -4958,33 +4942,36 @@ body.is-running .window-status {
 }
 
 .history-diagram-group--risk {
+    width: 124px;
     max-width: 124px;
-}
-
-.history-diagram-flow-reverse .history-diagram-label {
-    justify-self: end;
 }
 
 .history-diagram-stage--research-intake {
     display: grid;
-    grid-template-columns: minmax(108px, 0.58fr) minmax(42px, 0.22fr) minmax(210px, 1fr);
+    grid-template-columns: var(--history-node-width) 46px var(--history-research-width);
     align-items: center;
-    gap: 6px;
-    width: 100%;
+    gap: 0;
+    width: calc(var(--history-node-width) + 46px + var(--history-research-width));
 }
 
 .history-diagram-group--plan,
 .history-diagram-group--trader,
 .history-diagram-group--portfolio {
-    max-width: 88px;
+    width: var(--history-node-width);
+    max-width: var(--history-node-width);
 }
 
 .history-diagram-label {
+    position: absolute;
+    top: -18px;
+    left: 50%;
+    transform: translateX(-50%);
     color: var(--muted);
     font-size: 0.68rem;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
+    white-space: nowrap;
 }
 
 .history-diagram-signal-grid,
@@ -5029,6 +5016,7 @@ body.is-running .window-status {
 .history-diagram-cluster--research {
     border-color: rgba(95, 226, 194, 0.18);
     position: relative;
+    width: var(--history-research-width);
 }
 
 .history-diagram-cluster--risk {
@@ -5052,13 +5040,12 @@ body.is-running .window-status {
 }
 
 .history-diagram-cluster-grid--research {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
+    gap: 8px;
 }
 
 .history-diagram-cluster-grid--research .history-diagram-node--debate {
-    grid-column: 1 / -1;
-    justify-self: center;
-    width: min(240px, 100%);
+    width: var(--history-node-width);
 }
 
 .history-diagram-cluster-grid--risk {
@@ -5089,14 +5076,10 @@ body.is-running .window-status {
 }
 
 .history-diagram-stage-link {
-    height: 78px;
-    min-width: 0;
-    width: 100%;
-}
-
-.history-diagram-stage-link--turn {
-    align-self: center;
-    height: 44px;
+    flex: 0 0 var(--history-connector-width);
+    width: var(--history-connector-width);
+    height: var(--history-node-height);
+    margin: 0;
 }
 
 .history-diagram-curve-base,
@@ -5148,6 +5131,7 @@ body.is-running .window-status {
     max-width: 100%;
     min-height: var(--history-node-height);
     height: var(--history-node-height);
+    box-sizing: border-box;
     padding: 8px 6px 7px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 14px;
@@ -5428,20 +5412,14 @@ body.is-running .window-status {
 
 @media (max-width: 760px) {
     .history-diagram {
-        --history-node-width: 98px;
-        grid-template-columns: minmax(316px, 1fr);
-        gap: 10px;
-        min-height: 0;
-    }
-
-    .history-diagram-stage-slot,
-    .history-diagram-stage-link {
-        grid-column: 1 !important;
-        grid-row: auto !important;
+        --history-node-width: 104px;
+        --history-research-width: 156px;
+        --history-connector-width: 26px;
     }
 
     .history-diagram-stage--research-intake {
-        grid-template-columns: minmax(104px, 0.45fr) minmax(34px, 0.16fr) minmax(178px, 1fr);
+        grid-template-columns: var(--history-node-width) 34px var(--history-research-width);
+        width: calc(var(--history-node-width) + 34px + var(--history-research-width));
     }
 
     .history-diagram-signal-grid {
@@ -5459,15 +5437,8 @@ body.is-running .window-status {
     }
 
     .history-diagram-stage-link {
-        height: 38px;
-        justify-self: center;
-        width: min(96px, 26vw);
-        transform: rotate(90deg);
-    }
-
-    .history-diagram-stage-link--turn {
-        transform: rotate(90deg);
-        height: 38px;
+        height: var(--history-node-height);
+        margin-top: 0;
     }
 
     .history-diagram-stage--research-intake .history-diagram-cluster--research::before {
