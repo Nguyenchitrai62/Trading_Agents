@@ -204,6 +204,15 @@ const HISTORY_DIAGRAM_ICONS = {
     default: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="3"></rect></svg>',
 };
 
+const HISTORY_SIGNAL_WIRE_PATHS = [
+    "M2 24 C28 22 42 44 98 42",
+    "M2 55 C32 54 46 60 98 64",
+    "M2 95 C32 96 46 90 98 86",
+    "M2 126 C28 128 42 106 98 108",
+];
+
+const HISTORY_STAGE_WIRE_PATH = "M4 50 C28 28 52 72 96 50";
+
 const state = {
     config: null,
     apiBaseUrl: getConfiguredApiBaseUrl(),
@@ -2884,6 +2893,30 @@ function renderHistoryDiagramIcon(iconKey = "default") {
     return HISTORY_DIAGRAM_ICONS[iconKey] || HISTORY_DIAGRAM_ICONS.default;
 }
 
+function renderHistoryCurveWire(paths = [], className = "", viewBox = "0 0 100 100") {
+    if (!paths.length) {
+        return "";
+    }
+    const wireMarkup = paths
+        .map((path, index) => {
+            const delay = (index * 0.18).toFixed(2);
+            return `
+                <path class="history-diagram-curve-base" d="${path}" pathLength="1"></path>
+                <path class="history-diagram-curve-glow" d="${path}" pathLength="1"></path>
+                <path class="history-diagram-curve-pulse" d="${path}" pathLength="1" style="--flow-delay: ${delay}s"></path>
+                <path class="history-diagram-curve-pulse history-diagram-curve-pulse--late" d="${path}" pathLength="1" style="--flow-delay: ${(Number(delay) + 1.15).toFixed(2)}s"></path>
+            `;
+        })
+        .join("");
+    return `
+        <div class="history-diagram-curve-wire ${className}" aria-hidden="true">
+            <svg viewBox="${viewBox}" preserveAspectRatio="none" focusable="false">
+                ${wireMarkup}
+            </svg>
+        </div>
+    `;
+}
+
 function buildHistoryDiagramModel(sections = []) {
     const sectionsByKey = new Map(sections.map((section) => [section.section_key, section]));
     const knownKeys = new Set(Object.values(HISTORY_FLOW_SECTION_ORDER).flat());
@@ -2938,13 +2971,13 @@ function renderHistoryDiagramResearchIntakeStage(signalNodes = [], researchNodes
                         (section) => `
                             <div class="history-diagram-signal-lane">
                                 ${renderHistoryDiagramNode(section, options)}
-                                <span class="history-diagram-wire history-diagram-wire--vertical history-diagram-wire--signal" aria-hidden="true"></span>
                             </div>
                         `,
                     )
                     .join("")}
                 </div>
             </div>
+            ${renderHistoryCurveWire(HISTORY_SIGNAL_WIRE_PATHS.slice(0, Math.max(1, signalNodes.length)), "history-diagram-signal-wires", "0 0 100 150")}
             <div class="history-diagram-group history-diagram-group--research">
                 <span class="history-diagram-label">Research</span>
                 <div class="history-diagram-cluster history-diagram-cluster--research">
@@ -3151,7 +3184,7 @@ function renderHistoryPage() {
         <div class="history-diagram-wrap">
             <div class="history-diagram">
                 ${stages.length
-                    ? stages.map((stage, index) => `${stage}${index < stages.length - 1 ? '<div class="history-diagram-stage-link history-diagram-wire history-diagram-wire--vertical" aria-hidden="true"></div>' : ""}`).join("")
+                    ? stages.map((stage, index) => `${stage}${index < stages.length - 1 ? renderHistoryCurveWire([HISTORY_STAGE_WIRE_PATH], "history-diagram-stage-link", "0 0 100 100") : ""}`).join("")
                     : '<div class="history-empty">No saved flow sections are available for this analysis.</div>'}
             </div>
             ${renderHistoryDiagramExtras(diagram.extras, diagramOptions)}
