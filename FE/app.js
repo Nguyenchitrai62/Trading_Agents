@@ -2961,13 +2961,12 @@ function renderHistoryDiagramNode(section = {}, options = {}, layout = {}) {
     `;
 }
 
-function renderHistoryDiagramResearchIntakeStage(signalNodes = [], researchNodes = [], options = {}) {
+function renderHistoryDiagramSignalsGroup(signalNodes = [], options = {}) {
     return `
-        <section class="history-diagram-stage history-diagram-stage--research-intake">
-            <div class="history-diagram-group history-diagram-group--inputs">
-                <span class="history-diagram-label">Signals</span>
-                <div class="history-diagram-signal-grid">
-                    ${signalNodes
+        <section class="history-diagram-group history-diagram-group--signals">
+            <span class="history-diagram-label">Signals</span>
+            <div class="history-diagram-signal-grid">
+                ${signalNodes
                     .map(
                         (section) => `
                             <div class="history-diagram-signal-lane">
@@ -2976,15 +2975,18 @@ function renderHistoryDiagramResearchIntakeStage(signalNodes = [], researchNodes
                         `,
                     )
                     .join("")}
-                </div>
             </div>
-            ${renderHistoryCurveWire(HISTORY_SIGNAL_WIRE_PATHS.slice(0, Math.max(1, signalNodes.length)), "history-diagram-signal-wires", "0 0 100 276")}
-            <div class="history-diagram-group history-diagram-group--research">
-                <span class="history-diagram-label">Research</span>
-                <div class="history-diagram-cluster history-diagram-cluster--research">
-                    <div class="history-diagram-cluster-grid history-diagram-cluster-grid--research">
-                        ${researchNodes.map((section) => renderHistoryDiagramNode(section, options, { compact: HISTORY_FLOW_SECTION_META[section.section_key]?.compact })).join("")}
-                    </div>
+        </section>
+    `;
+}
+
+function renderHistoryDiagramResearchGroup(researchNodes = [], options = {}) {
+    return `
+        <section class="history-diagram-group history-diagram-group--research">
+            <span class="history-diagram-label">Research</span>
+            <div class="history-diagram-cluster history-diagram-cluster--research">
+                <div class="history-diagram-cluster-grid history-diagram-cluster-grid--research">
+                    ${researchNodes.map((section) => renderHistoryDiagramNode(section, options, { compact: HISTORY_FLOW_SECTION_META[section.section_key]?.compact })).join("")}
                 </div>
             </div>
         </section>
@@ -3015,11 +3017,18 @@ function renderHistoryDiagramSingleGroup(label, key, node, options = {}) {
     `;
 }
 
-function renderHistoryStageConnector(index, stageCount) {
-    if (index >= stageCount - 1) {
+function renderHistoryStageConnector(fromStage = null, toStage = null) {
+    if (!fromStage || !toStage) {
         return "";
     }
-    if (stageCount >= 4 && index === 2) {
+    if (fromStage.key === "signals" && toStage.key === "research") {
+        return renderHistoryCurveWire(
+            HISTORY_SIGNAL_WIRE_PATHS.slice(0, Math.max(1, fromStage.wireCount || 0)),
+            "history-diagram-stage-link history-diagram-stage-link--signals",
+            "0 0 100 276",
+        );
+    }
+    if (toStage.key === "risk") {
         return renderHistoryCurveWire(
             [HISTORY_RISK_WIRE_PATH],
             "history-diagram-stage-link history-diagram-stage-link--risk",
@@ -3028,7 +3037,7 @@ function renderHistoryStageConnector(index, stageCount) {
     }
     return renderHistoryCurveWire(
         [HISTORY_STAGE_WIRE_PATH],
-        `history-diagram-stage-link history-diagram-stage-link--after-${index}`,
+        `history-diagram-stage-link history-diagram-stage-link--${fromStage.key}-to-${toStage.key}`,
         "0 0 100 100",
     );
 }
@@ -3172,20 +3181,42 @@ function renderHistoryPage() {
         loadingKey: history.active.sectionLoadingKey,
     };
     const stages = [];
-    if (diagram.inputs.length || diagram.researchNodes.length) {
-        stages.push(renderHistoryDiagramResearchIntakeStage(diagram.inputs, diagram.researchNodes, diagramOptions));
+    if (diagram.inputs.length) {
+        stages.push({
+            key: "signals",
+            markup: renderHistoryDiagramSignalsGroup(diagram.inputs, diagramOptions),
+            wireCount: diagram.inputs.length,
+        });
+    }
+    if (diagram.researchNodes.length) {
+        stages.push({
+            key: "research",
+            markup: renderHistoryDiagramResearchGroup(diagram.researchNodes, diagramOptions),
+        });
     }
     if (diagram.investmentPlan) {
-        stages.push(renderHistoryDiagramSingleGroup("Plan", "plan", diagram.investmentPlan, diagramOptions));
+        stages.push({
+            key: "plan",
+            markup: renderHistoryDiagramSingleGroup("Plan", "plan", diagram.investmentPlan, diagramOptions),
+        });
     }
     if (diagram.trader) {
-        stages.push(renderHistoryDiagramSingleGroup("Trader", "trader", diagram.trader, diagramOptions));
+        stages.push({
+            key: "trader",
+            markup: renderHistoryDiagramSingleGroup("Trader", "trader", diagram.trader, diagramOptions),
+        });
     }
     if (diagram.riskNodes.length) {
-        stages.push(renderHistoryDiagramClusterGroup("Risk", "risk", diagram.riskNodes, diagramOptions));
+        stages.push({
+            key: "risk",
+            markup: renderHistoryDiagramClusterGroup("Risk", "risk", diagram.riskNodes, diagramOptions),
+        });
     }
     if (diagram.manager) {
-        stages.push(renderHistoryDiagramSingleGroup("Manager", "portfolio", diagram.manager, diagramOptions));
+        stages.push({
+            key: "portfolio",
+            markup: renderHistoryDiagramSingleGroup("Manager", "portfolio", diagram.manager, diagramOptions),
+        });
     }
     elements.historyStatusText.textContent = isSectionLoading
         ? "Loading markdown"
@@ -3205,7 +3236,8 @@ function renderHistoryPage() {
                 ${stages.length
                     ? stages
                         .map((stage, index) => {
-                            return `<div class="history-diagram-stage-slot history-diagram-stage-slot--${index}">${stage}</div>${renderHistoryStageConnector(index, stages.length)}`;
+                            const nextStage = stages[index + 1] || null;
+                            return `<div class="history-diagram-stage-slot history-diagram-stage-slot--${index} history-diagram-stage-slot--${stage.key}">${stage.markup}</div>${renderHistoryStageConnector(stage, nextStage)}`;
                         })
                         .join("")
                     : '<div class="history-empty">No saved flow sections are available for this analysis.</div>'}
