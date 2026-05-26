@@ -133,6 +133,11 @@ const elements = {
     detailTitle: document.getElementById("detailTitle"),
     detailSubtitle: document.getElementById("detailSubtitle"),
     detailBody: document.getElementById("detailBody"),
+    alertModal: document.getElementById("alertModal"),
+    alertTitle: document.getElementById("alertTitle"),
+    alertMessage: document.getElementById("alertMessage"),
+    closeAlertButton: document.getElementById("closeAlertButton"),
+    confirmAlertButton: document.getElementById("confirmAlertButton"),
     saveConfigButton: document.getElementById("saveConfigButton"),
     runFromModalButton: document.getElementById("runFromModalButton"),
     symbolInput: document.getElementById("symbolInput"),
@@ -151,6 +156,12 @@ const elements = {
     checkpointToggle: document.getElementById("checkpointToggle"),
     configPreview: document.getElementById("configPreview"),
 };
+
+[elements.configModal, elements.detailModal, elements.alertModal].forEach((modal) => {
+    if (modal instanceof HTMLElement && modal.classList.contains("hidden")) {
+        modal.setAttribute("inert", "");
+    }
+});
 
 function createEmptyRunState() {
     return {
@@ -660,10 +671,12 @@ function buildLogEntry(label, payload) {
     const message = payload && typeof payload === "object" && typeof payload.message === "string"
         ? payload.message.trim()
         : "";
-    const timestamp = new Date().toLocaleTimeString();
+    const timestampMs = Date.now();
+    const timestamp = new Date(timestampMs).toLocaleTimeString();
     const detail = backendLine || message || formatStructuredValue(payload) || label;
     const summary = compactText(stripMarkdownToPlainText(message || backendLine || formatStructuredValue(payload) || detail), 220) || label;
     return {
+        id: `log-${timestampMs}-${Math.random().toString(36).slice(2, 8)}`,
         timestamp,
         label: String(label || "event"),
         summary,
@@ -1125,6 +1138,7 @@ function appendLog(label, payload, options = {}) {
 
 function setBusy(isBusy) {
     state.isBusy = isBusy;
+    document.body.classList.toggle("is-running", isBusy);
     elements.runAnalysisButton.disabled = isBusy;
     elements.stopAnalysisButton.disabled = !isBusy;
     elements.runFromModalButton.disabled = isBusy;
@@ -1132,14 +1146,66 @@ function setBusy(isBusy) {
     elements.openConfigButton.disabled = isBusy;
 }
 
+function showModal(modal) {
+    if (!(modal instanceof HTMLElement)) {
+        return;
+    }
+    modal.removeAttribute("inert");
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+}
+
+function hideModal(modal) {
+    if (!(modal instanceof HTMLElement)) {
+        return;
+    }
+    modal.classList.add("hidden");
+    modal.setAttribute("aria-hidden", "true");
+    modal.setAttribute("inert", "");
+}
+
 function openConfigModal() {
-    elements.configModal.classList.remove("hidden");
-    elements.configModal.setAttribute("aria-hidden", "false");
+    showModal(elements.configModal);
 }
 
 function closeConfigModal() {
-    elements.configModal.classList.add("hidden");
-    elements.configModal.setAttribute("aria-hidden", "true");
+    hideModal(elements.configModal);
+}
+
+function normalizeRunError(error) {
+    const raw = error instanceof Error ? error.message : String(error || "Unknown frontend error.");
+    return compactText(raw.replace(/^Error:\s*/i, ""), 520) || "The backend stream ended before the analysis completed.";
+}
+
+function openBackendIssueAlert(message) {
+    elements.alertTitle.textContent = "Backend Connection Issue";
+    elements.alertMessage.textContent = message;
+    showModal(elements.alertModal);
+}
+
+function closeAlertModal() {
+    hideModal(elements.alertModal);
+}
+
+function handleRunFailure(error, runId = error?.runId || state.activeRunId) {
+    const message = normalizeRunError(error);
+    state.run.warnings.unshift(message);
+    appendLog(
+        "run-error",
+        {
+            phase: "error",
+            message,
+            log_line: `analysis run_id=${runId || "unknown"} phase=error message=${message}`,
+        },
+        { source: "frontend", allowDuplicate: true },
+    );
+    pushStreamFeed({
+        title: "Backend issue",
+        content: compactText(message, 220),
+        tone: "warning",
+    });
+    openBackendIssueAlert(message);
+    renderAll();
 }
 
 function getCheckedAnalysts() {
@@ -1409,9 +1475,6 @@ function renderProgress() {
 
 function renderReportGrid() {
     const focus = getCurrentLivePanel();
-    const focusDataset = buildDetailDataset(focus.detail);
-    const focusInteractive = Boolean(focus.detail);
-
     const focusId = getFocusIdentity(focus);
     let card = elements.reportGrid.querySelector(".live-focus-card");
     if (!(card instanceof HTMLElement) || card.dataset.focusId !== focusId) {
@@ -1443,27 +1506,14 @@ function renderReportGrid() {
     const bodyFingerprint = `${focusId}:${focus.content || ""}:${focus.fallback}`;
 
     card.dataset.focusId = focusId;
-    card.className = `live-focus-card live-focus-card-expanded live-tone-${tone}${focusInteractive ? " detail-trigger" : ""}`;
-    if (focusInteractive) {
-        card.setAttribute("tabindex", "0");
-        card.setAttribute("role", "button");
-        card.setAttribute("aria-label", `Open ${focus.title} detail`);
-    } else {
-        card.removeAttribute("tabindex");
-        card.removeAttribute("role");
-        card.setAttribute("aria-label", focus.title);
-    }
+    card.className = `live-focus-card live-focus-card-expanded live-tone-${tone}`;
+    card.removeAttribute("tabindex");
+    card.removeAttribute("role");
+    card.setAttribute("aria-label", focus.title);
     card.removeAttribute("data-detail-key");
     card.removeAttribute("data-detail-section");
     card.removeAttribute("data-detail-title");
     card.removeAttribute("data-detail-subtitle");
-    if (focus.detail?.type === "report") {
-        card.dataset.detailSection = focus.detail.section;
-        card.dataset.detailTitle = focus.detail.title;
-        card.dataset.detailSubtitle = focus.detail.subtitle || focus.detail.title;
-    } else if (focus.detail?.key) {
-        card.dataset.detailKey = focus.detail.key;
-    }
 
     if (liveChip instanceof HTMLElement) {
         liveChip.className = `live-chip live-chip-${tone}`;
@@ -1487,29 +1537,117 @@ function renderReportGrid() {
         || (state.isBusy ? "Live markdown stream" : state.run.complete?.signal || "Awaiting live stream");
 }
 
+function getLogEntryKey(item, index) {
+    return item.id || buildContentFingerprint(item.label, item.timestamp, item.summary, item.detail, index) || `log-${index}`;
+}
+
+function createLogEntryNode() {
+    const node = document.createElement("article");
+    node.innerHTML = `
+        <div class="event-log-topline">
+            <strong class="event-log-label"></strong>
+            <span></span>
+        </div>
+        <p class="event-log-message"></p>
+    `;
+    return node;
+}
+
+function updateLogEntryNode(node, item, key, useDetail) {
+    node.dataset.logKey = key;
+    node.className = `event-log-item event-log-level-${item.level || "info"}`;
+    const label = node.querySelector(".event-log-label");
+    const timestamp = node.querySelector(".event-log-topline span");
+    const message = node.querySelector(".event-log-message");
+    if (label instanceof HTMLElement) {
+        label.textContent = item.label;
+    }
+    if (timestamp instanceof HTMLElement) {
+        timestamp.textContent = item.timestamp;
+    }
+    if (message instanceof HTMLElement) {
+        message.textContent = useDetail ? item.detail : item.summary;
+    }
+}
+
+function createLogEmptyNode(emptyText) {
+    const node = document.createElement("div");
+    node.className = "event-log-empty";
+    node.textContent = emptyText;
+    return node;
+}
+
 function renderLogEntries(element, entries, emptyText, options = {}) {
     if (!(element instanceof HTMLElement)) {
         return;
     }
+
     const useDetail = Boolean(options.useDetail);
-    preserveScrollPosition(element, () => {
-        element.innerHTML = entries.length
-            ? entries
-                  .map((item) => {
-                      const message = useDetail ? item.detail : item.summary;
-                      return `
-                    <article class="event-log-item event-log-level-${escapeHtml(item.level || "info")}">
-                        <div class="event-log-topline">
-                            <strong class="event-log-label">${escapeHtml(item.label)}</strong>
-                            <span>${escapeHtml(item.timestamp)}</span>
-                        </div>
-                        <p class="event-log-message">${escapeHtml(message)}</p>
-                    </article>
-                `;
-                  })
-                  .join("")
-            : `<div class="event-log-empty">${escapeHtml(emptyText)}</div>`;
+    const wasNearBottom = isScrolledNearBottom(element, 48);
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    const previousRects = new Map(
+        Array.from(element.children).map((child) => [child.dataset.logKey, child.getBoundingClientRect()]),
+    );
+    const existingNodes = new Map(
+        Array.from(element.querySelectorAll(".event-log-item[data-log-key]")).map((child) => [child.dataset.logKey, child]),
+    );
+
+    if (!entries.length) {
+        const currentEmpty = element.querySelector(".event-log-empty");
+        if (!(currentEmpty instanceof HTMLElement) || currentEmpty.textContent !== emptyText || element.children.length !== 1) {
+            element.replaceChildren(createLogEmptyNode(emptyText));
+        }
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    const newKeys = new Set();
+    entries.forEach((item, index) => {
+        const key = getLogEntryKey(item, index);
+        let node = existingNodes.get(key);
+        if (!(node instanceof HTMLElement)) {
+            node = createLogEntryNode();
+            newKeys.add(key);
+        }
+        updateLogEntryNode(node, item, key, useDetail);
+        fragment.appendChild(node);
     });
+
+    element.replaceChildren(fragment);
+
+    Array.from(element.children).forEach((child) => {
+        if (!(child instanceof HTMLElement)) {
+            return;
+        }
+        const key = child.dataset.logKey;
+        if (!key) {
+            return;
+        }
+        if (newKeys.has(key)) {
+            child.classList.add("event-log-item-new");
+            return;
+        }
+        const previousRect = previousRects.get(key);
+        if (!previousRect || typeof child.animate !== "function") {
+            return;
+        }
+        const nextRect = child.getBoundingClientRect();
+        const deltaY = previousRect.top - nextRect.top;
+        if (Math.abs(deltaY) > 1) {
+            child.animate(
+                [{ transform: `translateY(${deltaY}px)` }, { transform: "translateY(0)" }],
+                { duration: 380, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+            );
+        }
+    });
+
+    if (wasNearBottom) {
+        requestAnimationFrame(() => {
+            element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+        });
+    } else {
+        element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight - distanceFromBottom);
+    }
 }
 
 function renderOperationsRail() {
@@ -1751,14 +1889,12 @@ function renderActiveDetail() {
 
 function openDetailModal(detail) {
     state.activeDetail = detail;
-    elements.detailModal.classList.remove("hidden");
-    elements.detailModal.setAttribute("aria-hidden", "false");
+    showModal(elements.detailModal);
     renderActiveDetail();
 }
 
 function closeDetailModal() {
-    elements.detailModal.classList.add("hidden");
-    elements.detailModal.setAttribute("aria-hidden", "true");
+    hideModal(elements.detailModal);
     state.activeDetail = null;
 }
 
@@ -2134,10 +2270,14 @@ async function runAnalysis() {
         });
 
         if (!response.ok) {
-            throw new Error(await response.text());
+            const errorText = await response.text();
+            throw new Error(errorText || `Backend returned HTTP ${response.status}.`);
         }
 
         await consumeEventStream(response);
+        if (!state.run.complete && !state.run.cancelled && !state.stopRequested) {
+            throw new Error("Backend stream closed before the analysis completed. The server may have restarted, timed out, or lost network connectivity.");
+        }
     } catch (error) {
         if (state.stopRequested || isAbortError(error)) {
             applyStoppedRunState(state.run.cancelled || {
@@ -2154,6 +2294,9 @@ async function runAnalysis() {
                 { source: "frontend", allowDuplicate: true },
             );
             return;
+        }
+        if (error instanceof Error) {
+            error.runId = runId;
         }
         throw error;
     } finally {
@@ -2199,9 +2342,7 @@ elements.runAnalysisButton.addEventListener("click", async () => {
     try {
         await runAnalysis();
     } catch (error) {
-        appendLog("run-error", error instanceof Error ? error.message : String(error));
-        state.run.warnings.unshift(error instanceof Error ? error.message : String(error));
-        renderAll();
+        handleRunFailure(error);
     }
 });
 elements.saveConfigButton.addEventListener("click", () => {
@@ -2223,9 +2364,7 @@ elements.configForm.addEventListener("submit", async (event) => {
     try {
         await runAnalysis();
     } catch (error) {
-        appendLog("run-error", error instanceof Error ? error.message : String(error));
-        state.run.warnings.unshift(error instanceof Error ? error.message : String(error));
-        renderAll();
+        handleRunFailure(error);
     }
 });
 elements.configModal.addEventListener("click", (event) => {
@@ -2235,10 +2374,18 @@ elements.configModal.addEventListener("click", (event) => {
     }
 });
 elements.closeDetailButton.addEventListener("click", closeDetailModal);
+elements.closeAlertButton.addEventListener("click", closeAlertModal);
+elements.confirmAlertButton.addEventListener("click", closeAlertModal);
 elements.detailModal.addEventListener("click", (event) => {
     const target = event.target;
     if (target instanceof HTMLElement && target.dataset.closeDetail === "true") {
         closeDetailModal();
+    }
+});
+elements.alertModal.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.dataset.closeAlert === "true") {
+        closeAlertModal();
     }
 });
 elements.dashboard.addEventListener("click", (event) => {
@@ -2265,6 +2412,10 @@ elements.dashboard.addEventListener("keydown", (event) => {
     }
 });
 window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !elements.alertModal.classList.contains("hidden")) {
+        closeAlertModal();
+        return;
+    }
     if (event.key === "Escape" && !elements.detailModal.classList.contains("hidden")) {
         closeDetailModal();
         return;

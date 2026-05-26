@@ -1611,9 +1611,7 @@ body {
 }
 
 .task-chip.detail-trigger:hover,
-.task-chip.detail-trigger:focus-visible,
-.live-focus-card.detail-trigger:hover,
-.live-focus-card.detail-trigger:focus-visible {
+.task-chip.detail-trigger:focus-visible {
     border-color: var(--line-strong);
     background: rgba(20, 35, 54, 0.92);
 }
@@ -2970,6 +2968,187 @@ body {
     .compact-depth-grid,
     #configPreview.compact-config-preview {
         grid-template-columns: 1fr;
+    }
+}
+
+.window,
+.progress-card,
+.smart-card,
+.live-focus-card,
+.tool-trace-item,
+.event-log-item,
+.checkbox-card,
+.depth-card,
+.button,
+.icon-button,
+.toolbar-button {
+    transition: border-color 220ms ease, background 220ms ease, box-shadow 220ms ease, transform 220ms ease, opacity 220ms ease;
+}
+
+.modal {
+    display: grid;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity 220ms ease, visibility 220ms ease;
+}
+
+.modal.hidden {
+    display: grid;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.modal-backdrop {
+    opacity: 1;
+    transition: opacity 240ms ease, backdrop-filter 240ms ease;
+}
+
+.modal.hidden .modal-backdrop {
+    opacity: 0;
+    backdrop-filter: blur(0);
+}
+
+.modal-card {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    transition: opacity 260ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 260ms ease;
+}
+
+.modal.hidden .modal-card {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+}
+
+.alert-modal-card {
+    width: min(560px, calc(100vw - 28px));
+    max-height: min(78vh, 560px);
+}
+
+.alert-message {
+    margin: 14px 0 18px;
+    color: var(--ink);
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+
+.alert-actions {
+    justify-content: flex-end;
+}
+
+.event-log {
+    scroll-behavior: smooth;
+    overflow-anchor: none;
+}
+
+.event-log-item {
+    will-change: transform, opacity;
+}
+
+.event-log-item-new {
+    animation: logItemEnter 460ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.progress-fill {
+    position: relative;
+    overflow: hidden;
+}
+
+body.is-running .progress-track {
+    box-shadow: 0 0 0 1px rgba(101, 208, 173, 0.22), 0 0 24px rgba(101, 208, 173, 0.18);
+}
+
+body.is-running .progress-fill {
+    background: linear-gradient(90deg, var(--accent) 0%, var(--secondary) 54%, var(--accent) 100%);
+}
+
+body.is-running .progress-fill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(115deg, transparent 0%, rgba(255, 255, 255, 0.24) 42%, transparent 72%);
+    transform: translateX(-100%);
+    animation: progressShine 1.25s linear infinite;
+}
+
+body.is-running .orchestration-window,
+body.is-running .backend-log-window,
+body.is-running .report-window {
+    border-color: rgba(101, 208, 173, 0.36);
+    box-shadow: 0 0 0 1px rgba(101, 208, 173, 0.12), 0 24px 70px rgba(34, 158, 125, 0.13);
+}
+
+.status-pill[data-state="running"] {
+    position: relative;
+    padding-left: 26px;
+    box-shadow: 0 0 0 1px rgba(101, 208, 173, 0.14), 0 0 20px rgba(101, 208, 173, 0.12);
+}
+
+.status-pill[data-state="running"]::before {
+    content: "";
+    position: absolute;
+    left: 10px;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: currentColor;
+    box-shadow: 0 0 0 0 rgba(101, 208, 173, 0.42);
+    animation: runningDotPulse 1.1s ease-out infinite;
+}
+
+body.is-running .window-status {
+    color: var(--secondary);
+}
+
+.toolbar-button:active,
+.button:active,
+.icon-button:active,
+.checkbox-card:active,
+.depth-card:active {
+    transform: translateY(1px) scale(0.99);
+}
+
+@keyframes logItemEnter {
+    from {
+        opacity: 0;
+        transform: translateY(12px) scale(0.985);
+        box-shadow: 0 0 0 0 rgba(101, 208, 173, 0.2);
+    }
+
+    70% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        box-shadow: 0 0 0 5px rgba(101, 208, 173, 0.08);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        box-shadow: none;
+    }
+}
+
+@keyframes progressShine {
+    to {
+        transform: translateX(100%);
+    }
+}
+
+@keyframes runningDotPulse {
+    to {
+        box-shadow: 0 0 0 9px rgba(101, 208, 173, 0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 1ms !important;
     }
 }
 

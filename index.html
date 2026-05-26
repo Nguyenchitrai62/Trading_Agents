@@ -179,7 +179,7 @@
                 <div class="config-grid four-up compact-grid-secondary">
                     <label class="field">
                         <span>Lookback days</span>
-                        <input id="lookbackDaysInput" type="number" min="1" max="90" step="1">
+                        <input id="lookbackDaysInput" type="number" min="1" step="1">
                     </label>
                     <label class="field">
                         <span>Language</span>
@@ -243,6 +243,23 @@
                 <button id="closeDetailButton" class="icon-button" type="button" aria-label="Close detail">X</button>
             </div>
             <div id="detailBody" class="detail-body markdown-preview"></div>
+        </div>
+    </div>
+
+    <div id="alertModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-backdrop" data-close-alert="true"></div>
+        <div class="modal-card alert-modal-card" role="alertdialog" aria-modal="true" aria-labelledby="alertTitle" aria-describedby="alertMessage">
+            <div class="modal-header">
+                <div>
+                    <p class="window-kicker">Backend stream</p>
+                    <h2 id="alertTitle">Connection Issue</h2>
+                </div>
+                <button id="closeAlertButton" class="icon-button" type="button" aria-label="Close alert">X</button>
+            </div>
+            <p id="alertMessage" class="alert-message">The backend connection was interrupted.</p>
+            <div class="modal-actions alert-actions">
+                <button id="confirmAlertButton" type="button" class="button primary">OK</button>
+            </div>
         </div>
     </div>
 
