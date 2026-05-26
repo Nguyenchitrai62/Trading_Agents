@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import os
+import uuid
 import threading
 import time
 from copy import deepcopy
@@ -21,6 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from pydantic import BaseModel, Field, field_validator
+import requests
 
 ROOT_DIR = Path(__file__).resolve().parent
 load_dotenv(ROOT_DIR / ".env")
@@ -231,6 +233,11 @@ DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
 DEFAULT_ASSET_TYPE = "crypto"
 DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
+GOOGLE_ALLOWED_EMAIL = os.getenv("GOOGLE_ALLOWED_EMAIL", "trainguyenchi30@gmail.com").strip().lower()
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "").strip()
+TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "").strip()
 RESOURCE_CONSTRAINED_MODE = False
 ANALYSIS_CPU_THREADS = _configured_cpu_threads()
 DEFAULT_RESEARCH_DEPTH = "medium"
@@ -267,6 +274,8 @@ app = FastAPI(title=APP_TITLE, version=APP_VERSION)
 ACTIVE_ANALYSIS_CANCEL_EVENTS: dict[str, threading.Event] = {}
 ACTIVE_ANALYSIS_LOCK = threading.Lock()
 ACTIVE_ANALYSIS_COUNT = 0
+AUTH_CACHE: dict[str, tuple[float, dict]] = {}
+AUTH_CACHE_LOCK = threading.Lock()
 
 app.add_middleware(
     CORSMiddleware,
@@ -354,6 +363,371 @@ class ChatRequest(BaseModel):
     max_tokens: int = 128000
     temperature: float = 1
     stream: bool = True
+
+
+class TursoHistoryStore:
+    def __init__(self, database_url: str, auth_token: str):
+        self.database_url = database_url.strip()
+        self.auth_token = auth_token.strip()
+        self._schema_ready = False
+        self._schema_lock = threading.Lock()
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.database_url and self.auth_token)
+
+    @property
+    def pipeline_url(self) -> str:
+        if self.database_url.startswith("libsql://"):
+            base_url = "https://" + self.database_url[len("libsql://"):]
+        else:
+            base_url = self.database_url
+        return f"{base_url.rstrip('/')}/v2/pipeline"
+
+    def _value_to_hrana(self, value: object) -> dict:
+        if value is None:
+            return {"type": "null"}
+        if isinstance(value, bool):
+            return {"type": "integer", "value": "1" if value else "0"}
+        if isinstance(value, int):
+            return {"type": "integer", "value": str(value)}
+        if isinstance(value, float):
+            return {"type": "float", "value": value}
+        return {"type": "text", "value": str(value)}
+
+    def _value_from_hrana(self, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        value_type = value.get("type")
+        raw = value.get("value")
+        if value_type == "null":
+            return None
+        if value_type == "integer":
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return raw
+        if value_type == "float":
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return raw
+        return raw
+
+    def _execute(self, sql: str, args: list[object] | None = None) -> dict:
+        if not self.configured:
+            raise RuntimeError("Turso history database is not configured.")
+        response = requests.post(
+            self.pipeline_url,
+            headers={
+                "Authorization": f"Bearer {self.auth_token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "requests": [
+                    {
+                        "type": "execute",
+                        "stmt": {
+                            "sql": sql,
+                            "args": [self._value_to_hrana(arg) for arg in (args or [])],
+                        },
+                    },
+                    {"type": "close"},
+                ]
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        result = (payload.get("results") or [{}])[0]
+        if result.get("type") == "error":
+            error = result.get("error") or {}
+            raise RuntimeError(error.get("message") or "Turso SQL execution failed.")
+        return ((result.get("response") or {}).get("result") or {})
+
+    def _query_rows(self, sql: str, args: list[object] | None = None) -> list[dict]:
+        result = self._execute(sql, args)
+        columns = [col.get("name") for col in result.get("cols", [])]
+        rows = []
+        for raw_row in result.get("rows", []):
+            row_values = [self._value_from_hrana(value) for value in raw_row]
+            rows.append(dict(zip(columns, row_values)))
+        return rows
+
+    def ensure_schema(self) -> None:
+        if not self.configured or self._schema_ready:
+            return
+        with self._schema_lock:
+            if self._schema_ready:
+                return
+            statements = [
+                """
+                CREATE TABLE IF NOT EXISTS analysis_runs (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    asset_type TEXT NOT NULL,
+                    analysis_date TEXT NOT NULL,
+                    lookback_days INTEGER NOT NULL,
+                    output_language TEXT NOT NULL,
+                    research_depth TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    signal TEXT,
+                    elapsed_seconds REAL,
+                    user_email TEXT NOT NULL,
+                    user_sub TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS analysis_sections (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    section_key TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    agent TEXT NOT NULL,
+                    team TEXT NOT NULL,
+                    display_order INTEGER NOT NULL,
+                    markdown TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE
+                )
+                """,
+                "CREATE INDEX IF NOT EXISTS idx_analysis_runs_user_created ON analysis_runs(user_email, created_at DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_sections_run_order ON analysis_sections(run_id, display_order)",
+            ]
+            for statement in statements:
+                self._execute(statement)
+            self._schema_ready = True
+
+    def save_analysis(
+        self,
+        request: AnalysisRequest,
+        user: dict,
+        symbol: str,
+        signal: str,
+        elapsed_seconds: float,
+        sections: list[dict],
+    ) -> str | None:
+        if not self.configured or not sections:
+            return None
+        self.ensure_schema()
+        run_id = request.run_id or f"history-{uuid.uuid4().hex}"
+        created_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        self._execute(
+            """
+            INSERT INTO analysis_runs (
+                id, symbol, asset_type, analysis_date, lookback_days, output_language,
+                research_depth, model, signal, elapsed_seconds, user_email, user_sub, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                symbol = excluded.symbol,
+                asset_type = excluded.asset_type,
+                analysis_date = excluded.analysis_date,
+                lookback_days = excluded.lookback_days,
+                output_language = excluded.output_language,
+                research_depth = excluded.research_depth,
+                model = excluded.model,
+                signal = excluded.signal,
+                elapsed_seconds = excluded.elapsed_seconds,
+                user_email = excluded.user_email,
+                user_sub = excluded.user_sub,
+                created_at = excluded.created_at
+            """,
+            [
+                run_id,
+                symbol,
+                request.asset_type,
+                request.analysis_date,
+                request.lookback_days,
+                request.output_language,
+                request.research_depth,
+                request.model,
+                signal,
+                elapsed_seconds,
+                user.get("email"),
+                user.get("sub"),
+                created_at,
+            ],
+        )
+        self._execute("DELETE FROM analysis_sections WHERE run_id = ?", [run_id])
+        for index, section in enumerate(sections):
+            markdown = str(section.get("markdown") or "").strip()
+            if not markdown:
+                continue
+            section_id = hashlib.sha1(f"{run_id}:{section.get('section_key')}".encode()).hexdigest()
+            self._execute(
+                """
+                INSERT INTO analysis_sections (
+                    id, run_id, section_key, title, agent, team, display_order, markdown, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    section_id,
+                    run_id,
+                    section.get("section_key"),
+                    section.get("title"),
+                    section.get("agent"),
+                    section.get("team"),
+                    index,
+                    markdown,
+                    created_at,
+                ],
+            )
+        return run_id
+
+    def list_runs(self, user_email: str, limit: int = 40) -> list[dict]:
+        self.ensure_schema()
+        return self._query_rows(
+            """
+            SELECT
+                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
+                r.output_language, r.research_depth, r.model, r.signal,
+                r.elapsed_seconds, r.created_at, COUNT(s.id) AS section_count
+            FROM analysis_runs r
+            LEFT JOIN analysis_sections s ON s.run_id = r.id
+            WHERE r.user_email = ?
+            GROUP BY r.id
+            ORDER BY r.created_at DESC
+            LIMIT ?
+            """,
+            [user_email, limit],
+        )
+
+    def get_run(self, run_id: str, user_email: str) -> dict | None:
+        self.ensure_schema()
+        runs = self._query_rows(
+            """
+            SELECT id, symbol, asset_type, analysis_date, lookback_days,
+                output_language, research_depth, model, signal, elapsed_seconds, created_at
+            FROM analysis_runs
+            WHERE id = ? AND user_email = ?
+            LIMIT 1
+            """,
+            [run_id, user_email],
+        )
+        if not runs:
+            return None
+        sections = self._query_rows(
+            """
+            SELECT section_key, title, agent, team, markdown, created_at
+            FROM analysis_sections
+            WHERE run_id = ?
+            ORDER BY display_order ASC
+            """,
+            [run_id],
+        )
+        return {"item": runs[0], "sections": sections}
+
+
+HISTORY_STORE = TursoHistoryStore(TURSO_DATABASE_URL, TURSO_AUTH_TOKEN)
+
+
+@app.on_event("startup")
+async def initialize_history_database() -> None:
+    if not HISTORY_STORE.configured:
+        logger.warning("Turso history database is not configured; history persistence is disabled.")
+        return
+    await asyncio.to_thread(HISTORY_STORE.ensure_schema)
+    logger.info("Turso history database schema is ready.")
+
+
+def _extract_auth_token(request: Request) -> str:
+    bearer = request.headers.get("Authorization", "").strip()
+    if bearer.lower().startswith("bearer "):
+        return bearer[7:].strip()
+    return request.headers.get("X-Google-ID-Token", "").strip()
+
+
+def _validate_google_id_token(token: str) -> dict:
+    if not token:
+        raise HTTPException(status_code=401, detail="Sign in with Google before running analysis.")
+
+    token_hash = hashlib.sha256(token.encode("utf-8", errors="ignore")).hexdigest()
+    now = time.time()
+    with AUTH_CACHE_LOCK:
+        cached = AUTH_CACHE.get(token_hash)
+        if cached and cached[0] > now:
+            return cached[1]
+
+    try:
+        response = requests.get(GOOGLE_TOKENINFO_URL, params={"id_token": token}, timeout=8)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=401, detail="Could not verify Google sign-in token.") from exc
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Google sign-in token is invalid or expired.")
+
+    payload = response.json()
+    email = str(payload.get("email") or "").strip().lower()
+    email_verified = str(payload.get("email_verified") or "").lower() == "true"
+    audience = str(payload.get("aud") or "").strip()
+    if GOOGLE_CLIENT_ID and audience != GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=401, detail="Google sign-in token was issued for a different client.")
+    if not email or not email_verified:
+        raise HTTPException(status_code=403, detail="Google account email is not verified.")
+    if email != GOOGLE_ALLOWED_EMAIL:
+        raise HTTPException(status_code=403, detail="This Google account is not allowed to run analysis.")
+
+    user = {
+        "email": email,
+        "sub": str(payload.get("sub") or ""),
+        "name": str(payload.get("name") or ""),
+        "picture": str(payload.get("picture") or ""),
+        "authorized": True,
+    }
+    try:
+        expires_at = float(payload.get("exp") or 0)
+    except (TypeError, ValueError):
+        expires_at = now + 300
+    with AUTH_CACHE_LOCK:
+        AUTH_CACHE[token_hash] = (max(now + 30, min(expires_at, now + 3600)), user)
+    return user
+
+
+async def require_authorized_user(request: Request) -> dict:
+    token = _extract_auth_token(request)
+    return await asyncio.to_thread(_validate_google_id_token, token)
+
+
+def build_history_sections(final_state: dict) -> list[dict]:
+    sections: list[dict] = []
+    for section_key, meta in SECTION_META.items():
+        markdown = str(final_state.get(section_key) or "").strip()
+        if markdown:
+            sections.append(
+                {
+                    "section_key": section_key,
+                    "title": meta["title"],
+                    "agent": meta["agent"],
+                    "team": meta["team"],
+                    "markdown": markdown,
+                }
+            )
+
+    investment = final_state.get("investment_debate_state") or {}
+    risk = final_state.get("risk_debate_state") or {}
+    extra_sections = [
+        ("bull_research", "Bull Research", "Bull Researcher", "Research Team", investment.get("bull_history")),
+        ("bear_research", "Bear Research", "Bear Researcher", "Research Team", investment.get("bear_history")),
+        ("research_debate", "Research Debate", "Research Team", "Research Team", investment.get("history")),
+        ("aggressive_risk", "Aggressive Risk", "Aggressive Analyst", "Risk Team", risk.get("aggressive_history") or risk.get("current_aggressive_response")),
+        ("conservative_risk", "Conservative Risk", "Conservative Analyst", "Risk Team", risk.get("conservative_history") or risk.get("current_conservative_response")),
+        ("neutral_risk", "Neutral Risk", "Neutral Analyst", "Risk Team", risk.get("neutral_history") or risk.get("current_neutral_response")),
+        ("risk_debate", "Risk Debate", "Risk Team", "Risk Team", risk.get("history")),
+    ]
+    for section_key, title, agent, team, markdown in extra_sections:
+        markdown = str(markdown or "").strip()
+        if markdown:
+            sections.append(
+                {
+                    "section_key": section_key,
+                    "title": title,
+                    "agent": agent,
+                    "team": team,
+                    "markdown": markdown,
+                }
+            )
+    return sections
 
 
 def resolve_minimax_settings() -> dict:
@@ -1103,6 +1477,7 @@ def emit_snapshot_updates(previous: dict, current: dict, emit: Callable[[str, di
 def run_trading_analysis(
     request: AnalysisRequest,
     emit: Callable[[str, dict], None],
+    user: dict,
     cancel_event: threading.Event | None = None,
 ) -> None:
     ensure_analysis_runtime_available()
@@ -1354,17 +1729,51 @@ def run_trading_analysis(
         completed_sections_patch = build_changed_sections(previous_snapshot.get("sections", {}), completed_snapshot["sections"])
         completed_research_patch = build_changed_fields(previous_snapshot.get("investment", {}), completed_snapshot["investment"])
         completed_risk_patch = build_changed_fields(previous_snapshot.get("risk", {}), completed_snapshot["risk"])
+        signal = graph.process_signal(final_state["final_trade_decision"])
+        elapsed_seconds = round(time.time() - started_at, 2)
+        history_id = None
+        history_sections = build_history_sections(final_state)
+        if HISTORY_STORE.configured:
+            try:
+                history_id = HISTORY_STORE.save_analysis(
+                    request=request,
+                    user=user,
+                    symbol=symbol,
+                    signal=signal,
+                    elapsed_seconds=elapsed_seconds,
+                    sections=history_sections,
+                )
+                if history_id:
+                    emit_analysis_log(
+                        "Analysis markdown sections saved to history database.",
+                        "history",
+                        history_id=history_id,
+                        section_count=len(history_sections),
+                    )
+            except Exception as exc:
+                logger.exception("failed to save analysis history")
+                emit_analysis_log(
+                    "Analysis completed, but history database save failed.",
+                    "history",
+                    "warning",
+                    error=str(exc),
+                )
+                emit("warning", {"message": "Analysis completed, but history database save failed."})
+        else:
+            emit_analysis_log("History database is not configured; skipping DB save.", "history", "warning")
+
         emit_analysis_log(
             "Analysis completed.",
             "complete",
-            signal=graph.process_signal(final_state["final_trade_decision"]),
-            elapsed_seconds=round(time.time() - started_at, 2),
+            signal=signal,
+            elapsed_seconds=elapsed_seconds,
         )
         emit(
             "complete",
             {
-                "elapsed_seconds": round(time.time() - started_at, 2),
-                "signal": graph.process_signal(final_state["final_trade_decision"]),
+                "elapsed_seconds": elapsed_seconds,
+                "signal": signal,
+                "history_id": history_id,
                 "sections_patch": completed_sections_patch,
                 "research_patch": completed_research_patch,
                 "risk_patch": completed_risk_patch,
@@ -1398,6 +1807,7 @@ def run_trading_analysis(
 async def generate_analysis_stream(
     analysis_request: AnalysisRequest,
     http_request: Request,
+    user: dict,
     reserved_slot: bool = False,
 ) -> AsyncIterator[str]:
     loop = asyncio.get_running_loop()
@@ -1427,7 +1837,7 @@ async def generate_analysis_stream(
 
     def worker() -> None:
         try:
-            run_trading_analysis(analysis_request, emit, cancel_event)
+            run_trading_analysis(analysis_request, emit, user, cancel_event)
         except AnalysisCancelled:
             logger.info("analysis cancelled: run_id=%s symbol=%s", analysis_request.run_id, analysis_request.symbol)
             emit(
@@ -1550,6 +1960,66 @@ async def health_check() -> dict:
     }
 
 
+@app.get("/api/config")
+async def public_config() -> dict:
+    settings = resolve_minimax_settings()
+    return {
+        "configured": settings["configured"],
+        "provider": settings["provider"] or "minimax",
+        "default_model": DEFAULT_MODEL,
+        "analysis_defaults": {
+            "symbol": "BTC-USDT",
+            "asset_type": DEFAULT_ASSET_TYPE,
+            "analysis_date": date.today().isoformat(),
+            "lookback_days": DEFAULT_ANALYSIS_LOOKBACK_DAYS,
+            "output_language": DEFAULT_OUTPUT_LANGUAGE,
+            "selected_analysts": DEFAULT_SELECTED_ANALYSTS,
+            "research_depth": DEFAULT_RESEARCH_DEPTH,
+            "model": DEFAULT_MODEL,
+            "checkpoint_enabled": DEFAULT_CHECKPOINT_ENABLED,
+        },
+        "auth": {
+            "google_client_id": GOOGLE_CLIENT_ID,
+        },
+        "history": {
+            "configured": HISTORY_STORE.configured,
+            "schema_ready": HISTORY_STORE._schema_ready,
+        },
+        "trading_view": {
+            "symbol": os.getenv("TRADING_VIEW_SYMBOL", "BINANCE:BTCUSDT"),
+            "interval": os.getenv("TRADING_VIEW_INTERVAL", "60"),
+            "symbols": ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"],
+            "intervals": ["5", "15", "60", "240", "D"],
+        },
+    }
+
+
+@app.get("/api/auth/me")
+async def auth_me(http_request: Request) -> dict:
+    return await require_authorized_user(http_request)
+
+
+@app.get("/api/history")
+async def list_analysis_history(http_request: Request, limit: int = 40) -> dict:
+    user = await require_authorized_user(http_request)
+    if not HISTORY_STORE.configured:
+        raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+    safe_limit = max(1, min(int(limit or 40), 100))
+    items = await asyncio.to_thread(HISTORY_STORE.list_runs, user["email"], safe_limit)
+    return {"items": items, "configured": True}
+
+
+@app.get("/api/history/{run_id}")
+async def get_analysis_history(run_id: str, http_request: Request) -> dict:
+    user = await require_authorized_user(http_request)
+    if not HISTORY_STORE.configured:
+        raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+    result = await asyncio.to_thread(HISTORY_STORE.get_run, run_id, user["email"])
+    if result is None:
+        raise HTTPException(status_code=404, detail="Analysis history item was not found.")
+    return result
+
+
 @app.post("/api/chat")
 async def chat_completion(request: ChatRequest):
     if not request.messages:
@@ -1587,6 +2057,7 @@ async def cancel_trading_analysis(run_id: str) -> dict:
 
 @app.post("/api/analyze")
 async def analyze_trading_agents(analysis_request: AnalysisRequest, http_request: Request):
+    user = await require_authorized_user(http_request)
     if not _try_reserve_analysis_slot():
         raise HTTPException(
             status_code=429,
@@ -1598,7 +2069,7 @@ async def analyze_trading_agents(analysis_request: AnalysisRequest, http_request
 
     try:
         return StreamingResponse(
-            generate_analysis_stream(analysis_request, http_request, reserved_slot=True),
+            generate_analysis_stream(analysis_request, http_request, user, reserved_slot=True),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

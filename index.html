@@ -7,6 +7,7 @@
     <link rel="icon" type="image/png" href="./image/LOGO.png">
     <link rel="stylesheet" href="./FE/styles.css">
     <script src="./FE/config.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
     <div class="backdrop"></div>
@@ -17,17 +18,26 @@
                 <span class="app-mark"><img class="app-logo" src="./image/LOGO.png" alt="TradingAgents logo"></span>
                 <div class="topbar-copy">
                     <strong>Trading Agents</strong>
-                    <p id="topNoticeText" class="top-notice">Ready to configure analysis.</p>
+                    <p id="topNoticeText" class="top-notice" hidden>Ready to configure analysis.</p>
                 </div>
             </div>
 
+            <nav id="pageTabs" class="page-tabs" aria-label="Workspace pages">
+                <button id="agentPageButton" class="page-tab is-active" type="button" data-page="agent">Agent</button>
+                <button id="historyPageButton" class="page-tab" type="button" data-page="history">History</button>
+                <button id="chartPageButton" class="page-tab" type="button" data-page="chart">Chart</button>
+            </nav>
+
             <div class="topbar-status" aria-live="polite">
                 <span id="runStatusBadge" class="status-pill" data-state="idle">Idle</span>
-                <span id="currentAgentText" class="status-pill status-pill-muted">Waiting</span>
-                <span id="endpointText" class="status-pill status-pill-subtle">API endpoint</span>
+                <span id="currentAgentText" class="status-pill status-pill-muted topbar-detail-pill">Waiting</span>
+                <span id="endpointText" class="status-pill status-pill-subtle topbar-detail-pill">API endpoint</span>
+                <span id="authStatusText" class="status-pill status-pill-subtle">Sign in required</span>
             </div>
 
             <div class="topbar-actions">
+                <div id="googleSignInButton" class="google-signin-button"></div>
+                <button id="signOutButton" class="toolbar-button auth-signout-button hidden" type="button" aria-label="Sign out">Sign out</button>
                 <button id="openConfigButton" class="toolbar-button" type="button" aria-label="Open config">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
                         <path d="M4 6h16"></path>
@@ -53,7 +63,7 @@
             </div>
         </header>
 
-        <main class="dashboard">
+        <main id="agentPage" class="page-view dashboard">
             <section class="window orchestration-window">
                 <div class="window-header">
                     <div>
@@ -146,6 +156,58 @@
                     <div id="eventLog" class="event-log"></div>
                 </section>
             </aside>
+        </main>
+
+        <main id="historyPage" class="page-view history-page hidden" aria-label="Analysis history">
+            <section class="window history-list-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Stored analysis</p>
+                        <h2>History</h2>
+                    </div>
+                    <button id="refreshHistoryButton" class="toolbar-button" type="button" aria-label="Refresh history">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+                            <path d="M21 3v6h-6"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div id="historyList" class="history-list" aria-live="polite"></div>
+            </section>
+
+            <section class="window history-detail-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Markdown archive</p>
+                        <h2 id="historyDetailTitle">Analysis Detail</h2>
+                    </div>
+                    <span id="historyStatusText" class="window-status">No history selected</span>
+                </div>
+                <div id="historyDetail" class="history-detail markdown-preview"></div>
+            </section>
+        </main>
+
+        <main id="chartPage" class="page-view chart-page hidden" aria-label="TradingView BTC chart">
+            <section class="window chart-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">TradingView</p>
+                        <h2>BTC Chart</h2>
+                    </div>
+                    <span id="chartStatusText" class="window-status">Waiting</span>
+                </div>
+                <div class="chart-controls" aria-label="TradingView quick controls">
+                    <div id="chartSymbolList" class="chart-symbol-list" aria-label="Favorite symbols"></div>
+                    <div id="chartIntervalList" class="chart-interval-list" aria-label="Favorite timeframes"></div>
+                    <form id="chartSymbolForm" class="chart-symbol-form">
+                        <input id="chartSymbolInput" type="text" placeholder="BINANCE:BNBUSDT" aria-label="Add TradingView symbol">
+                        <button id="addChartSymbolButton" class="button secondary" type="submit">Add</button>
+                    </form>
+                </div>
+                <div class="chart-frame-wrap">
+                    <iframe id="tradingViewFrame" title="TradingView BTC chart" loading="lazy" allowfullscreen></iframe>
+                </div>
+            </section>
         </main>
     </div>
 

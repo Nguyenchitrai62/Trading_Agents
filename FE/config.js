@@ -1,9 +1,15 @@
 ﻿window.TRADINGAGENTS_CONFIG = {
-    apiBaseUrl: "https://apicrypto.nguyenchitrai.id.vn",
+    // apiBaseUrl: "https://apicrypto.nguyenchitrai.id.vn",
     // apiBaseUrl: "http://103.77.242.137:8001",
-    // apiBaseUrl: "http://localhost:8000",
+    apiBaseUrl: "http://localhost:8000",
     provider: "minimax",
     defaultModel: "MiniMax-M2.7",
+    tradingView: {
+        symbol: "BINANCE:BTCUSDT",
+        interval: "60",
+        symbols: ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"],
+        intervals: ["5", "15", "60", "240", "D"],
+    },
     analysisDefaults: {
         symbol: "BTC-USDT",
         assetType: "crypto",

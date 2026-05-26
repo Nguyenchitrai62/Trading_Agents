@@ -63,6 +63,18 @@ const CUSTOM_LOOKBACK_VALUE = "__custom__";
 const TRACE_DISPLAY_LIMIT = 14;
 const LOG_DISPLAY_LIMIT = 12;
 const EXECUTION_LOG_DISPLAY_LIMIT = 80;
+const AUTH_STORAGE_KEY = "tradingagents.googleAuth";
+const CHART_SYMBOLS_STORAGE_KEY = "tradingagents.chartSymbols";
+const PAGES = ["agent", "history", "chart"];
+const DEFAULT_CHART_SYMBOLS = ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"];
+const DEFAULT_CHART_INTERVALS = ["5", "15", "60", "240", "D"];
+const CHART_INTERVAL_LABELS = {
+    "5": "5m",
+    "15": "15m",
+    "60": "1h",
+    "240": "4h",
+    D: "1D",
+};
 
 const DETAIL_PANEL_META = {
     bullResearch: { title: "Bull Researcher", subtitle: "Research Chamber" },
@@ -79,6 +91,10 @@ const DETAIL_PANEL_META = {
 const state = {
     config: null,
     apiBaseUrl: getConfiguredApiBaseUrl(),
+    page: "agent",
+    auth: createInitialAuthState(),
+    history: createEmptyHistoryState(),
+    chart: createInitialChartState(),
     isBusy: false,
     controller: null,
     activeRunId: null,
@@ -92,6 +108,28 @@ const elements = {
     currentAgentText: document.getElementById("currentAgentText"),
     endpointText: document.getElementById("endpointText"),
     topNoticeText: document.getElementById("topNoticeText"),
+    pageTabs: document.getElementById("pageTabs"),
+    agentPageButton: document.getElementById("agentPageButton"),
+    historyPageButton: document.getElementById("historyPageButton"),
+    chartPageButton: document.getElementById("chartPageButton"),
+    agentPage: document.getElementById("agentPage"),
+    historyPage: document.getElementById("historyPage"),
+    chartPage: document.getElementById("chartPage"),
+    authStatusText: document.getElementById("authStatusText"),
+    googleSignInButton: document.getElementById("googleSignInButton"),
+    signOutButton: document.getElementById("signOutButton"),
+    refreshHistoryButton: document.getElementById("refreshHistoryButton"),
+    historyList: document.getElementById("historyList"),
+    historyDetail: document.getElementById("historyDetail"),
+    historyDetailTitle: document.getElementById("historyDetailTitle"),
+    historyStatusText: document.getElementById("historyStatusText"),
+    chartStatusText: document.getElementById("chartStatusText"),
+    tradingViewFrame: document.getElementById("tradingViewFrame"),
+    chartSymbolList: document.getElementById("chartSymbolList"),
+    chartIntervalList: document.getElementById("chartIntervalList"),
+    chartSymbolForm: document.getElementById("chartSymbolForm"),
+    chartSymbolInput: document.getElementById("chartSymbolInput"),
+    addChartSymbolButton: document.getElementById("addChartSymbolButton"),
     phaseText: document.getElementById("phaseText"),
     progressText: document.getElementById("progressText"),
     progressFill: document.getElementById("progressFill"),
@@ -185,6 +223,141 @@ function createEmptyRunState() {
         latestReportTitle: null,
         latestTraceId: null,
         flashLatestTrace: false,
+    };
+}
+
+function createEmptyHistoryState() {
+    return {
+        loaded: false,
+        loading: false,
+        detailLoading: false,
+        items: [],
+        activeId: null,
+        active: null,
+        error: "",
+    };
+}
+
+function normalizeTradingViewSymbol(value = "") {
+    const raw = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+    if (!raw) {
+        return "";
+    }
+    if (raw.includes(":")) {
+        return raw;
+    }
+    const compact = raw.replace(/[\/-]/g, "");
+    if (compact.endsWith("USDT") || compact.endsWith("USD")) {
+        return `BINANCE:${compact.replace(/USD$/, "USDT")}`;
+    }
+    return `BINANCE:${compact}USDT`;
+}
+
+function readStoredChartSymbols() {
+    const raw = safeReadLocalStorage(CHART_SYMBOLS_STORAGE_KEY);
+    if (!raw) {
+        return [];
+    }
+    try {
+        return JSON.parse(raw).map(normalizeTradingViewSymbol).filter(Boolean);
+    } catch {
+        safeRemoveLocalStorage(CHART_SYMBOLS_STORAGE_KEY);
+        return [];
+    }
+}
+
+function createInitialChartState() {
+    const symbols = [...new Set([...DEFAULT_CHART_SYMBOLS, ...readStoredChartSymbols()])];
+    return {
+        loaded: false,
+        symbol: symbols[0],
+        interval: "60",
+        symbols,
+        intervals: DEFAULT_CHART_INTERVALS,
+    };
+}
+
+function safeReadLocalStorage(key) {
+    try {
+        return window.localStorage.getItem(key);
+    } catch {
+        return null;
+    }
+}
+
+function safeWriteLocalStorage(key, value) {
+    try {
+        window.localStorage.setItem(key, value);
+    } catch {
+        // Storage may be unavailable in private or embedded browser contexts.
+    }
+}
+
+function safeRemoveLocalStorage(key) {
+    try {
+        window.localStorage.removeItem(key);
+    } catch {
+        // Storage may be unavailable in private or embedded browser contexts.
+    }
+}
+
+function decodeJwtPayload(token = "") {
+    try {
+        const payload = token.split(".")[1] || "";
+        const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+        const binary = window.atob(padded);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        return JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+        return {};
+    }
+}
+
+function isJwtExpired(profile = {}) {
+    const expiresAt = Number(profile.exp || 0) * 1000;
+    return Boolean(expiresAt && expiresAt <= Date.now() + 30_000);
+}
+
+function normalizeAuthProfile(profile = {}) {
+    return {
+        email: String(profile.email || "").toLowerCase(),
+        name: String(profile.name || ""),
+        picture: String(profile.picture || ""),
+        sub: String(profile.sub || ""),
+        exp: profile.exp || null,
+    };
+}
+
+function readStoredAuth() {
+    const raw = safeReadLocalStorage(AUTH_STORAGE_KEY);
+    if (!raw) {
+        return null;
+    }
+    try {
+        const stored = JSON.parse(raw);
+        const profile = normalizeAuthProfile(stored.profile || decodeJwtPayload(stored.idToken));
+        if (!stored.idToken || isJwtExpired(profile)) {
+            safeRemoveLocalStorage(AUTH_STORAGE_KEY);
+            return null;
+        }
+        return { idToken: stored.idToken, profile };
+    } catch {
+        safeRemoveLocalStorage(AUTH_STORAGE_KEY);
+        return null;
+    }
+}
+
+function createInitialAuthState() {
+    const stored = readStoredAuth();
+    return {
+        idToken: stored?.idToken || "",
+        profile: stored?.profile || null,
+        user: null,
+        status: stored ? "stored" : "signed_out",
+        isAuthorized: false,
+        initialized: false,
+        error: "",
     };
 }
 
@@ -475,6 +648,7 @@ function normalizeFrontendConfig() {
     const source = getFrontendConfigSource();
     const defaults = source.analysisDefaults || source.analysis_defaults || {};
     const options = source.analysisOptions || source.analysis_options || {};
+    const tradingView = source.tradingView || source.trading_view || {};
     const defaultModel = source.defaultModel || source.default_model || defaults.model || "MiniMax-M2.7";
 
     return {
@@ -482,6 +656,18 @@ function normalizeFrontendConfig() {
         provider: source.provider || "minimax",
         api_base_url: getConfiguredApiBaseUrl(),
         default_model: defaultModel,
+        auth: {
+            google_client_id: "",
+        },
+        history: {
+            configured: Boolean(source.history?.configured ?? false),
+        },
+        trading_view: {
+            symbol: tradingView.symbol || "BINANCE:BTCUSDT",
+            interval: tradingView.interval || "60",
+            symbols: tradingView.symbols || DEFAULT_CHART_SYMBOLS,
+            intervals: tradingView.intervals || DEFAULT_CHART_INTERVALS,
+        },
         analysis_defaults: {
             symbol: String(defaults.symbol || "BTC-USDT").trim().toUpperCase(),
             asset_type: "crypto",
@@ -517,6 +703,66 @@ function normalizeFrontendConfig() {
     };
 }
 
+function mergeBackendConfig(frontendConfig, backendConfig) {
+    if (!backendConfig || typeof backendConfig !== "object") {
+        return frontendConfig;
+    }
+    const backendDefaults = backendConfig.analysis_defaults || {};
+    return {
+        ...frontendConfig,
+        configured: backendConfig.configured ?? frontendConfig.configured,
+        provider: backendConfig.provider || frontendConfig.provider,
+        default_model: backendConfig.default_model || frontendConfig.default_model,
+        auth: {
+            ...frontendConfig.auth,
+            ...(backendConfig.auth || {}),
+        },
+        history: {
+            ...frontendConfig.history,
+            ...(backendConfig.history || {}),
+        },
+        trading_view: {
+            ...frontendConfig.trading_view,
+            ...(backendConfig.trading_view || {}),
+        },
+        analysis_defaults: {
+            ...frontendConfig.analysis_defaults,
+            ...backendDefaults,
+            analysis_date: backendDefaults.analysis_date || frontendConfig.analysis_defaults.analysis_date,
+            model: backendDefaults.model || backendConfig.default_model || frontendConfig.analysis_defaults.model,
+        },
+    };
+}
+
+async function loadBackendPublicConfig() {
+    try {
+        const response = await fetch(buildApiUrl("/api/config"), { cache: "no-store" });
+        if (!response.ok) {
+            return null;
+        }
+        return await response.json();
+    } catch {
+        return null;
+    }
+}
+
+function initializeChartFromConfig(config) {
+    const tradingView = config?.trading_view || {};
+    const configuredSymbols = Array.isArray(tradingView.symbols) ? tradingView.symbols : DEFAULT_CHART_SYMBOLS;
+    const storedSymbols = readStoredChartSymbols();
+    const symbols = [
+        normalizeTradingViewSymbol(tradingView.symbol || ""),
+        ...configuredSymbols.map(normalizeTradingViewSymbol),
+        ...storedSymbols,
+    ].filter(Boolean);
+    state.chart.symbols = [...new Set(symbols)];
+    state.chart.intervals = Array.isArray(tradingView.intervals) && tradingView.intervals.length
+        ? tradingView.intervals.map(String)
+        : DEFAULT_CHART_INTERVALS;
+    state.chart.symbol = normalizeTradingViewSymbol(tradingView.symbol || state.chart.symbol) || state.chart.symbols[0];
+    state.chart.interval = String(tradingView.interval || state.chart.interval || "60");
+}
+
 function buildApiUrlFromBase(baseUrl, path) {
     const normalizedPath = path.startsWith("/") ? path : `/${path}`;
     return baseUrl ? `${baseUrl}${normalizedPath}` : normalizedPath;
@@ -524,6 +770,216 @@ function buildApiUrlFromBase(baseUrl, path) {
 
 function buildApiUrl(path) {
     return buildApiUrlFromBase(state.apiBaseUrl, path);
+}
+
+function getGoogleClientId() {
+    return state.config?.auth?.google_client_id || "";
+}
+
+function getAuthHeaders() {
+    if (!state.auth.idToken) {
+        return {};
+    }
+    return {
+        Authorization: `Bearer ${state.auth.idToken}`,
+        "X-Google-ID-Token": state.auth.idToken,
+    };
+}
+
+function persistAuthState() {
+    if (!state.auth.idToken || !state.auth.profile) {
+        safeRemoveLocalStorage(AUTH_STORAGE_KEY);
+        return;
+    }
+    safeWriteLocalStorage(
+        AUTH_STORAGE_KEY,
+        JSON.stringify({
+            idToken: state.auth.idToken,
+            profile: state.auth.profile,
+        }),
+    );
+}
+
+function clearAuthState() {
+    state.auth = {
+        idToken: "",
+        profile: null,
+        user: null,
+        status: "signed_out",
+        isAuthorized: false,
+        initialized: state.auth.initialized,
+        error: "",
+    };
+    safeRemoveLocalStorage(AUTH_STORAGE_KEY);
+    if (window.google?.accounts?.id) {
+        window.google.accounts.id.disableAutoSelect();
+    }
+    renderAuthState();
+    renderHistoryPage();
+}
+
+async function validateAuthSession() {
+    if (!state.auth.idToken || isJwtExpired(state.auth.profile || {})) {
+        clearAuthState();
+        return false;
+    }
+    state.auth.status = "validating";
+    state.auth.error = "";
+    renderAuthState();
+    try {
+        const response = await fetch(buildApiUrl("/api/auth/me"), {
+            headers: getAuthHeaders(),
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            const message = await readResponseError(response);
+            throw new Error(message);
+        }
+        const user = await response.json();
+        state.auth.user = user;
+        state.auth.profile = normalizeAuthProfile({ ...state.auth.profile, ...user });
+        state.auth.isAuthorized = Boolean(user.authorized);
+        state.auth.status = state.auth.isAuthorized ? "authorized" : "forbidden";
+        persistAuthState();
+        renderAuthState();
+        return state.auth.isAuthorized;
+    } catch (error) {
+        state.auth.user = null;
+        state.auth.isAuthorized = false;
+        state.auth.status = "forbidden";
+        state.auth.error = error instanceof Error ? error.message : String(error || "Google auth failed.");
+        renderAuthState();
+        return false;
+    }
+}
+
+async function setGoogleCredential(idToken) {
+    const profile = normalizeAuthProfile(decodeJwtPayload(idToken));
+    state.auth.idToken = idToken;
+    state.auth.profile = profile;
+    state.auth.user = null;
+    state.auth.status = "validating";
+    state.auth.error = "";
+    persistAuthState();
+    const authorized = await validateAuthSession();
+    if (!authorized) {
+        throw new Error(state.auth.error || "This Google account is not allowed.");
+    }
+}
+
+async function ensureAuthorizedSession() {
+    if (!state.auth.idToken) {
+        throw new Error("Sign in with Google before running analysis.");
+    }
+    if (state.auth.isAuthorized && !isJwtExpired(state.auth.profile || {})) {
+        return true;
+    }
+    const authorized = await validateAuthSession();
+    if (!authorized) {
+        throw new Error(state.auth.error || "This Google account is not allowed to run analysis.");
+    }
+    return true;
+}
+
+function renderGoogleSignInFallback(message = "Google sign-in is not ready.") {
+    if (!(elements.googleSignInButton instanceof HTMLElement)) {
+        return;
+    }
+    elements.googleSignInButton.innerHTML = `<button class="google-login-fallback" type="button">Sign in with Google</button>`;
+    const button = elements.googleSignInButton.querySelector("button");
+    if (button instanceof HTMLButtonElement) {
+        button.title = message;
+        button.addEventListener("click", () => {
+            openBackendIssueAlert(message);
+        });
+    }
+}
+
+function initializeGoogleAuth() {
+    const clientId = getGoogleClientId();
+    state.auth.initialized = true;
+    renderAuthState();
+    if (!clientId) {
+        state.auth.error = "GOOGLE_CLIENT_ID is not configured.";
+        renderGoogleSignInFallback("Set GOOGLE_CLIENT_ID in the backend .env, then restart the backend to enable Google sign-in.");
+        renderAuthState();
+        return;
+    }
+
+    let attempts = 0;
+    const setup = () => {
+        attempts += 1;
+        if (!window.google?.accounts?.id) {
+            if (attempts < 80) {
+                window.setTimeout(setup, 100);
+            } else {
+                renderGoogleSignInFallback("Google sign-in script did not load. Check the network connection or browser blockers.");
+            }
+            return;
+        }
+        window.google.accounts.id.initialize({
+            client_id: clientId,
+            callback: (response) => {
+                setGoogleCredential(response.credential).catch((error) => handleRunFailure(error));
+            },
+        });
+        if (elements.googleSignInButton instanceof HTMLElement) {
+            elements.googleSignInButton.innerHTML = "";
+            window.google.accounts.id.renderButton(elements.googleSignInButton, {
+                type: "standard",
+                theme: "outline",
+                size: "medium",
+                shape: "pill",
+                text: "signin_with",
+            });
+        }
+        renderAuthState();
+    };
+    setup();
+
+    if (state.auth.idToken) {
+        validateAuthSession();
+    }
+}
+
+function updateActionAvailability() {
+    const canRun = Boolean(state.config && state.auth.isAuthorized);
+    elements.runAnalysisButton.disabled = state.isBusy || !canRun;
+    elements.runFromModalButton.disabled = state.isBusy || !canRun;
+    elements.stopAnalysisButton.disabled = !state.isBusy;
+    elements.saveConfigButton.disabled = state.isBusy;
+    elements.openConfigButton.disabled = state.isBusy;
+    elements.runAnalysisButton.title = canRun ? "Run analysis" : "Sign in with the authorized Google account to run analysis.";
+    elements.runFromModalButton.title = canRun ? "Apply and run" : "Sign in with the authorized Google account to run analysis.";
+}
+
+function renderAuthState() {
+    if (!(elements.authStatusText instanceof HTMLElement)) {
+        return;
+    }
+    const email = state.auth.user?.email || state.auth.profile?.email || "";
+    let label = "Sign in required";
+    let status = "idle";
+    if (state.auth.status === "validating") {
+        label = "Checking Google";
+        status = "running";
+    } else if (state.auth.isAuthorized && email) {
+        label = email;
+        status = "completed";
+    } else if (state.auth.status === "forbidden") {
+        label = email ? `${email} not allowed` : "Google auth failed";
+        status = "attention";
+    } else if (!getGoogleClientId()) {
+        label = `Set Google Client ID`;
+        status = "attention";
+    }
+
+    elements.authStatusText.textContent = label;
+    elements.authStatusText.title = state.auth.error || "Authorized Google account required.";
+    elements.authStatusText.dataset.state = status;
+    elements.signOutButton.classList.toggle("hidden", !state.auth.idToken);
+    elements.googleSignInButton.classList.toggle("hidden", Boolean(state.auth.idToken && state.auth.isAuthorized));
+    updateActionAvailability();
 }
 
 function formatApiBaseLabel(value = "") {
@@ -581,6 +1037,7 @@ function requestBackendCancel(runId) {
     }
     return fetch(buildApiUrl(`/api/analyze/${encodeURIComponent(runId)}/cancel`), {
         method: "POST",
+        headers: getAuthHeaders(),
         keepalive: true,
     }).catch(() => null);
 }
@@ -1139,11 +1596,7 @@ function appendLog(label, payload, options = {}) {
 function setBusy(isBusy) {
     state.isBusy = isBusy;
     document.body.classList.toggle("is-running", isBusy);
-    elements.runAnalysisButton.disabled = isBusy;
-    elements.stopAnalysisButton.disabled = !isBusy;
-    elements.runFromModalButton.disabled = isBusy;
-    elements.saveConfigButton.disabled = isBusy;
-    elements.openConfigButton.disabled = isBusy;
+    updateActionAvailability();
 }
 
 function showModal(modal) {
@@ -1175,6 +1628,25 @@ function closeConfigModal() {
 function normalizeRunError(error) {
     const raw = error instanceof Error ? error.message : String(error || "Unknown frontend error.");
     return compactText(raw.replace(/^Error:\s*/i, ""), 520) || "The backend stream ended before the analysis completed.";
+}
+
+async function readResponseError(response) {
+    const text = await response.text();
+    if (!text) {
+        return `Backend returned HTTP ${response.status}.`;
+    }
+    try {
+        const payload = JSON.parse(text);
+        if (typeof payload.detail === "string") {
+            return payload.detail;
+        }
+        if (Array.isArray(payload.detail)) {
+            return payload.detail.map((item) => item.msg || JSON.stringify(item)).join("; ");
+        }
+        return payload.error || JSON.stringify(payload);
+    } catch {
+        return text;
+    }
 }
 
 function openBackendIssueAlert(message) {
@@ -1898,6 +2370,274 @@ function closeDetailModal() {
     state.activeDetail = null;
 }
 
+function renderPageShell() {
+    const pagePanels = {
+        agent: elements.agentPage,
+        history: elements.historyPage,
+        chart: elements.chartPage,
+    };
+    Object.entries(pagePanels).forEach(([page, panel]) => {
+        if (panel instanceof HTMLElement) {
+            panel.classList.toggle("hidden", page !== state.page);
+        }
+    });
+    [elements.agentPageButton, elements.historyPageButton, elements.chartPageButton].forEach((button) => {
+        if (!(button instanceof HTMLElement)) {
+            return;
+        }
+        const isActive = button.dataset.page === state.page;
+        button.classList.toggle("is-active", isActive);
+        button.setAttribute("aria-current", isActive ? "page" : "false");
+    });
+}
+
+function formatHistoryTimestamp(value = "") {
+    if (!value) {
+        return "-";
+    }
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function renderHistoryPage() {
+    if (!(elements.historyList instanceof HTMLElement) || !(elements.historyDetail instanceof HTMLElement)) {
+        return;
+    }
+    const history = state.history;
+    if (!state.auth.isAuthorized) {
+        elements.historyStatusText.textContent = "Sign in required";
+        elements.historyList.innerHTML = '<div class="history-empty">Sign in with the authorized Google account.</div>';
+        elements.historyDetailTitle.textContent = "Analysis Detail";
+        elements.historyDetail.innerHTML = '<div class="history-empty">History is available after sign-in.</div>';
+        return;
+    }
+    if (history.loading) {
+        elements.historyStatusText.textContent = "Loading history";
+        elements.historyList.innerHTML = '<div class="history-empty">Loading saved analyses...</div>';
+    } else if (history.error) {
+        elements.historyStatusText.textContent = "History issue";
+        elements.historyList.innerHTML = `<div class="history-empty">${escapeHtml(history.error)}</div>`;
+    } else if (!history.items.length) {
+        elements.historyStatusText.textContent = history.loaded ? "No saved analyses" : "Waiting";
+        elements.historyList.innerHTML = '<div class="history-empty">No saved analyses yet.</div>';
+    } else {
+        elements.historyStatusText.textContent = `${history.items.length} saved analyses`;
+        elements.historyList.innerHTML = history.items
+            .map(
+                (item) => `
+                    <button class="history-item ${item.id === history.activeId ? "is-active" : ""}" type="button" data-history-id="${escapeHtml(item.id)}">
+                        <span class="history-item-topline">
+                            <strong>${escapeHtml(item.symbol || "-")}</strong>
+                            <span>${escapeHtml(item.signal || "Completed")}</span>
+                        </span>
+                        <span class="history-item-meta">${escapeHtml(item.analysis_date || "-")} - ${escapeHtml(String(item.lookback_days || "-"))}d - ${escapeHtml(item.research_depth || "-")}</span>
+                        <span class="history-item-meta">${escapeHtml(formatHistoryTimestamp(item.created_at))} - ${escapeHtml(String(item.section_count || 0))} sections</span>
+                    </button>
+                `,
+            )
+            .join("");
+    }
+
+    if (history.detailLoading) {
+        elements.historyDetailTitle.textContent = "Analysis Detail";
+        elements.historyDetail.innerHTML = '<div class="history-empty">Loading markdown sections...</div>';
+        return;
+    }
+    if (!history.active) {
+        elements.historyDetailTitle.textContent = "Analysis Detail";
+        elements.historyDetail.innerHTML = '<div class="history-empty">Select a saved analysis.</div>';
+        return;
+    }
+
+    const item = history.active.item || {};
+    const sections = history.active.sections || [];
+    elements.historyDetailTitle.textContent = `${item.symbol || "Analysis"} - ${item.analysis_date || ""}`.trim();
+    elements.historyDetail.innerHTML = `
+        <div class="history-detail-meta">
+            <span>${escapeHtml(item.signal || "Completed")}</span>
+            <span>${escapeHtml(item.research_depth || "-")}</span>
+            <span>${escapeHtml(String(item.lookback_days || "-"))}d</span>
+            <span>${escapeHtml(formatHistoryTimestamp(item.created_at))}</span>
+        </div>
+        ${sections
+            .map(
+                (section) => `
+                    <article class="history-section">
+                        <div class="history-section-header">
+                            <div>
+                                <p class="window-kicker">${escapeHtml(section.team || "Analysis")}</p>
+                                <h3>${escapeHtml(section.title || section.section_key || "Section")}</h3>
+                            </div>
+                            <span class="window-status">${escapeHtml(section.agent || "Agent")}</span>
+                        </div>
+                        <div class="markdown-preview">${renderMarkdown(section.markdown || "", "No markdown saved for this section.")}</div>
+                    </article>
+                `,
+            )
+            .join("")}
+    `;
+}
+
+async function loadHistoryList(force = false) {
+    if (state.history.loading || (state.history.loaded && !force)) {
+        renderHistoryPage();
+        return;
+    }
+    await ensureAuthorizedSession();
+    state.history.loading = true;
+    state.history.error = "";
+    renderHistoryPage();
+    try {
+        const response = await fetch(buildApiUrl("/api/history?limit=40"), {
+            headers: getAuthHeaders(),
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+        const payload = await response.json();
+        state.history.items = payload.items || [];
+        state.history.loaded = true;
+    } catch (error) {
+        state.history.error = error instanceof Error ? error.message : String(error || "Could not load history.");
+    } finally {
+        state.history.loading = false;
+        renderHistoryPage();
+    }
+}
+
+async function loadHistoryDetail(historyId) {
+    if (!historyId) {
+        return;
+    }
+    await ensureAuthorizedSession();
+    state.history.activeId = historyId;
+    state.history.active = null;
+    state.history.detailLoading = true;
+    renderHistoryPage();
+    try {
+        const response = await fetch(buildApiUrl(`/api/history/${encodeURIComponent(historyId)}`), {
+            headers: getAuthHeaders(),
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+        state.history.active = await response.json();
+        state.history.error = "";
+    } catch (error) {
+        state.history.error = error instanceof Error ? error.message : String(error || "Could not load history detail.");
+    } finally {
+        state.history.detailLoading = false;
+        renderHistoryPage();
+    }
+}
+
+function getChartSymbolLabel(symbol = "") {
+    const normalized = normalizeTradingViewSymbol(symbol);
+    const [, ticker = normalized] = normalized.split(":");
+    return ticker.replace(/USDT$/, "");
+}
+
+function getTradingViewEmbedUrl() {
+    const symbol = encodeURIComponent(state.chart.symbol || "BINANCE:BTCUSDT");
+    const interval = encodeURIComponent(state.chart.interval || "60");
+    return `https://www.tradingview.com/widgetembed/?frameElementId=tradingview_btc&symbol=${symbol}&interval=${interval}&hidesidetoolbar=0&symboledit=1&saveimage=0&toolbarbg=f1f3f6&studies=[]&theme=dark&style=1&timezone=Etc%2FUTC&withdateranges=1&hideideas=1`;
+}
+
+function persistChartSymbols() {
+    const customSymbols = state.chart.symbols.filter((symbol) => !DEFAULT_CHART_SYMBOLS.includes(symbol));
+    safeWriteLocalStorage(CHART_SYMBOLS_STORAGE_KEY, JSON.stringify(customSymbols));
+}
+
+function renderChartControls() {
+    if (!(elements.chartSymbolList instanceof HTMLElement) || !(elements.chartIntervalList instanceof HTMLElement)) {
+        return;
+    }
+    elements.chartSymbolList.innerHTML = state.chart.symbols
+        .map(
+            (symbol) => `
+                <button type="button" class="chart-chip ${symbol === state.chart.symbol ? "is-active" : ""}" data-chart-symbol="${escapeHtml(symbol)}">
+                    ${escapeHtml(getChartSymbolLabel(symbol))}
+                </button>
+            `,
+        )
+        .join("");
+    elements.chartIntervalList.innerHTML = state.chart.intervals
+        .map(
+            (interval) => `
+                <button type="button" class="chart-chip ${interval === state.chart.interval ? "is-active" : ""}" data-chart-interval="${escapeHtml(interval)}">
+                    ${escapeHtml(CHART_INTERVAL_LABELS[interval] || interval)}
+                </button>
+            `,
+        )
+        .join("");
+    elements.chartStatusText.textContent = `${getChartSymbolLabel(state.chart.symbol)} - ${CHART_INTERVAL_LABELS[state.chart.interval] || state.chart.interval}`;
+}
+
+function refreshTradingViewChart() {
+    renderChartControls();
+    if (state.chart.loaded && elements.tradingViewFrame instanceof HTMLIFrameElement) {
+        elements.tradingViewFrame.src = getTradingViewEmbedUrl();
+    }
+}
+
+function loadTradingViewChart() {
+    renderChartControls();
+    if (state.chart.loaded || !(elements.tradingViewFrame instanceof HTMLIFrameElement)) {
+        return;
+    }
+    elements.tradingViewFrame.src = getTradingViewEmbedUrl();
+    state.chart.loaded = true;
+    renderChartControls();
+}
+
+function setChartSymbol(symbol) {
+    const normalized = normalizeTradingViewSymbol(symbol);
+    if (!normalized) {
+        return;
+    }
+    if (!state.chart.symbols.includes(normalized)) {
+        state.chart.symbols = [...state.chart.symbols, normalized];
+        persistChartSymbols();
+    }
+    state.chart.symbol = normalized;
+    refreshTradingViewChart();
+}
+
+function setChartInterval(interval) {
+    const normalized = String(interval || "60");
+    state.chart.interval = normalized;
+    refreshTradingViewChart();
+}
+
+function addChartSymbolFromInput() {
+    const value = elements.chartSymbolInput?.value || "";
+    const normalized = normalizeTradingViewSymbol(value);
+    if (!normalized) {
+        return;
+    }
+    setChartSymbol(normalized);
+    elements.chartSymbolInput.value = "";
+}
+
+function switchPage(page) {
+    if (!PAGES.includes(page)) {
+        return;
+    }
+    state.page = page;
+    renderPageShell();
+    if (page === "history") {
+        loadHistoryList().catch((error) => {
+            state.history.error = error instanceof Error ? error.message : String(error || "Could not load history.");
+            renderHistoryPage();
+        });
+    }
+    if (page === "chart") {
+        loadTradingViewChart();
+    }
+}
+
 function openDetailFromTrigger(trigger) {
     const section = trigger.dataset.detailSection;
     if (section) {
@@ -1929,6 +2669,10 @@ function openDetailFromTrigger(trigger) {
 }
 
 function renderAll() {
+    renderPageShell();
+    renderAuthState();
+    renderHistoryPage();
+    renderChartControls();
     renderTopNotice();
     renderProgress();
     renderTeamStatusGrid();
@@ -2084,6 +2828,9 @@ function handleServerEvent(event, data) {
     if (event === "complete") {
         state.run.complete = data;
         state.run.cancelled = null;
+        if (data.history_id) {
+            state.history.loaded = false;
+        }
         state.run.sections = { ...state.run.sections, ...(data.sections_patch || data.sections || {}) };
         state.run.research = mergeStatePatch(state.run.research, data.research_patch || data.research || {});
         state.run.risk = mergeStatePatch(state.run.risk, data.risk_patch || data.risk || {});
@@ -2215,9 +2962,15 @@ function setAnalystSelection(values) {
 }
 
 async function loadConfig() {
-    const config = normalizeFrontendConfig();
+    let config = normalizeFrontendConfig();
     state.config = config;
     state.apiBaseUrl = normalizeApiBaseUrl(config.api_base_url || state.apiBaseUrl);
+    const backendConfig = await loadBackendPublicConfig();
+    if (backendConfig) {
+        config = mergeBackendConfig(config, backendConfig);
+        state.config = config;
+    }
+    initializeChartFromConfig(config);
 
     elements.symbolInput.value = config.analysis_defaults.symbol;
     elements.analysisDateInput.value = config.analysis_defaults.analysis_date;
@@ -2229,6 +2982,7 @@ async function loadConfig() {
     populateAnalystOptions(config);
     populateDepthOptions(config);
     bindConfigInputListeners();
+    initializeGoogleAuth();
     refreshConfigUi();
     renderAll();
 }
@@ -2247,6 +3001,8 @@ async function runAnalysis() {
         return;
     }
 
+    await ensureAuthorizedSession();
+
     const runId = createRunId();
     const controller = new AbortController();
     payload.run_id = runId;
@@ -2264,14 +3020,14 @@ async function runAnalysis() {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
+                ...getAuthHeaders(),
             },
             body: JSON.stringify(payload),
             signal: controller.signal,
         });
 
         if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(errorText || `Backend returned HTTP ${response.status}.`);
+            throw new Error(await readResponseError(response));
         }
 
         await consumeEventStream(response);
@@ -2338,6 +3094,61 @@ function stopActiveAnalysis() {
 elements.openConfigButton.addEventListener("click", openConfigModal);
 elements.closeConfigButton.addEventListener("click", closeConfigModal);
 elements.stopAnalysisButton.addEventListener("click", stopActiveAnalysis);
+elements.signOutButton.addEventListener("click", clearAuthState);
+elements.pageTabs.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const button = target.closest("[data-page]");
+    if (button instanceof HTMLElement) {
+        switchPage(button.dataset.page || "agent");
+    }
+});
+elements.refreshHistoryButton.addEventListener("click", () => {
+    state.history = { ...createEmptyHistoryState(), activeId: state.history.activeId };
+    loadHistoryList(true).catch((error) => {
+        state.history.error = error instanceof Error ? error.message : String(error || "Could not refresh history.");
+        renderHistoryPage();
+    });
+});
+elements.historyList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const item = target.closest("[data-history-id]");
+    if (item instanceof HTMLElement) {
+        loadHistoryDetail(item.dataset.historyId).catch((error) => {
+            state.history.error = error instanceof Error ? error.message : String(error || "Could not load history detail.");
+            renderHistoryPage();
+        });
+    }
+});
+elements.chartSymbolList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const button = target.closest("[data-chart-symbol]");
+    if (button instanceof HTMLElement) {
+        setChartSymbol(button.dataset.chartSymbol || "");
+    }
+});
+elements.chartIntervalList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const button = target.closest("[data-chart-interval]");
+    if (button instanceof HTMLElement) {
+        setChartInterval(button.dataset.chartInterval || "60");
+    }
+});
+elements.chartSymbolForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    addChartSymbolFromInput();
+});
 elements.runAnalysisButton.addEventListener("click", async () => {
     try {
         await runAnalysis();
