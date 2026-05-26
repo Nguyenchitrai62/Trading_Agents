@@ -49,7 +49,7 @@ FRONTEND_DIR = ROOT_DIR / "FE"
 IMAGE_DIR = ROOT_DIR / "image"
 INDEX_FILE = ROOT_DIR / "index.html"
 CRYPTO_SUFFIXES = ("-USD", "-USDT", "-USDC", "-BTC", "-ETH")
-DEFAULT_ANALYSTS = ["market", "social", "news"]
+DEFAULT_ANALYSTS = ["market", "social", "news", "fundamentals"]
 RESEARCH_DEPTH_OPTIONS = {
     "quick": {
         "label": "Quick",
@@ -152,7 +152,7 @@ logger = logging.getLogger("tradingagents.app")
 
 
 APP_TITLE = "TradingAgents Analysis API"
-APP_VERSION = "0.0.4"
+APP_VERSION = "0.0.5"
 
 
 DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
@@ -354,8 +354,7 @@ def normalize_ticker_symbol(ticker: str) -> str:
 
 
 def filter_analysts_for_crypto(selected_analysts: List[str]) -> List[str]:
-    allowed = {"market", "social", "news"}
-    return [analyst for analyst in selected_analysts if analyst in allowed]
+    return list(selected_analysts)
 
 
 def _trim_text(value: str, limit: int) -> str:
