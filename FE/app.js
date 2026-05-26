@@ -103,75 +103,107 @@ const HISTORY_FLOW_SECTION_META = {
     market_report: {
         shortTitle: "Market",
         tone: "signal",
+        icon: "market",
         description: "Price action, technical structure, and market regime context.",
     },
     sentiment_report: {
         shortTitle: "Social",
         tone: "signal",
+        icon: "social",
         description: "Social sentiment, crowd positioning, and narrative momentum.",
     },
     news_report: {
         shortTitle: "News",
         tone: "signal",
+        icon: "news",
         description: "Catalysts, headlines, and event pressure gathered into one report.",
     },
     fundamentals_report: {
-        shortTitle: "Fundamentals",
+        shortTitle: "Fund",
         tone: "signal",
+        icon: "fund",
         description: "Company profile, financial condition, and insider activity context.",
     },
     bull_research: {
         shortTitle: "Bull",
         tone: "bull",
+        icon: "bull",
         description: "The upside case built from the selected analyst evidence.",
     },
     research_debate: {
         shortTitle: "Debate",
         tone: "debate",
         compact: true,
+        icon: "debate",
         description: "The research team exchange before the plan is locked in.",
     },
     bear_research: {
         shortTitle: "Bear",
         tone: "bear",
+        icon: "bear",
         description: "The downside case, failure modes, and invalidation logic.",
     },
     investment_plan: {
         shortTitle: "Plan",
         tone: "plan",
+        icon: "plan",
         description: "Research Manager synthesis that converts debate into a trade thesis.",
     },
     trader_investment_plan: {
         shortTitle: "Trade",
         tone: "trader",
+        icon: "trade",
         description: "Entry, structure, and transaction proposal prepared for risk review.",
     },
     aggressive_risk: {
-        shortTitle: "Aggressive",
+        shortTitle: "Agg",
         tone: "aggressive",
+        icon: "aggressive",
         description: "The high-conviction, higher-risk interpretation of the proposal.",
     },
     neutral_risk: {
         shortTitle: "Neutral",
         tone: "neutral",
+        icon: "neutral",
         description: "The balanced baseline view on exposure, sizing, and constraints.",
     },
     conservative_risk: {
-        shortTitle: "Conservative",
+        shortTitle: "Cons",
         tone: "conservative",
+        icon: "conservative",
         description: "The capital-protection and drawdown-focused response.",
     },
     risk_debate: {
         shortTitle: "Review",
         tone: "risk",
         compact: true,
+        icon: "review",
         description: "Merged risk discussion before the final authorization.",
     },
     final_trade_decision: {
         shortTitle: "Decision",
         tone: "decision",
+        icon: "decision",
         description: "Authorize, reject, or revise the transaction proposal.",
     },
+};
+
+const HISTORY_DIAGRAM_ICONS = {
+    market: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16l4-4 4 2 6-7"></path><path d="M4 20h16"></path></svg>',
+    social: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7h10a3 3 0 0 1 0 6h-4l-4 3v-3H6a3 3 0 0 1 0-6z"></path></svg>',
+    news: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6z"></path><path d="M9 9h6"></path><path d="M9 13h6"></path><path d="M9 17h4"></path></svg>',
+    fund: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16"></path><path d="M6 20V8l6-4 6 4v12"></path><path d="M9 12v4"></path><path d="M12 12v4"></path><path d="M15 12v4"></path></svg>',
+    bull: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16l5-5 4 4 5-7"></path><path d="M14 8h5v5"></path></svg>',
+    debate: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8h10"></path><path d="M13 4l4 4-4 4"></path><path d="M17 16H7"></path><path d="M11 12l-4 4 4 4"></path></svg>',
+    bear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8l5 5 4-4 5 7"></path><path d="M14 16h5v-5"></path></svg>',
+    plan: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="5" width="10" height="15" rx="2"></rect><path d="M10 5.5h4"></path><path d="M10 10h4"></path><path d="M10 14h4"></path></svg>',
+    trade: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8h10"></path><path d="M13 5l3 3-3 3"></path><path d="M18 16H8"></path><path d="M11 13l-3 3 3 3"></path></svg>',
+    aggressive: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3L6 13h5l-1 8 8-11h-5V3z"></path></svg>',
+    neutral: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16"></path><path d="M7 8h10"></path><path d="M5 8l-2 4h4l-2-4z"></path><path d="M19 8l-2 4h4l-2-4z"></path><path d="M8 20h8"></path></svg>',
+    conservative: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l6 2v5c0 4-2.5 7.5-6 9-3.5-1.5-6-5-6-9V6l6-2z"></path><path d="M10 12l2 2 3-4"></path></svg>',
+    review: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6h10"></path><path d="M7 12h10"></path><path d="M7 18h6"></path><path d="M5 6h.01"></path><path d="M5 12h.01"></path><path d="M5 18h.01"></path></svg>',
+    decision: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9 12l2 2 4-4"></path></svg>',
+    default: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="3"></rect></svg>',
 };
 
 const state = {
@@ -1964,6 +1996,19 @@ function setBusy(isBusy) {
     updateActionAvailability();
 }
 
+function setElementLoadingState(element, isLoading, label = "Loading") {
+    if (!(element instanceof HTMLElement)) {
+        return;
+    }
+    element.classList.toggle("loading-surface", isLoading);
+    element.setAttribute("aria-busy", isLoading ? "true" : "false");
+    if (isLoading) {
+        element.dataset.loadingLabel = label;
+    } else {
+        delete element.dataset.loadingLabel;
+    }
+}
+
 function showModal(modal) {
     if (!(modal instanceof HTMLElement)) {
         return;
@@ -2217,6 +2262,7 @@ function getGroupDetailDescriptor(groupKey, items = []) {
 
 function renderTeamStatusGrid() {
     const groups = getStatusGroups();
+    setElementLoadingState(elements.teamStatusGrid, state.isBusy && !state.run.status, "Syncing teams");
 
     const renderAgentCell = (groupKey, item) => {
         const detail = getTaskDetailDescriptor(groupKey, item);
@@ -2346,6 +2392,9 @@ function renderReportGrid() {
     if (!(card instanceof HTMLElement)) {
         return;
     }
+
+    const isAwaitingFocus = state.isBusy && !String(focus.content || "").trim();
+    setElementLoadingState(card, isAwaitingFocus, state.run.status?.current_agent ? `Waiting ${getCompactAgentLabel(state.run.status.current_agent)}` : "Streaming");
 
     const liveChip = card.querySelector(".live-chip");
     const liveStatus = card.querySelector(".live-focus-status");
@@ -2539,6 +2588,10 @@ function renderOperationsRail() {
         "Backend log lines will appear here while analysis is running.",
         { useDetail: true },
     );
+
+    setElementLoadingState(elements.toolTraceList, state.isBusy && !feed.length, "Waiting traces");
+    setElementLoadingState(elements.eventLog, state.isBusy && !state.run.logEntries.length, "Waiting events");
+    setElementLoadingState(elements.executionLog, state.isBusy && !state.run.logEntries.length, "Waiting backend");
 
     preserveScrollPosition(elements.toolTraceList, () => {
         elements.toolTraceList.innerHTML = feed.length
@@ -2829,6 +2882,10 @@ function getHistorySectionMeta(sectionKey = "") {
     return (state.history.active?.sections || []).find((section) => section.section_key === sectionKey) || null;
 }
 
+function renderHistoryDiagramIcon(iconKey = "default") {
+    return HISTORY_DIAGRAM_ICONS[iconKey] || HISTORY_DIAGRAM_ICONS.default;
+}
+
 function buildHistoryDiagramModel(sections = []) {
     const sectionsByKey = new Map(sections.map((section) => [section.section_key, section]));
     const knownKeys = new Set(Object.values(HISTORY_FLOW_SECTION_ORDER).flat());
@@ -2855,6 +2912,7 @@ function renderHistoryDiagramNode(section = {}, options = {}, layout = {}) {
     const loading = sectionKey === loadingKey;
     const shortTitle = layout.shortTitle || flowMeta.shortTitle || getHistorySectionLabel(section);
     const tone = layout.tone || flowMeta.tone || "neutral";
+    const iconKey = layout.icon || flowMeta.icon || tone;
     const compact = Boolean(layout.compact || (flowMeta.compact && !layout.output));
     const titleText = [section.title || shortTitle, section.agent || section.team || "Agent"].filter(Boolean).join(" - ");
     return `
@@ -2864,10 +2922,10 @@ function renderHistoryDiagramNode(section = {}, options = {}, layout = {}) {
             title="${escapeHtml(titleText)}"
             aria-label="Open ${escapeHtml(section.title || sectionKey)} markdown">
             <span class="history-diagram-node-head">
-                <span class="history-diagram-node-caption">${escapeHtml(section.agent || section.team || "Agent")}</span>
+                <span class="history-diagram-node-icon" aria-hidden="true">${renderHistoryDiagramIcon(iconKey)}</span>
+                <strong>${escapeHtml(shortTitle || section.title || sectionKey || "Section")}</strong>
                 <span class="history-diagram-node-dot" aria-hidden="true"></span>
             </span>
-            <strong>${escapeHtml(shortTitle || section.title || sectionKey || "Section")}</strong>
         </button>
     `;
 }
@@ -2960,6 +3018,8 @@ function renderHistoryPage() {
         return;
     }
     const history = state.history;
+    setElementLoadingState(elements.historyList, history.loading, "Loading history");
+    setElementLoadingState(elements.historyDetail, history.detailLoading, "Loading detail");
     if (!canReadHistory()) {
         elements.historyStatusText.textContent = "Sign in required";
         elements.historyList.innerHTML = '<div class="history-empty">Sign in with Google to view saved analyses.</div>';
@@ -3353,6 +3413,7 @@ function renderChartControls() {
     if (!(elements.chartSymbolList instanceof HTMLElement)) {
         return;
     }
+    setElementLoadingState(elements.tradingViewFrame, state.chart.loading, "Loading chart");
     elements.chartSymbolList.innerHTML = state.chart.symbols
         .map(
             (symbol) => `
@@ -3629,6 +3690,7 @@ function renderAdminPage() {
     if (!(elements.adminUserList instanceof HTMLElement)) {
         return;
     }
+    setElementLoadingState(elements.adminUserList, state.admin.loading, "Loading users");
     if (!state.auth.isAdmin) {
         elements.adminStatusText.textContent = "Admin only";
         elements.adminUserList.innerHTML = '<div class="history-empty">Admin permission is required.</div>';

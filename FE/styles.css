@@ -4143,6 +4143,49 @@ body.is-running .window-status {
     color: var(--secondary);
 }
 
+.loading-surface {
+    position: relative;
+    isolation: isolate;
+}
+
+.loading-surface::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(110deg, transparent 0%, rgba(88, 166, 255, 0.05) 18%, rgba(95, 226, 194, 0.18) 32%, rgba(88, 166, 255, 0.05) 46%, transparent 64%);
+    transform: translateX(-120%);
+    animation: loadingSweep 1.35s linear infinite;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.loading-surface::after {
+    content: attr(data-loading-label);
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 5px 10px 5px 22px;
+    border: 1px solid rgba(95, 226, 194, 0.22);
+    border-radius: 999px;
+    background: radial-gradient(circle at 10px 50%, rgba(95, 226, 194, 0.95) 0 3px, transparent 4px), rgba(7, 13, 22, 0.9);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+    color: var(--secondary);
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    pointer-events: none;
+    z-index: 3;
+}
+
+.loading-surface .history-empty,
+.loading-surface .event-log-empty,
+.loading-surface .tool-trace-empty,
+.loading-surface .live-focus-body.is-empty {
+    opacity: 0.82;
+}
+
 .toolbar-button:active,
 .button:active,
 .icon-button:active,
@@ -4174,6 +4217,12 @@ body.is-running .window-status {
 @keyframes progressShine {
     to {
         transform: translateX(100%);
+    }
+}
+
+@keyframes loadingSweep {
+    to {
+        transform: translateX(120%);
     }
 }
 
@@ -4850,7 +4899,7 @@ body.is-running .window-status {
 .history-diagram {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 8px;
     min-width: max-content;
 }
 
@@ -4861,17 +4910,17 @@ body.is-running .window-status {
 }
 
 .history-diagram-group--inputs {
-    width: 132px;
+    width: 110px;
 }
 
 .history-diagram-group--research,
 .history-diagram-group--risk {
-    width: 220px;
+    width: 150px;
 }
 
 .history-diagram-group--trader,
 .history-diagram-group--portfolio {
-    width: 118px;
+    width: 92px;
 }
 
 .history-diagram-label {
@@ -4901,13 +4950,28 @@ body.is-running .window-status {
     bottom: 10px;
     right: -2px;
     width: 1px;
-    background: rgba(202, 211, 218, 0.28);
+    background: linear-gradient(180deg, rgba(88, 166, 255, 0.12), rgba(95, 226, 194, 0.5), rgba(88, 166, 255, 0.12));
+    background-size: 100% 180%;
+    animation: historyFlowVerticalGlow 2.2s linear infinite;
+}
+
+.history-diagram-stack--merge::before {
+    content: "";
+    position: absolute;
+    top: 10px;
+    right: -4px;
+    width: 5px;
+    height: 16px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, var(--accent), var(--secondary));
+    box-shadow: 0 0 16px rgba(95, 226, 194, 0.32);
+    animation: historyFlowTravelVertical 1.65s linear infinite;
 }
 
 .history-diagram-merge {
     display: grid;
-    gap: 10px;
-    grid-template-columns: minmax(0, 1fr) 28px minmax(112px, 0.92fr);
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) 18px minmax(78px, 0.84fr);
     align-items: center;
 }
 
@@ -4917,7 +4981,25 @@ body.is-running .window-status {
     align-self: center;
     width: 100%;
     height: 1px;
-    background: rgba(202, 211, 218, 0.28);
+    overflow: visible;
+    background: linear-gradient(90deg, rgba(88, 166, 255, 0.16), rgba(95, 226, 194, 0.48), rgba(88, 166, 255, 0.16));
+    background-size: 180% 100%;
+    animation: historyFlowLineGlow 2.5s linear infinite;
+}
+
+.history-diagram-merge-link::before,
+.history-diagram-link::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: -6px;
+    width: 16px;
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--secondary));
+    box-shadow: 0 0 18px rgba(95, 226, 194, 0.34);
+    transform: translateY(-50%);
+    animation: historyFlowTravel 1.75s linear infinite;
 }
 
 .history-diagram-merge-link::after,
@@ -4934,15 +5016,15 @@ body.is-running .window-status {
 }
 
 .history-diagram-link {
-    flex: 0 0 34px;
+    flex: 0 0 18px;
 }
 
 .history-diagram-node {
     display: grid;
-    gap: 6px;
-    min-height: 52px;
+    gap: 0;
+    min-height: 48px;
     width: 100%;
-    padding: 8px 9px;
+    padding: 7px 8px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 14px;
     background: rgba(9, 15, 14, 0.86);
@@ -4977,30 +5059,42 @@ body.is-running .window-status {
 }
 
 .history-diagram-node--compact {
-    min-height: 42px;
-    padding: 6px 9px;
+    min-height: 38px;
+    padding: 5px 8px;
     border-radius: 999px;
     justify-self: start;
 }
 
 .history-diagram-node--output {
-    min-height: 58px;
+    min-height: 54px;
 }
 
 .history-diagram-node-head {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
+    gap: 8px;
 }
 
-.history-diagram-node-caption {
-    color: var(--muted);
-    font-size: 0.64rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    line-height: 1.25;
+.history-diagram-node-icon {
+    width: 24px;
+    height: 24px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 8px;
+    background: rgba(88, 166, 255, 0.1);
+    color: var(--accent);
+    box-shadow: inset 0 0 0 1px rgba(88, 166, 255, 0.14);
+}
+
+.history-diagram-node-icon svg {
+    width: 13px;
+    height: 13px;
+    stroke: currentColor;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.9;
 }
 
 .history-diagram-node-dot {
@@ -5013,16 +5107,19 @@ body.is-running .window-status {
 
 .history-diagram-node strong {
     color: #f6fbff;
-    font-size: 0.84rem;
-    line-height: 1.2;
+    font-size: 0.8rem;
+    line-height: 1.1;
+    white-space: nowrap;
 }
 
-.history-diagram-node--compact .history-diagram-node-caption {
-    font-size: 0.58rem;
+.history-diagram-node--compact .history-diagram-node-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
 }
 
 .history-diagram-node--compact strong {
-    font-size: 0.78rem;
+    font-size: 0.72rem;
 }
 
 .history-diagram-node--signal {
@@ -5034,9 +5131,34 @@ body.is-running .window-status {
     background: linear-gradient(180deg, rgba(47, 168, 78, 0.08), rgba(9, 15, 14, 0.88));
 }
 
+.history-diagram-node--bull .history-diagram-node-icon,
+.history-diagram-node--plan .history-diagram-node-icon,
+.history-diagram-node--trader .history-diagram-node-icon,
+.history-diagram-node--decision .history-diagram-node-icon {
+    color: var(--secondary);
+    background: rgba(95, 226, 194, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(95, 226, 194, 0.16);
+}
+
 .history-diagram-node--bear {
     border-color: rgba(241, 98, 98, 0.24);
     background: linear-gradient(180deg, rgba(214, 72, 72, 0.08), rgba(9, 15, 14, 0.88));
+}
+
+.history-diagram-node--bear .history-diagram-node-icon,
+.history-diagram-node--aggressive .history-diagram-node-icon {
+    color: var(--warning);
+    background: rgba(241, 189, 107, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(241, 189, 107, 0.16);
+}
+
+.history-diagram-node--conservative .history-diagram-node-icon,
+.history-diagram-node--risk .history-diagram-node-icon,
+.history-diagram-node--neutral .history-diagram-node-icon,
+.history-diagram-node--debate .history-diagram-node-icon {
+    color: #9cc8ff;
+    background: rgba(156, 200, 255, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(156, 200, 255, 0.16);
 }
 
 .history-diagram-node--debate,
@@ -5073,6 +5195,30 @@ body.is-running .window-status {
     gap: 8px;
 }
 
+@keyframes historyFlowLineGlow {
+    to {
+        background-position: 180% 0;
+    }
+}
+
+@keyframes historyFlowTravel {
+    to {
+        left: calc(100% - 10px);
+    }
+}
+
+@keyframes historyFlowVerticalGlow {
+    to {
+        background-position: 0 180%;
+    }
+}
+
+@keyframes historyFlowTravelVertical {
+    to {
+        top: calc(100% - 26px);
+    }
+}
+
 @media (max-width: 760px) {
     .history-diagram {
         flex-direction: column;
@@ -5101,6 +5247,15 @@ body.is-running .window-status {
         bottom: -1px;
         right: 50%;
         transform: translateX(50%) rotate(135deg);
+    }
+
+    .history-diagram-link::before {
+        top: -6px;
+        left: 50%;
+        width: 4px;
+        height: 16px;
+        transform: translateX(-50%);
+        animation: historyFlowTravelVertical 1.75s linear infinite;
     }
 
     .history-diagram-merge {
