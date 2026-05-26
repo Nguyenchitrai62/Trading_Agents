@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 import math
 from typing import Annotated
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import pandas as pd
 
@@ -75,6 +79,8 @@ _CRYPTO_TIMEFRAME_MINUTES = {
 _CRYPTO_MARKET_HARD_CANDLE_LIMIT = 199
 _CRYPTO_OHLCV_PREVIEW_ROWS = 18
 _CRYPTO_INDICATOR_PREVIEW_ROWS = 12
+_BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+_BINANCE_USER_AGENT = "tradingagents/0.2"
 
 
 def _resolve_exchange(exchange_name: str):
@@ -109,6 +115,26 @@ def _normalize_market_symbol(symbol: str, exchange_id: str) -> str:
     base, quote = normalized.split("-", 1)
     quote = _EXCHANGE_QUOTE_FALLBACKS.get(exchange_id, {}).get(quote, quote)
     return f"{base}/{quote}"
+
+
+def _normalize_binance_symbol(symbol: str) -> tuple[str, str]:
+    normalized = symbol.strip().upper().replace(" ", "")
+    if not normalized:
+        raise ValueError("symbol is required")
+    if "/" in normalized:
+        base, quote = normalized.split("/", 1)
+    elif "-" in normalized:
+        base, quote = normalized.split("-", 1)
+    else:
+        raise ValueError(
+            "Crypto symbol must look like BTC-USD, BTC-USDT, or BTC/USDT so the exchange pair can be resolved."
+        )
+    quote = _EXCHANGE_QUOTE_FALLBACKS.get("binance", {}).get(quote, quote)
+    if not base or not quote:
+        raise ValueError("Crypto symbol must include both base and quote assets.")
+    market_symbol = f"{base}/{quote}"
+    api_symbol = f"{base}{quote}"
+    return api_symbol, market_symbol
 
 
 def _normalize_indicator_name(indicator: str) -> str:
@@ -197,6 +223,9 @@ def _fetch_ohlcv_frame(
     exchange_name: str,
     fetch_limit: int | None = None,
 ):
+    if exchange_name.strip().lower() == "binance":
+        return _fetch_binance_ohlcv_frame(symbol, timeframe, limit, fetch_limit)
+
     exchange_id, exchange = _resolve_exchange(exchange_name)
     try:
         markets = exchange.load_markets()
@@ -252,6 +281,73 @@ def _fetch_ohlcv_frame(
             except Exception:
                 pass
         raise
+
+
+def _fetch_binance_ohlcv_frame(
+    symbol: str,
+    timeframe: str,
+    limit: int,
+    fetch_limit: int | None = None,
+):
+    api_symbol, market_symbol = _normalize_binance_symbol(symbol)
+    policy = _resolve_active_crypto_window(_CRYPTO_TIMEFRAME_MINUTES)
+    effective_timeframe = str(policy["timeframe"])
+    analysis_limit = int(policy["limit"])
+    effective_limit = min(
+        _CRYPTO_MARKET_HARD_CANDLE_LIMIT,
+        max(analysis_limit, _coerce_positive_int(fetch_limit, analysis_limit)),
+    )
+    query = urlencode(
+        {
+            "symbol": api_symbol,
+            "interval": effective_timeframe,
+            "limit": effective_limit,
+        }
+    )
+    request = Request(
+        f"{_BINANCE_KLINES_URL}?{query}",
+        headers={"User-Agent": _BINANCE_USER_AGENT, "Accept": "application/json"},
+    )
+
+    try:
+        with urlopen(request, timeout=12.0) as response:
+            candles = json.loads(response.read())
+    except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as exc:
+        raise RuntimeError(f"Binance OHLCV fetch failed for {market_symbol}: {exc}") from exc
+
+    if not isinstance(candles, list) or not candles:
+        raise ValueError(f"No OHLCV data returned for {market_symbol} on binance ({effective_timeframe}).")
+    if isinstance(candles[0], dict):
+        message = candles[0].get("msg") or candles[0]
+        raise ValueError(f"Binance rejected pair '{market_symbol}': {message}")
+
+    frame = pd.DataFrame(
+        candles,
+        columns=[
+            "timestamp_ms",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "close_time_ms",
+            "quote_volume",
+            "trade_count",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+            "ignore",
+        ],
+    )[["timestamp_ms", "open", "high", "low", "close", "volume"]]
+    frame["timestamp"] = pd.to_datetime(frame["timestamp_ms"], unit="ms", utc=True)
+
+    for column in ["open", "high", "low", "close", "volume"]:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
+    policy["analysis_limit"] = analysis_limit
+    policy["fetch_limit"] = effective_limit
+    policy["requested_timeframe"] = timeframe
+    policy["requested_limit"] = limit
+    return None, market_symbol, frame, policy
 
 
 def _prepare_indicator_frame(frame: pd.DataFrame) -> pd.DataFrame:

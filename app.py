@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from pydantic import BaseModel, Field, field_validator
 
 try:
@@ -136,11 +136,61 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _memory_limit_mb() -> int | None:
+    candidates: list[int] = []
+    for path in (
+        Path("/sys/fs/cgroup/memory.max"),
+        Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+    ):
+        try:
+            raw = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not raw or raw == "max":
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if 0 < value < 1 << 60:
+            candidates.append(value // (1024 * 1024))
+
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        page_count = os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, OSError, ValueError):
+        page_size = page_count = 0
+    if page_size and page_count:
+        candidates.append((page_size * page_count) // (1024 * 1024))
+
+    return min(candidates) if candidates else None
+
+
 def _default_resource_constrained_mode() -> bool:
-    return any(
+    if any(
         os.getenv(name, "").strip()
         for name in ("RENDER", "RENDER_INSTANCE_ID", "RENDER_SERVICE_ID")
-    )
+    ):
+        return True
+    memory_limit = _memory_limit_mb()
+    threshold_mb = _env_int("ANALYSIS_RESOURCE_CONSTRAINED_MEMORY_MB", 1536)
+    return memory_limit is not None and memory_limit <= threshold_mb
+
+
+def _process_rss_mb() -> int | None:
+    try:
+        import resource
+    except ImportError:
+        return None
+    try:
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except Exception:
+        return None
+    if usage <= 0:
+        return None
+    if usage > 10_000_000:
+        return round(usage / (1024 * 1024))
+    return round(usage / 1024)
 
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").strip().upper()
@@ -188,15 +238,15 @@ ANALYSIS_MAX_DEPTH_ROUNDS = max(
 )
 ANALYSIS_LLM_MAX_TOKENS = max(
     512,
-    _env_int("ANALYSIS_LLM_MAX_TOKENS", 12000 if RESOURCE_CONSTRAINED_MODE else 24000),
+    _env_int("ANALYSIS_LLM_MAX_TOKENS", 6000 if RESOURCE_CONSTRAINED_MODE else 24000),
 )
 ANALYSIS_NEWS_ARTICLE_LIMIT = max(
     2,
-    _env_int("ANALYSIS_NEWS_ARTICLE_LIMIT", 6 if RESOURCE_CONSTRAINED_MODE else 12),
+    _env_int("ANALYSIS_NEWS_ARTICLE_LIMIT", 3 if RESOURCE_CONSTRAINED_MODE else 12),
 )
 ANALYSIS_GLOBAL_NEWS_ARTICLE_LIMIT = max(
     2,
-    _env_int("ANALYSIS_GLOBAL_NEWS_ARTICLE_LIMIT", 4 if RESOURCE_CONSTRAINED_MODE else 8),
+    _env_int("ANALYSIS_GLOBAL_NEWS_ARTICLE_LIMIT", 2 if RESOURCE_CONSTRAINED_MODE else 8),
 )
 ANALYSIS_TRACE_CHAR_LIMIT = max(
     400,
@@ -948,6 +998,54 @@ def build_changed_sections(previous: dict, current: dict) -> dict:
     }
 
 
+STATE_UPDATE_KEYS = {
+    "messages",
+    "company_of_interest",
+    "asset_type",
+    "trade_date",
+    "past_context",
+    "sender",
+    "investment_debate_state",
+    "risk_debate_state",
+    "market_report",
+    "fundamentals_report",
+    "sentiment_report",
+    "news_report",
+    "investment_plan",
+    "trader_investment_plan",
+    "final_trade_decision",
+}
+
+
+def iter_graph_state_updates(chunk: dict) -> list[tuple[str | None, dict]]:
+    if not isinstance(chunk, dict):
+        return []
+    if any(key in STATE_UPDATE_KEYS for key in chunk):
+        return [(None, chunk)]
+    updates: list[tuple[str | None, dict]] = []
+    for node_name, update in chunk.items():
+        if isinstance(update, dict):
+            updates.append((str(node_name), update))
+    return updates
+
+
+def merge_graph_state_update(state: dict, update: dict) -> list[str]:
+    changed_keys: list[str] = []
+    for key, value in update.items():
+        if key == "messages":
+            state["messages"] = [
+                message for message in (value or []) if not isinstance(message, RemoveMessage)
+            ]
+        elif isinstance(value, dict) and isinstance(state.get(key), dict):
+            merged = dict(state[key])
+            merged.update(value)
+            state[key] = merged
+        else:
+            state[key] = value
+        changed_keys.append(key)
+    return sorted(set(changed_keys))
+
+
 def emit_snapshot_updates(previous: dict, current: dict, emit: Callable[[str, dict], None]) -> None:
     previous_sections = previous.get("sections", {})
     current_sections = current.get("sections", {})
@@ -1035,6 +1133,9 @@ def run_trading_analysis(
             "elapsed_seconds": round(time.time() - run_started_at, 2),
             **extra,
         }
+        rss_mb = _process_rss_mb()
+        if rss_mb is not None:
+            payload["rss_mb"] = rss_mb
         extra_json = json.dumps(extra, ensure_ascii=False, default=str) if extra else "{}"
         payload["log_line"] = (
             f"analysis symbol={symbol} phase={phase} elapsed={payload['elapsed_seconds']}s "
@@ -1074,6 +1175,7 @@ def run_trading_analysis(
         effective_depth_rounds=runtime_profile["effective_rounds"],
         llm_max_tokens=runtime_profile["llm_max_tokens"],
         resource_constrained=RESOURCE_CONSTRAINED_MODE,
+        memory_limit_mb=_memory_limit_mb(),
         output_language=request.output_language,
     )
 
@@ -1206,6 +1308,7 @@ def run_trading_analysis(
             past_context=past_context,
         )
         args = graph.propagator.get_graph_args()
+        args["stream_mode"] = "updates"
         if config.get("checkpoint_enabled"):
             tid = thread_id(symbol, request.analysis_date)
             args.setdefault("config", {}).setdefault("configurable", {})["thread_id"] = tid
@@ -1213,35 +1316,39 @@ def run_trading_analysis(
         started_at = time.time()
         chunk_index = 0
         emit_analysis_log("Graph stream started.", "stream", current_agent=current_agent)
+        final_state.update(init_state)
+        final_state["messages"] = []
         for chunk in graph.graph.stream(init_state, **args):
             ensure_not_cancelled()
-            chunk_index += 1
-            final_state.update(chunk)
-            current_snapshot = extract_runtime_snapshot(final_state)
-            current_agent = detect_current_agent(previous_snapshot, current_snapshot) or current_agent
-            current_status = build_status_snapshot(current_snapshot, filtered_analysts, current_agent)
-            emit_analysis_log(
-                "Graph emitted a state update.",
-                current_status["phase"],
-                chunk_index=chunk_index,
-                current_agent=current_agent,
-                updated_keys=sorted(chunk.keys()),
-                progress=current_status["progress"],
-            )
-            emit_message_progress_updates(
-                final_state.get("messages", []),
-                current_agent,
-                seen_message_signatures,
-                emit,
-            )
-            if final_state.get("messages"):
-                final_state["messages"] = []
-            emit_snapshot_updates(previous_snapshot, current_snapshot, emit)
-            if current_status != previous_status:
-                emit("status_snapshot", current_status)
-                previous_status = current_status
-            previous_snapshot = current_snapshot
-            ensure_not_cancelled()
+            for node_name, update in iter_graph_state_updates(chunk):
+                chunk_index += 1
+                updated_keys = merge_graph_state_update(final_state, update)
+                current_snapshot = extract_runtime_snapshot(final_state)
+                current_agent = detect_current_agent(previous_snapshot, current_snapshot) or current_agent
+                current_status = build_status_snapshot(current_snapshot, filtered_analysts, current_agent)
+                emit_analysis_log(
+                    "Graph emitted a state update.",
+                    current_status["phase"],
+                    chunk_index=chunk_index,
+                    graph_node=node_name,
+                    current_agent=current_agent,
+                    updated_keys=updated_keys,
+                    progress=current_status["progress"],
+                )
+                emit_message_progress_updates(
+                    final_state.get("messages", []),
+                    current_agent,
+                    seen_message_signatures,
+                    emit,
+                )
+                if final_state.get("messages"):
+                    final_state["messages"] = []
+                emit_snapshot_updates(previous_snapshot, current_snapshot, emit)
+                if current_status != previous_status:
+                    emit("status_snapshot", current_status)
+                    previous_status = current_status
+                previous_snapshot = current_snapshot
+                ensure_not_cancelled()
 
         if not final_state.get("final_trade_decision"):
             raise RuntimeError("Analysis finished without a final_trade_decision.")
