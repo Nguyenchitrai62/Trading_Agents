@@ -4891,36 +4891,57 @@ body.is-running .window-status {
 .history-diagram-wrap {
     display: grid;
     gap: 16px;
-    overflow-x: auto;
+    overflow-x: hidden;
     overflow-y: visible;
     padding-bottom: 4px;
 }
 
 .history-diagram {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: max-content;
+    display: grid;
+    justify-items: center;
+    gap: 0;
+    width: min(100%, 760px);
+    margin: 0 auto;
+}
+
+.history-diagram-stage {
+    display: grid;
+    gap: 0;
+    width: 100%;
+    justify-items: center;
 }
 
 .history-diagram-group {
     display: grid;
     gap: 10px;
     align-content: center;
+    justify-items: center;
+    width: 100%;
+    min-width: 0;
 }
 
 .history-diagram-group--inputs {
-    width: 110px;
+    max-width: 760px;
 }
 
 .history-diagram-group--research,
 .history-diagram-group--risk {
-    width: 150px;
+    max-width: 520px;
 }
 
+.history-diagram-stage--research-intake .history-diagram-group--inputs,
+.history-diagram-stage--research-intake .history-diagram-group--research {
+    max-width: none;
+}
+
+.history-diagram-stage--research-intake .history-diagram-group--research {
+    margin-top: -2px;
+}
+
+.history-diagram-group--plan,
 .history-diagram-group--trader,
 .history-diagram-group--portfolio {
-    width: 92px;
+    max-width: 280px;
 }
 
 .history-diagram-label {
@@ -4931,92 +4952,165 @@ body.is-running .window-status {
     text-transform: uppercase;
 }
 
-.history-diagram-stack,
+.history-diagram-signal-grid,
+.history-diagram-cluster-grid,
 .history-diagram-single,
 .history-diagram-output {
     display: grid;
     gap: 8px;
-    align-content: center;
+    min-width: 0;
 }
 
-.history-diagram-stack--merge {
-    position: relative;
-}
-
-.history-diagram-stack--merge::after {
-    content: "";
-    position: absolute;
-    top: 10px;
-    bottom: 10px;
-    right: -2px;
-    width: 1px;
-    background: linear-gradient(180deg, rgba(88, 166, 255, 0.12), rgba(95, 226, 194, 0.5), rgba(88, 166, 255, 0.12));
-    background-size: 100% 180%;
-    animation: historyFlowVerticalGlow 2.2s linear infinite;
-}
-
-.history-diagram-stack--merge::before {
-    content: "";
-    position: absolute;
-    top: 10px;
-    right: -4px;
-    width: 5px;
-    height: 16px;
-    border-radius: 999px;
-    background: linear-gradient(180deg, var(--accent), var(--secondary));
-    box-shadow: 0 0 16px rgba(95, 226, 194, 0.32);
-    animation: historyFlowTravelVertical 1.65s linear infinite;
-}
-
-.history-diagram-merge {
-    display: grid;
-    gap: 8px;
-    grid-template-columns: minmax(0, 1fr) 18px minmax(78px, 0.84fr);
-    align-items: center;
-}
-
-.history-diagram-merge-link,
-.history-diagram-link {
-    position: relative;
-    align-self: center;
+.history-diagram-signal-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: start;
     width: 100%;
-    height: 1px;
-    overflow: visible;
-    background: linear-gradient(90deg, rgba(88, 166, 255, 0.16), rgba(95, 226, 194, 0.48), rgba(88, 166, 255, 0.16));
-    background-size: 180% 100%;
-    animation: historyFlowLineGlow 2.5s linear infinite;
+    gap: 10px;
 }
 
-.history-diagram-merge-link::before,
-.history-diagram-link::before {
+.history-diagram-signal-lane {
+    display: grid;
+    gap: 6px;
+    justify-items: stretch;
+    min-width: 0;
+}
+
+.history-diagram-cluster {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    background: linear-gradient(180deg, rgba(17, 27, 41, 0.9), rgba(7, 13, 22, 0.88));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.history-diagram-cluster--research {
+    border-color: rgba(95, 226, 194, 0.18);
+    position: relative;
+}
+
+.history-diagram-cluster--risk {
+    border-color: rgba(156, 200, 255, 0.18);
+}
+
+.history-diagram-stage--research-intake .history-diagram-cluster--research::before {
     content: "";
     position: absolute;
-    top: 50%;
-    left: -6px;
-    width: 16px;
-    height: 4px;
+    top: -5px;
+    left: 0;
+    right: 0;
+    height: 10px;
+    background:
+        radial-gradient(circle at 12.5% 50%, rgba(95, 226, 194, 0.68) 0 2px, transparent 3px),
+        radial-gradient(circle at 37.5% 50%, rgba(95, 226, 194, 0.68) 0 2px, transparent 3px),
+        radial-gradient(circle at 62.5% 50%, rgba(95, 226, 194, 0.68) 0 2px, transparent 3px),
+        radial-gradient(circle at 87.5% 50%, rgba(95, 226, 194, 0.68) 0 2px, transparent 3px);
+    opacity: 0.82;
+    pointer-events: none;
+}
+
+.history-diagram-cluster-grid--research {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.history-diagram-cluster-grid--research .history-diagram-node--debate {
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: min(240px, 100%);
+}
+
+.history-diagram-cluster-grid--risk {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.history-diagram-cluster-grid--risk .history-diagram-node--risk {
+    grid-column: 1 / -1;
+    justify-self: center;
+    width: min(260px, 100%);
+}
+
+.history-diagram-wire {
+    position: relative;
+    overflow: visible;
+}
+
+.history-diagram-wire::before,
+.history-diagram-wire::after {
+    content: "";
+    position: absolute;
     border-radius: 999px;
     background: linear-gradient(90deg, var(--accent), var(--secondary));
-    box-shadow: 0 0 18px rgba(95, 226, 194, 0.34);
-    transform: translateY(-50%);
-    animation: historyFlowTravel 1.75s linear infinite;
+    box-shadow: 0 0 14px rgba(95, 226, 194, 0.3), 0 0 28px rgba(88, 166, 255, 0.12);
+    opacity: 0;
+    will-change: transform, opacity;
 }
 
-.history-diagram-merge-link::after,
-.history-diagram-link::after {
-    content: "";
-    position: absolute;
+.history-diagram-wire--horizontal {
+    --flow-distance-x: calc(100% + 18px);
+    width: 100%;
+    height: 1px;
+    background: linear-gradient(90deg, rgba(88, 166, 255, 0.16), rgba(95, 226, 194, 0.48), rgba(88, 166, 255, 0.16));
+    background-size: 180% 100%;
+    animation: historyFlowLineGlow 3.8s linear infinite;
+}
+
+.history-diagram-wire--horizontal::before,
+.history-diagram-wire--horizontal::after {
+    left: -18px;
     top: 50%;
-    right: -1px;
-    width: 8px;
-    height: 8px;
-    border-top: 1px solid rgba(202, 211, 218, 0.28);
-    border-right: 1px solid rgba(202, 211, 218, 0.28);
-    transform: translateY(-50%) rotate(45deg);
+    width: 18px;
+    height: 4px;
+    transform: translate3d(0, -50%, 0);
+    animation: historyFlowPulseX 2.6s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
 }
 
-.history-diagram-link {
-    flex: 0 0 18px;
+.history-diagram-wire--vertical {
+    --flow-distance-y: calc(100% + 16px);
+    width: 1px;
+    height: 28px;
+    background: linear-gradient(180deg, rgba(88, 166, 255, 0.16), rgba(95, 226, 194, 0.48), rgba(88, 166, 255, 0.16));
+    background-size: 100% 180%;
+    animation: historyFlowVerticalGlow 3.8s linear infinite;
+}
+
+.history-diagram-wire--vertical::before,
+.history-diagram-wire--vertical::after {
+    top: -16px;
+    left: 50%;
+    width: 4px;
+    height: 18px;
+    transform: translate3d(-50%, 0, 0);
+    animation: historyFlowPulseY 2.4s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+}
+
+.history-diagram-wire--signal,
+.history-diagram-stage-link {
+    justify-self: center;
+}
+
+.history-diagram-wire--signal {
+    height: 26px;
+    margin-bottom: -2px;
+}
+
+.history-diagram-stage-link {
+    height: 34px;
+}
+
+.history-diagram-wire--horizontal::after,
+.history-diagram-wire--vertical::after {
+    width: 10px;
+    height: 3px;
+    animation-delay: 1.15s;
+    opacity: 0;
+}
+
+.history-diagram-wire--vertical::after {
+    width: 3px;
+    height: 12px;
 }
 
 .history-diagram-node {
@@ -5024,7 +5118,8 @@ body.is-running .window-status {
     gap: 0;
     min-height: 48px;
     width: 100%;
-    padding: 7px 8px;
+    min-width: 0;
+    padding: 8px 10px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 14px;
     background: rgba(9, 15, 14, 0.86);
@@ -5059,14 +5154,14 @@ body.is-running .window-status {
 }
 
 .history-diagram-node--compact {
-    min-height: 38px;
-    padding: 5px 8px;
+    min-height: 44px;
+    padding: 7px 10px;
     border-radius: 999px;
     justify-self: start;
 }
 
 .history-diagram-node--output {
-    min-height: 54px;
+    min-height: 52px;
 }
 
 .history-diagram-node-head {
@@ -5107,9 +5202,10 @@ body.is-running .window-status {
 
 .history-diagram-node strong {
     color: #f6fbff;
-    font-size: 0.8rem;
+    font-size: 0.77rem;
     line-height: 1.1;
     white-space: nowrap;
+    overflow: visible;
 }
 
 .history-diagram-node--compact .history-diagram-node-icon {
@@ -5119,7 +5215,7 @@ body.is-running .window-status {
 }
 
 .history-diagram-node--compact strong {
-    font-size: 0.72rem;
+    font-size: 0.76rem;
 }
 
 .history-diagram-node--signal {
@@ -5201,9 +5297,23 @@ body.is-running .window-status {
     }
 }
 
-@keyframes historyFlowTravel {
-    to {
-        left: calc(100% - 10px);
+@keyframes historyFlowPulseX {
+    0% {
+        opacity: 0;
+        transform: translate3d(0, -50%, 0) scaleX(0.72);
+    }
+
+    12% {
+        opacity: 0.95;
+    }
+
+    74% {
+        opacity: 0.88;
+    }
+
+    100% {
+        opacity: 0;
+        transform: translate3d(var(--flow-distance-x), -50%, 0) scaleX(1.06);
     }
 }
 
@@ -5213,62 +5323,64 @@ body.is-running .window-status {
     }
 }
 
-@keyframes historyFlowTravelVertical {
-    to {
-        top: calc(100% - 26px);
+@keyframes historyFlowPulseY {
+    0% {
+        opacity: 0;
+        transform: translate3d(-50%, 0, 0) scaleY(0.72);
+    }
+
+    12% {
+        opacity: 0.95;
+    }
+
+    74% {
+        opacity: 0.88;
+    }
+
+    100% {
+        opacity: 0;
+        transform: translate3d(-50%, var(--flow-distance-y), 0) scaleY(1.06);
     }
 }
 
 @media (max-width: 760px) {
-    .history-diagram {
-        flex-direction: column;
-        align-items: stretch;
-        min-width: 0;
-    }
-
     .history-diagram-group,
     .history-diagram-group--inputs,
     .history-diagram-group--research,
+    .history-diagram-group--plan,
     .history-diagram-group--risk,
     .history-diagram-group--trader,
     .history-diagram-group--portfolio {
         width: 100%;
     }
 
-    .history-diagram-link {
-        flex: 0 0 auto;
-        width: 1px;
-        height: 26px;
-        margin: 0 auto;
+    .history-diagram-signal-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .history-diagram-link::after {
-        top: auto;
-        bottom: -1px;
-        right: 50%;
-        transform: translateX(50%) rotate(135deg);
-    }
-
-    .history-diagram-link::before {
-        top: -6px;
-        left: 50%;
-        width: 4px;
-        height: 16px;
-        transform: translateX(-50%);
-        animation: historyFlowTravelVertical 1.75s linear infinite;
-    }
-
-    .history-diagram-merge {
+    .history-diagram-cluster-grid--research,
+    .history-diagram-cluster-grid--risk {
         grid-template-columns: 1fr;
     }
 
-    .history-diagram-stack--merge::after,
-    .history-diagram-merge-link {
-        display: none;
+    .history-diagram-cluster-grid--research .history-diagram-node--debate,
+    .history-diagram-cluster-grid--risk .history-diagram-node--risk {
+        width: 100%;
     }
 
-    .history-diagram-output {
-        margin-top: 4px;
+    .history-diagram-wire--signal,
+    .history-diagram-stage-link {
+        height: 24px;
+    }
+
+    .history-diagram-stage--research-intake .history-diagram-group--research {
+        margin-top: 0;
+    }
+
+    .history-diagram-stage--research-intake .history-diagram-cluster--research::before {
+        background:
+            radial-gradient(circle at 25% 50%, rgba(95, 226, 194, 0.68) 0 2px, transparent 3px),
+            radial-gradient(circle at 75% 50%, rgba(95, 226, 194, 0.68) 0 2px, transparent 3px);
     }
 }
 

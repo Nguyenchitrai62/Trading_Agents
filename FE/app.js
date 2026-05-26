@@ -107,7 +107,7 @@ const HISTORY_FLOW_SECTION_META = {
         description: "Price action, technical structure, and market regime context.",
     },
     sentiment_report: {
-        shortTitle: "Social",
+        shortTitle: "Sentiment",
         tone: "signal",
         icon: "social",
         description: "Social sentiment, crowd positioning, and narrative momentum.",
@@ -119,44 +119,43 @@ const HISTORY_FLOW_SECTION_META = {
         description: "Catalysts, headlines, and event pressure gathered into one report.",
     },
     fundamentals_report: {
-        shortTitle: "Fund",
+        shortTitle: "Fundamentals",
         tone: "signal",
         icon: "fund",
         description: "Company profile, financial condition, and insider activity context.",
     },
     bull_research: {
-        shortTitle: "Bull",
+        shortTitle: "Bullish",
         tone: "bull",
         icon: "bull",
         description: "The upside case built from the selected analyst evidence.",
     },
     research_debate: {
-        shortTitle: "Debate",
+        shortTitle: "Research Debate",
         tone: "debate",
-        compact: true,
         icon: "debate",
         description: "The research team exchange before the plan is locked in.",
     },
     bear_research: {
-        shortTitle: "Bear",
+        shortTitle: "Bearish",
         tone: "bear",
         icon: "bear",
         description: "The downside case, failure modes, and invalidation logic.",
     },
     investment_plan: {
-        shortTitle: "Plan",
+        shortTitle: "Investment Plan",
         tone: "plan",
         icon: "plan",
         description: "Research Manager synthesis that converts debate into a trade thesis.",
     },
     trader_investment_plan: {
-        shortTitle: "Trade",
+        shortTitle: "Trader Plan",
         tone: "trader",
         icon: "trade",
         description: "Entry, structure, and transaction proposal prepared for risk review.",
     },
     aggressive_risk: {
-        shortTitle: "Agg",
+        shortTitle: "Aggressive",
         tone: "aggressive",
         icon: "aggressive",
         description: "The high-conviction, higher-risk interpretation of the proposal.",
@@ -168,20 +167,19 @@ const HISTORY_FLOW_SECTION_META = {
         description: "The balanced baseline view on exposure, sizing, and constraints.",
     },
     conservative_risk: {
-        shortTitle: "Cons",
+        shortTitle: "Conservative",
         tone: "conservative",
         icon: "conservative",
         description: "The capital-protection and drawdown-focused response.",
     },
     risk_debate: {
-        shortTitle: "Review",
+        shortTitle: "Risk Review",
         tone: "risk",
-        compact: true,
         icon: "review",
         description: "Merged risk discussion before the final authorization.",
     },
     final_trade_decision: {
-        shortTitle: "Decision",
+        shortTitle: "Final Decision",
         tone: "decision",
         icon: "decision",
         description: "Authorize, reject, or revise the transaction proposal.",
@@ -2892,10 +2890,9 @@ function buildHistoryDiagramModel(sections = []) {
     return {
         inputs: HISTORY_FLOW_SECTION_ORDER.inputs.map((key) => sectionsByKey.get(key)).filter(Boolean),
         researchNodes: ["bull_research", "research_debate", "bear_research"].map((key) => sectionsByKey.get(key)).filter(Boolean),
-        researchOutput: sectionsByKey.get("investment_plan") || null,
+        investmentPlan: sectionsByKey.get("investment_plan") || null,
         trader: sectionsByKey.get("trader_investment_plan") || null,
-        riskNodes: ["aggressive_risk", "neutral_risk", "conservative_risk"].map((key) => sectionsByKey.get(key)).filter(Boolean),
-        riskOutput: sectionsByKey.get("risk_debate") || null,
+        riskNodes: ["aggressive_risk", "neutral_risk", "conservative_risk", "risk_debate"].map((key) => sectionsByKey.get(key)).filter(Boolean),
         manager: sectionsByKey.get("final_trade_decision") || null,
         extras: sections.filter((section) => !knownKeys.has(section.section_key)),
     };
@@ -2930,33 +2927,44 @@ function renderHistoryDiagramNode(section = {}, options = {}, layout = {}) {
     `;
 }
 
-function renderHistoryDiagramStackGroup(label, key, nodes, options = {}) {
+function renderHistoryDiagramResearchIntakeStage(signalNodes = [], researchNodes = [], options = {}) {
     return `
-        <section class="history-diagram-group history-diagram-group--${key}">
-            <span class="history-diagram-label">${escapeHtml(label)}</span>
-            <div class="history-diagram-stack history-diagram-stack--${key}">
-                ${nodes.map((section) => renderHistoryDiagramNode(section, options)).join("")}
+        <section class="history-diagram-stage history-diagram-stage--research-intake">
+            <div class="history-diagram-group history-diagram-group--inputs">
+                <span class="history-diagram-label">Signals</span>
+                <div class="history-diagram-signal-grid">
+                    ${signalNodes
+                    .map(
+                        (section) => `
+                            <div class="history-diagram-signal-lane">
+                                ${renderHistoryDiagramNode(section, options)}
+                                <span class="history-diagram-wire history-diagram-wire--vertical history-diagram-wire--signal" aria-hidden="true"></span>
+                            </div>
+                        `,
+                    )
+                    .join("")}
+                </div>
+            </div>
+            <div class="history-diagram-group history-diagram-group--research">
+                <span class="history-diagram-label">Research</span>
+                <div class="history-diagram-cluster history-diagram-cluster--research">
+                    <div class="history-diagram-cluster-grid history-diagram-cluster-grid--research">
+                        ${researchNodes.map((section) => renderHistoryDiagramNode(section, options, { compact: HISTORY_FLOW_SECTION_META[section.section_key]?.compact })).join("")}
+                    </div>
+                </div>
             </div>
         </section>
     `;
 }
 
-function renderHistoryDiagramMergeGroup(label, key, nodes, output, options = {}) {
+function renderHistoryDiagramClusterGroup(label, key, nodes, options = {}) {
     return `
         <section class="history-diagram-group history-diagram-group--${key}">
             <span class="history-diagram-label">${escapeHtml(label)}</span>
-            <div class="history-diagram-merge history-diagram-merge--${key}">
-                <div class="history-diagram-stack history-diagram-stack--merge history-diagram-stack--${key}">
+            <div class="history-diagram-cluster history-diagram-cluster--${key}">
+                <div class="history-diagram-cluster-grid history-diagram-cluster-grid--${key}">
                     ${nodes.map((section) => renderHistoryDiagramNode(section, options, { compact: HISTORY_FLOW_SECTION_META[section.section_key]?.compact })).join("")}
                 </div>
-                ${output
-                    ? `
-                        <div class="history-diagram-merge-link" aria-hidden="true"></div>
-                        <div class="history-diagram-output">
-                            ${renderHistoryDiagramNode(output, options, { output: true })}
-                        </div>
-                    `
-                    : ""}
             </div>
         </section>
     `;
@@ -3111,21 +3119,21 @@ function renderHistoryPage() {
         sectionMarkdown,
         loadingKey: history.active.sectionLoadingKey,
     };
-    const segments = [];
-    if (diagram.inputs.length) {
-        segments.push(renderHistoryDiagramStackGroup("Signals", "inputs", diagram.inputs, diagramOptions));
+    const stages = [];
+    if (diagram.inputs.length || diagram.researchNodes.length) {
+        stages.push(renderHistoryDiagramResearchIntakeStage(diagram.inputs, diagram.researchNodes, diagramOptions));
     }
-    if (diagram.researchNodes.length || diagram.researchOutput) {
-        segments.push(renderHistoryDiagramMergeGroup("Research", "research", diagram.researchNodes, diagram.researchOutput, diagramOptions));
+    if (diagram.investmentPlan) {
+        stages.push(renderHistoryDiagramSingleGroup("Plan", "plan", diagram.investmentPlan, diagramOptions));
     }
     if (diagram.trader) {
-        segments.push(renderHistoryDiagramSingleGroup("Trader", "trader", diagram.trader, diagramOptions));
+        stages.push(renderHistoryDiagramSingleGroup("Trader", "trader", diagram.trader, diagramOptions));
     }
-    if (diagram.riskNodes.length || diagram.riskOutput) {
-        segments.push(renderHistoryDiagramMergeGroup("Risk", "risk", diagram.riskNodes, diagram.riskOutput, diagramOptions));
+    if (diagram.riskNodes.length) {
+        stages.push(renderHistoryDiagramClusterGroup("Risk", "risk", diagram.riskNodes, diagramOptions));
     }
     if (diagram.manager) {
-        segments.push(renderHistoryDiagramSingleGroup("Manager", "portfolio", diagram.manager, diagramOptions));
+        stages.push(renderHistoryDiagramSingleGroup("Manager", "portfolio", diagram.manager, diagramOptions));
     }
     elements.historyStatusText.textContent = isSectionLoading
         ? "Loading markdown"
@@ -3142,8 +3150,8 @@ function renderHistoryPage() {
         </div>
         <div class="history-diagram-wrap">
             <div class="history-diagram">
-                ${segments.length
-                    ? segments.map((segment, index) => `${segment}${index < segments.length - 1 ? '<div class="history-diagram-link" aria-hidden="true"></div>' : ""}`).join("")
+                ${stages.length
+                    ? stages.map((stage, index) => `${stage}${index < stages.length - 1 ? '<div class="history-diagram-stage-link history-diagram-wire history-diagram-wire--vertical" aria-hidden="true"></div>' : ""}`).join("")
                     : '<div class="history-empty">No saved flow sections are available for this analysis.</div>'}
             </div>
             ${renderHistoryDiagramExtras(diagram.extras, diagramOptions)}
