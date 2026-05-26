@@ -205,13 +205,15 @@ const HISTORY_DIAGRAM_ICONS = {
 };
 
 const HISTORY_SIGNAL_WIRE_PATHS = [
-    "M2 24 C28 22 42 44 98 42",
-    "M2 55 C32 54 46 60 98 64",
-    "M2 95 C32 96 46 90 98 86",
-    "M2 126 C28 128 42 106 98 108",
+    "M2 32 C30 32 44 88 98 92",
+    "M2 102 C34 102 46 120 98 123",
+    "M2 172 C34 172 46 156 98 154",
+    "M2 242 C30 242 44 188 98 185",
 ];
 
 const HISTORY_STAGE_WIRE_PATH = "M4 50 C28 28 52 72 96 50";
+const HISTORY_STAGE_WIRE_REVERSE_PATH = "M96 50 C72 28 48 72 4 50";
+const HISTORY_STAGE_TURN_DOWN_PATH = "M50 29 C78 39 78 50 50 61";
 
 const state = {
     config: null,
@@ -2893,7 +2895,7 @@ function renderHistoryDiagramIcon(iconKey = "default") {
     return HISTORY_DIAGRAM_ICONS[iconKey] || HISTORY_DIAGRAM_ICONS.default;
 }
 
-function renderHistoryCurveWire(paths = [], className = "", viewBox = "0 0 100 100") {
+function renderHistoryCurveWire(paths = [], className = "", viewBox = "0 0 100 100", attributes = "") {
     if (!paths.length) {
         return "";
     }
@@ -2909,7 +2911,7 @@ function renderHistoryCurveWire(paths = [], className = "", viewBox = "0 0 100 1
         })
         .join("");
     return `
-        <div class="history-diagram-curve-wire ${className}" aria-hidden="true">
+        <div class="history-diagram-curve-wire ${className}" aria-hidden="true" ${attributes}>
             <svg viewBox="${viewBox}" preserveAspectRatio="none" focusable="false">
                 ${wireMarkup}
             </svg>
@@ -2977,7 +2979,7 @@ function renderHistoryDiagramResearchIntakeStage(signalNodes = [], researchNodes
                     .join("")}
                 </div>
             </div>
-            ${renderHistoryCurveWire(HISTORY_SIGNAL_WIRE_PATHS.slice(0, Math.max(1, signalNodes.length)), "history-diagram-signal-wires", "0 0 100 150")}
+            ${renderHistoryCurveWire(HISTORY_SIGNAL_WIRE_PATHS.slice(0, Math.max(1, signalNodes.length)), "history-diagram-signal-wires", "0 0 100 276")}
             <div class="history-diagram-group history-diagram-group--research">
                 <span class="history-diagram-label">Research</span>
                 <div class="history-diagram-cluster history-diagram-cluster--research">
@@ -3012,6 +3014,76 @@ function renderHistoryDiagramSingleGroup(label, key, node, options = {}) {
             </div>
         </section>
     `;
+}
+
+function getHistoryStageDirection(index, stageCount) {
+    if (stageCount <= 3) {
+        return "forward";
+    }
+    const topRowCount = Math.ceil(stageCount / 2);
+    return index < topRowCount ? "forward" : "reverse";
+}
+
+function getHistoryStageFlowClass(index, stageCount) {
+    return `history-diagram-flow-${getHistoryStageDirection(index, stageCount)}`;
+}
+
+function getHistoryStagePosition(index, stageCount) {
+    if (stageCount <= 3) {
+        return { column: 1 + index * 2, row: 1 };
+    }
+    const topRowCount = Math.ceil(stageCount / 2);
+    if (index < topRowCount) {
+        return { column: 1 + index * 2, row: 1 };
+    }
+    const bottomIndex = index - topRowCount;
+    return { column: 1 + (topRowCount - 1 - bottomIndex) * 2, row: 3 };
+}
+
+function getHistoryConnectorPosition(index, stageCount) {
+    if (stageCount <= 3) {
+        return { column: 2 + index * 2, row: 1 };
+    }
+    const topRowCount = Math.ceil(stageCount / 2);
+    if (index < topRowCount - 1) {
+        return { column: 2 + index * 2, row: 1 };
+    }
+    if (index === topRowCount - 1) {
+        return { column: 1 + index * 2, row: 2 };
+    }
+    const bottomIndex = index - topRowCount;
+    return { column: 2 + (topRowCount - 2 - bottomIndex) * 2, row: 3 };
+}
+
+function getHistoryGridStyle(position = {}) {
+    const column = Number(position.column || 1);
+    const row = Number(position.row || 1);
+    return `style="grid-column: ${column}; grid-row: ${row};"`;
+}
+
+function renderHistoryStageConnector(index, stageCount) {
+    if (index >= stageCount - 1) {
+        return "";
+    }
+    const topRowCount = Math.ceil(stageCount / 2);
+    const isTurn = stageCount > 3 && index === topRowCount - 1;
+    const gridStyle = getHistoryGridStyle(getHistoryConnectorPosition(index, stageCount));
+    if (isTurn) {
+        return renderHistoryCurveWire(
+            [HISTORY_STAGE_TURN_DOWN_PATH],
+            `history-diagram-stage-link history-diagram-stage-link--turn history-diagram-stage-link--after-${index}`,
+            "0 0 100 90",
+            gridStyle,
+        );
+    }
+    const direction = stageCount > 3 && index >= topRowCount ? "reverse" : "forward";
+    const path = direction === "reverse" ? HISTORY_STAGE_WIRE_REVERSE_PATH : HISTORY_STAGE_WIRE_PATH;
+    return renderHistoryCurveWire(
+        [path],
+        `history-diagram-stage-link history-diagram-stage-link--${direction} history-diagram-stage-link--after-${index}`,
+        "0 0 100 100",
+        gridStyle,
+    );
 }
 
 function renderHistoryDiagramExtras(sections = [], options = {}) {
@@ -3182,9 +3254,15 @@ function renderHistoryPage() {
             Click any block to open its saved markdown.
         </div>
         <div class="history-diagram-wrap">
-            <div class="history-diagram">
+            <div class="history-diagram history-diagram--count-${stages.length}">
                 ${stages.length
-                    ? stages.map((stage, index) => `${stage}${index < stages.length - 1 ? renderHistoryCurveWire([HISTORY_STAGE_WIRE_PATH], "history-diagram-stage-link", "0 0 100 100") : ""}`).join("")
+                    ? stages
+                        .map((stage, index) => {
+                            const flowClass = getHistoryStageFlowClass(index, stages.length);
+                            const gridStyle = getHistoryGridStyle(getHistoryStagePosition(index, stages.length));
+                            return `<div class="history-diagram-stage-slot ${flowClass} history-diagram-stage-slot--${index}" ${gridStyle}>${stage}</div>${renderHistoryStageConnector(index, stages.length)}`;
+                        })
+                        .join("")
                     : '<div class="history-empty">No saved flow sections are available for this analysis.</div>'}
             </div>
             ${renderHistoryDiagramExtras(diagram.extras, diagramOptions)}

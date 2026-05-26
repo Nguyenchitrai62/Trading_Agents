@@ -4897,12 +4897,43 @@ body.is-running .window-status {
 }
 
 .history-diagram {
-    display: flex;
+    --history-node-width: 104px;
+    --history-node-height: 62px;
+    --history-stage-gap: 12px;
+    display: grid;
+    grid-template-columns: minmax(352px, 2.25fr) minmax(24px, 0.14fr) minmax(104px, 0.72fr);
+    grid-auto-rows: auto;
     align-items: center;
-    gap: 4px;
+    gap: 12px 4px;
     width: 100%;
     max-width: 100%;
+    min-height: 300px;
     margin: 0 auto;
+}
+
+.history-diagram--count-1 {
+    grid-template-columns: minmax(352px, 1fr);
+}
+
+.history-diagram--count-3,
+.history-diagram--count-5 {
+    grid-template-columns: minmax(352px, 2.25fr) minmax(24px, 0.14fr) minmax(104px, 0.72fr) minmax(24px, 0.14fr) minmax(104px, 0.72fr);
+}
+
+.history-diagram--count-4 {
+    grid-template-columns: minmax(352px, 2.25fr) minmax(24px, 0.14fr) minmax(104px, 0.72fr);
+}
+
+.history-diagram--count-5 {
+    grid-template-rows: auto minmax(34px, auto) auto;
+}
+
+.history-diagram--count-4 {
+    grid-template-rows: auto minmax(34px, auto) auto;
+}
+
+.history-diagram-stage-slot {
+    min-width: 0;
 }
 
 .history-diagram-stage {
@@ -4927,23 +4958,25 @@ body.is-running .window-status {
 }
 
 .history-diagram-group--risk {
-    flex: 0 1 112px;
-    max-width: 118px;
+    max-width: 124px;
+}
+
+.history-diagram-flow-reverse .history-diagram-label {
+    justify-self: end;
 }
 
 .history-diagram-stage--research-intake {
     display: grid;
-    grid-template-columns: minmax(104px, 0.9fr) minmax(28px, 0.28fr) minmax(118px, 1fr);
+    grid-template-columns: minmax(108px, 0.58fr) minmax(42px, 0.22fr) minmax(210px, 1fr);
     align-items: center;
-    gap: 4px;
-    flex: 1 1 286px;
+    gap: 6px;
+    width: 100%;
 }
 
 .history-diagram-group--plan,
 .history-diagram-group--trader,
 .history-diagram-group--portfolio {
-    flex: 0 1 78px;
-    max-width: 82px;
+    max-width: 88px;
 }
 
 .history-diagram-label {
@@ -4964,14 +4997,21 @@ body.is-running .window-status {
 }
 
 .history-diagram-signal-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
-    width: 100%;
-    gap: 6px;
+    width: var(--history-node-width);
+    max-width: 100%;
+    gap: 8px;
 }
 
 .history-diagram-signal-lane {
     min-width: 0;
+}
+
+.history-diagram-single,
+.history-diagram-cluster-grid,
+.history-diagram-signal-lane {
+    justify-items: center;
 }
 
 .history-diagram-cluster {
@@ -5023,10 +5063,11 @@ body.is-running .window-status {
 
 .history-diagram-cluster-grid--risk {
     grid-template-columns: 1fr;
+    justify-items: center;
 }
 
 .history-diagram-cluster-grid--risk .history-diagram-node--risk {
-    width: 100%;
+    width: var(--history-node-width);
 }
 
 .history-diagram-curve-wire {
@@ -5044,13 +5085,18 @@ body.is-running .window-status {
 
 .history-diagram-signal-wires {
     align-self: stretch;
-    height: 150px;
+    height: 276px;
 }
 
 .history-diagram-stage-link {
-    flex: 0 1 18px;
     height: 78px;
-    min-width: 12px;
+    min-width: 0;
+    width: 100%;
+}
+
+.history-diagram-stage-link--turn {
+    align-self: center;
+    height: 44px;
 }
 
 .history-diagram-curve-base,
@@ -5097,9 +5143,11 @@ body.is-running .window-status {
     display: grid;
     place-items: center;
     gap: 5px;
-    min-height: 62px;
-    width: 100%;
-    min-width: 0;
+    width: var(--history-node-width);
+    min-width: var(--history-node-width);
+    max-width: 100%;
+    min-height: var(--history-node-height);
+    height: var(--history-node-height);
     padding: 8px 6px 7px;
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 14px;
@@ -5135,7 +5183,8 @@ body.is-running .window-status {
 }
 
 .history-diagram-node--compact {
-    min-height: 62px;
+    min-height: var(--history-node-height);
+    height: var(--history-node-height);
     padding: 8px 6px 7px;
     border-radius: 14px;
     justify-self: stretch;
@@ -5143,6 +5192,7 @@ body.is-running .window-status {
 
 .history-diagram-node--output {
     min-height: 66px;
+    height: 66px;
 }
 
 .history-diagram-node-head {
@@ -5192,8 +5242,9 @@ body.is-running .window-status {
     font-size: 0.6rem;
     font-weight: 800;
     line-height: 1.1;
-    white-space: nowrap;
-    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    overflow: hidden;
     text-align: center;
 }
 
@@ -5377,16 +5428,24 @@ body.is-running .window-status {
 
 @media (max-width: 760px) {
     .history-diagram {
-        gap: 3px;
+        --history-node-width: 98px;
+        grid-template-columns: minmax(316px, 1fr);
+        gap: 10px;
+        min-height: 0;
+    }
+
+    .history-diagram-stage-slot,
+    .history-diagram-stage-link {
+        grid-column: 1 !important;
+        grid-row: auto !important;
     }
 
     .history-diagram-stage--research-intake {
-        flex-basis: 270px;
-        grid-template-columns: minmax(96px, 0.9fr) minmax(24px, 0.22fr) minmax(108px, 1fr);
+        grid-template-columns: minmax(104px, 0.45fr) minmax(34px, 0.16fr) minmax(178px, 1fr);
     }
 
     .history-diagram-signal-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .history-diagram-cluster-grid--research,
@@ -5396,12 +5455,19 @@ body.is-running .window-status {
 
     .history-diagram-cluster-grid--research .history-diagram-node--debate,
     .history-diagram-cluster-grid--risk .history-diagram-node--risk {
-        width: 100%;
+        width: var(--history-node-width);
     }
 
     .history-diagram-stage-link {
-        flex-basis: 12px;
-        height: 68px;
+        height: 38px;
+        justify-self: center;
+        width: min(96px, 26vw);
+        transform: rotate(90deg);
+    }
+
+    .history-diagram-stage-link--turn {
+        transform: rotate(90deg);
+        height: 38px;
     }
 
     .history-diagram-stage--research-intake .history-diagram-cluster--research::before {
