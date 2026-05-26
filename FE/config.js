@@ -11,6 +11,7 @@
         intervals: ["5", "15", "60", "240", "D"],
     },
     analysisDefaults: {
+        // FE form defaults live here; backend /api/config should not override them.
         symbol: "BTC-USDT",
         assetType: "crypto",
         analysisDate: "",

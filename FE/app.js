@@ -67,8 +67,13 @@ const HISTORY_PAGE_SIZE = 10;
 const AUTH_STORAGE_KEY = "tradingagents.googleAuth";
 const CHART_SYMBOLS_STORAGE_KEY = "tradingagents.chartSymbols";
 const PAGES = ["agent", "history", "chart"];
-const DEFAULT_CHART_SYMBOLS = ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"];
-const DEFAULT_CHART_INTERVALS = ["5", "15", "60", "240", "D"];
+const FRONTEND_BOOTSTRAP = window.TRADINGAGENTS_CONFIG || {};
+const DEFAULT_CHART_SYMBOLS = Array.isArray(FRONTEND_BOOTSTRAP.tradingView?.symbols)
+    ? FRONTEND_BOOTSTRAP.tradingView.symbols
+    : ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"];
+const DEFAULT_CHART_INTERVALS = Array.isArray(FRONTEND_BOOTSTRAP.tradingView?.intervals)
+    ? FRONTEND_BOOTSTRAP.tradingView.intervals.map(String)
+    : ["5", "15", "60", "240", "D"];
 const CHART_INTERVAL_LABELS = {
     "5": "5m",
     "15": "15m",
@@ -347,8 +352,16 @@ function decodeJwtPayload(token = "") {
 }
 
 function isJwtExpired(profile = {}) {
+    if (isBackendSessionProfile(profile)) {
+        return false;
+    }
     const expiresAt = Number(profile.exp || 0) * 1000;
     return Boolean(expiresAt && expiresAt <= Date.now() + 30_000);
+}
+
+function isBackendSessionProfile(profile = {}) {
+    return String(profile.kind || "") === "frontend_session"
+        && String(profile.iss || "") === "tradingagents-session";
 }
 
 function normalizeAuthProfile(profile = {}) {
@@ -358,11 +371,13 @@ function normalizeAuthProfile(profile = {}) {
         picture: String(profile.picture || ""),
         sub: String(profile.sub || ""),
         exp: profile.exp || null,
+        iss: String(profile.iss || ""),
+        kind: String(profile.kind || ""),
     };
 }
 
 function readStoredAuth() {
-    const raw = safeReadSessionStorage(AUTH_STORAGE_KEY) || safeReadLocalStorage(AUTH_STORAGE_KEY);
+    const raw = safeReadLocalStorage(AUTH_STORAGE_KEY) || safeReadSessionStorage(AUTH_STORAGE_KEY);
     if (!raw) {
         return null;
     }
@@ -374,8 +389,8 @@ function readStoredAuth() {
             safeRemoveLocalStorage(AUTH_STORAGE_KEY);
             return null;
         }
-        safeWriteSessionStorage(AUTH_STORAGE_KEY, JSON.stringify({ idToken: stored.idToken, profile }));
-        safeRemoveLocalStorage(AUTH_STORAGE_KEY);
+        safeWriteLocalStorage(AUTH_STORAGE_KEY, JSON.stringify({ idToken: stored.idToken, profile }));
+        safeRemoveSessionStorage(AUTH_STORAGE_KEY);
         return { idToken: stored.idToken, profile };
     } catch {
         safeRemoveSessionStorage(AUTH_STORAGE_KEY);
@@ -711,8 +726,8 @@ function normalizeFrontendConfig() {
             analysis_date: defaults.analysisDate || defaults.analysis_date || todayIsoDate(),
             lookback_days: Number(defaults.lookbackDays || defaults.lookback_days || 7),
             output_language: defaults.outputLanguage || defaults.output_language || "Vietnamese",
-            selected_analysts: defaults.selectedAnalysts || defaults.selected_analysts || ["market", "social", "news"],
-            research_depth: defaults.researchDepth || defaults.research_depth || "medium",
+            selected_analysts: defaults.selectedAnalysts || defaults.selected_analysts || ["market", "social", "news", "fundamentals"],
+            research_depth: defaults.researchDepth || defaults.research_depth || "quick",
             model: defaultModel,
             checkpoint_enabled: Boolean(defaults.checkpointEnabled ?? defaults.checkpoint_enabled ?? false),
         },
@@ -744,7 +759,6 @@ function mergeBackendConfig(frontendConfig, backendConfig) {
     if (!backendConfig || typeof backendConfig !== "object") {
         return frontendConfig;
     }
-    const backendDefaults = backendConfig.analysis_defaults || {};
     return {
         ...frontendConfig,
         configured: backendConfig.configured ?? frontendConfig.configured,
@@ -764,9 +778,6 @@ function mergeBackendConfig(frontendConfig, backendConfig) {
         },
         analysis_defaults: {
             ...frontendConfig.analysis_defaults,
-            ...backendDefaults,
-            analysis_date: backendDefaults.analysis_date || frontendConfig.analysis_defaults.analysis_date,
-            model: backendDefaults.model || backendConfig.default_model || frontendConfig.analysis_defaults.model,
         },
     };
 }
@@ -809,6 +820,15 @@ function buildApiUrl(path) {
     return buildApiUrlFromBase(state.apiBaseUrl, path);
 }
 
+async function apiFetch(path, options = {}) {
+    const response = await fetch(buildApiUrl(path), options);
+    const requestHeaders = new Headers(options.headers || {});
+    if (response.status === 401 && requestHeaders.has("Authorization")) {
+        clearAuthState();
+    }
+    return response;
+}
+
 function getGoogleClientId() {
     return state.config?.auth?.google_client_id || "";
 }
@@ -823,7 +843,6 @@ function getAuthHeaders() {
     }
     return {
         Authorization: `Bearer ${state.auth.idToken}`,
-        "X-Google-ID-Token": state.auth.idToken,
     };
 }
 
@@ -833,14 +852,48 @@ function persistAuthState() {
         safeRemoveLocalStorage(AUTH_STORAGE_KEY);
         return;
     }
-    safeWriteSessionStorage(
+    safeWriteLocalStorage(
         AUTH_STORAGE_KEY,
         JSON.stringify({
             idToken: state.auth.idToken,
             profile: state.auth.profile,
         }),
     );
-    safeRemoveLocalStorage(AUTH_STORAGE_KEY);
+    safeRemoveSessionStorage(AUTH_STORAGE_KEY);
+}
+
+async function createBackendSession(googleIdToken) {
+    const response = await fetch(buildApiUrl("/api/auth/session"), {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id_token: googleIdToken }),
+        cache: "no-store",
+    });
+    if (!response.ok) {
+        const message = await readResponseError(response);
+        throw new Error(message);
+    }
+    return await response.json();
+}
+
+function applyBackendSession(sessionPayload, fallbackProfile = null) {
+    const sessionToken = String(sessionPayload?.session_token || "").trim();
+    if (!sessionToken) {
+        throw new Error("Backend did not return a valid session token.");
+    }
+    state.auth.idToken = sessionToken;
+    state.auth.profile = normalizeAuthProfile({
+        ...(fallbackProfile || {}),
+        ...decodeJwtPayload(sessionToken),
+        ...(sessionPayload?.user || {}),
+    });
+    state.auth.user = sessionPayload?.user || state.auth.user;
+    state.auth.isAuthorized = Boolean(sessionPayload?.user?.authorized ?? true);
+    state.auth.status = state.auth.isAuthorized ? "authorized" : "forbidden";
+    state.auth.error = "";
+    persistAuthState();
 }
 
 function clearAuthState() {
@@ -871,11 +924,18 @@ async function validateAuthSession() {
     state.auth.error = "";
     renderAuthState();
     try {
-        const response = await fetch(buildApiUrl("/api/auth/me"), {
+        if (!isBackendSessionProfile(state.auth.profile || {})) {
+            const sessionPayload = await createBackendSession(state.auth.idToken);
+            applyBackendSession(sessionPayload, state.auth.profile);
+        }
+        const response = await apiFetch("/api/auth/me", {
             headers: getAuthHeaders(),
             cache: "no-store",
         });
         if (!response.ok) {
+            if (!state.auth.idToken) {
+                return false;
+            }
             const message = await readResponseError(response);
             throw new Error(message);
         }
@@ -899,21 +959,27 @@ async function validateAuthSession() {
 
 async function setGoogleCredential(idToken) {
     const profile = normalizeAuthProfile(decodeJwtPayload(idToken));
-    state.auth.idToken = idToken;
+    state.auth.idToken = "";
     state.auth.profile = profile;
     state.auth.user = null;
     state.auth.status = "validating";
     state.auth.error = "";
-    persistAuthState();
-    const authorized = await validateAuthSession();
-    if (!authorized) {
-        throw new Error(state.auth.error || "This Google account is not allowed.");
-    }
+    renderAuthState();
+    const sessionPayload = await createBackendSession(idToken);
+    applyBackendSession(sessionPayload, profile);
+    renderAuthState();
 }
 
 async function ensureAuthorizedSession() {
     if (!state.auth.idToken) {
         throw new Error("Sign in with Google before running analysis.");
+    }
+    if (isBackendSessionProfile(state.auth.profile || {})) {
+        const authorized = await validateAuthSession();
+        if (!authorized) {
+            throw new Error(state.auth.error || "Session expired. Sign in with Google again.");
+        }
+        return true;
     }
     if (state.auth.isAuthorized && !isJwtExpired(state.auth.profile || {})) {
         return true;
@@ -1111,7 +1177,7 @@ function requestBackendCancel(runId) {
     if (!runId) {
         return Promise.resolve(null);
     }
-    return fetch(buildApiUrl(`/api/analyze/${encodeURIComponent(runId)}/cancel`), {
+    return apiFetch(`/api/analyze/${encodeURIComponent(runId)}/cancel`, {
         method: "POST",
         headers: getAuthHeaders(),
         keepalive: true,
@@ -2606,7 +2672,7 @@ async function loadHistoryList(force = false) {
     state.history.error = "";
     renderHistoryPage();
     try {
-        const response = await fetch(buildApiUrl(`/api/history?page=${state.history.page}&limit=${state.history.limit}`), {
+        const response = await apiFetch(`/api/history?page=${state.history.page}&limit=${state.history.limit}`, {
             headers: getAuthHeaders(),
             cache: "no-store",
         });
@@ -2639,7 +2705,7 @@ async function loadHistoryDetail(historyId) {
     state.history.detailLoading = true;
     renderHistoryPage();
     try {
-        const response = await fetch(buildApiUrl(`/api/history/${encodeURIComponent(historyId)}`), {
+        const response = await apiFetch(`/api/history/${encodeURIComponent(historyId)}`, {
             headers: getAuthHeaders(),
             cache: "no-store",
         });
@@ -3139,7 +3205,7 @@ async function runAnalysis() {
     renderAll();
 
     try {
-        const response = await fetch(buildApiUrl("/api/analyze"), {
+        const response = await apiFetch("/api/analyze", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
