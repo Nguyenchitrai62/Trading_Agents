@@ -63,6 +63,7 @@ const CUSTOM_LOOKBACK_VALUE = "__custom__";
 const TRACE_DISPLAY_LIMIT = 14;
 const LOG_DISPLAY_LIMIT = 12;
 const EXECUTION_LOG_DISPLAY_LIMIT = 80;
+const HISTORY_PAGE_SIZE = 10;
 const AUTH_STORAGE_KEY = "tradingagents.googleAuth";
 const CHART_SYMBOLS_STORAGE_KEY = "tradingagents.chartSymbols";
 const PAGES = ["agent", "history", "chart"];
@@ -238,6 +239,9 @@ function createEmptyHistoryState() {
         items: [],
         activeId: null,
         active: null,
+        page: 1,
+        limit: HISTORY_PAGE_SIZE,
+        hasMore: false,
         error: "",
     };
 }
@@ -305,6 +309,30 @@ function safeRemoveLocalStorage(key) {
     }
 }
 
+function safeReadSessionStorage(key) {
+    try {
+        return window.sessionStorage.getItem(key);
+    } catch {
+        return null;
+    }
+}
+
+function safeWriteSessionStorage(key, value) {
+    try {
+        window.sessionStorage.setItem(key, value);
+    } catch {
+        // Storage may be unavailable in private or embedded browser contexts.
+    }
+}
+
+function safeRemoveSessionStorage(key) {
+    try {
+        window.sessionStorage.removeItem(key);
+    } catch {
+        // Storage may be unavailable in private or embedded browser contexts.
+    }
+}
+
 function decodeJwtPayload(token = "") {
     try {
         const payload = token.split(".")[1] || "";
@@ -334,7 +362,7 @@ function normalizeAuthProfile(profile = {}) {
 }
 
 function readStoredAuth() {
-    const raw = safeReadLocalStorage(AUTH_STORAGE_KEY);
+    const raw = safeReadSessionStorage(AUTH_STORAGE_KEY) || safeReadLocalStorage(AUTH_STORAGE_KEY);
     if (!raw) {
         return null;
     }
@@ -342,11 +370,15 @@ function readStoredAuth() {
         const stored = JSON.parse(raw);
         const profile = normalizeAuthProfile(stored.profile || decodeJwtPayload(stored.idToken));
         if (!stored.idToken || isJwtExpired(profile)) {
+            safeRemoveSessionStorage(AUTH_STORAGE_KEY);
             safeRemoveLocalStorage(AUTH_STORAGE_KEY);
             return null;
         }
+        safeWriteSessionStorage(AUTH_STORAGE_KEY, JSON.stringify({ idToken: stored.idToken, profile }));
+        safeRemoveLocalStorage(AUTH_STORAGE_KEY);
         return { idToken: stored.idToken, profile };
     } catch {
+        safeRemoveSessionStorage(AUTH_STORAGE_KEY);
         safeRemoveLocalStorage(AUTH_STORAGE_KEY);
         return null;
     }
@@ -665,6 +697,7 @@ function normalizeFrontendConfig() {
         },
         history: {
             configured: Boolean(source.history?.configured ?? false),
+            public_read: Boolean(source.history?.publicRead ?? source.history?.public_read ?? true),
         },
         trading_view: {
             symbol: tradingView.symbol || "BINANCE:BTCUSDT",
@@ -780,6 +813,10 @@ function getGoogleClientId() {
     return state.config?.auth?.google_client_id || "";
 }
 
+function canReadHistory() {
+    return Boolean(state.auth.isAuthorized || state.config?.history?.public_read);
+}
+
 function getAuthHeaders() {
     if (!state.auth.idToken) {
         return {};
@@ -792,16 +829,18 @@ function getAuthHeaders() {
 
 function persistAuthState() {
     if (!state.auth.idToken || !state.auth.profile) {
+        safeRemoveSessionStorage(AUTH_STORAGE_KEY);
         safeRemoveLocalStorage(AUTH_STORAGE_KEY);
         return;
     }
-    safeWriteLocalStorage(
+    safeWriteSessionStorage(
         AUTH_STORAGE_KEY,
         JSON.stringify({
             idToken: state.auth.idToken,
             profile: state.auth.profile,
         }),
     );
+    safeRemoveLocalStorage(AUTH_STORAGE_KEY);
 }
 
 function clearAuthState() {
@@ -814,6 +853,7 @@ function clearAuthState() {
         initialized: state.auth.initialized,
         error: "",
     };
+    safeRemoveSessionStorage(AUTH_STORAGE_KEY);
     safeRemoveLocalStorage(AUTH_STORAGE_KEY);
     if (window.google?.accounts?.id) {
         window.google.accounts.id.disableAutoSelect();
@@ -931,10 +971,11 @@ function initializeGoogleAuth() {
             elements.googleSignInButton.innerHTML = "";
             window.google.accounts.id.renderButton(elements.googleSignInButton, {
                 type: "standard",
-                theme: "outline",
-                size: "medium",
+                theme: "filled_black",
+                size: "large",
                 shape: "pill",
                 text: "signin_with",
+                width: 224,
             });
         }
         renderAuthState();
@@ -2440,12 +2481,41 @@ function formatHistoryTimestamp(value = "") {
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+function buildHistorySummaryDetail(item) {
+    return {
+        item,
+        summaryOnly: true,
+        sections: [
+            {
+                section_key: "final_trade_decision",
+                title: "Final Decision",
+                agent: "Portfolio Manager",
+                team: "Portfolio Management",
+                markdown: item.final_markdown || "",
+                created_at: item.created_at,
+            },
+        ],
+    };
+}
+
+function selectHistorySummary(historyId) {
+    const item = state.history.items.find((entry) => entry.id === historyId);
+    if (!item) {
+        return;
+    }
+    state.history.activeId = historyId;
+    state.history.active = buildHistorySummaryDetail(item);
+    state.history.detailLoading = false;
+    state.history.error = "";
+    renderHistoryPage();
+}
+
 function renderHistoryPage() {
     if (!(elements.historyList instanceof HTMLElement) || !(elements.historyDetail instanceof HTMLElement)) {
         return;
     }
     const history = state.history;
-    if (!state.auth.isAuthorized) {
+    if (!canReadHistory()) {
         elements.historyStatusText.textContent = "Sign in required";
         elements.historyList.innerHTML = '<div class="history-empty">Sign in with the authorized Google account.</div>';
         elements.historyDetailTitle.textContent = "Analysis Detail";
@@ -2462,18 +2532,22 @@ function renderHistoryPage() {
         elements.historyStatusText.textContent = history.loaded ? "No saved analyses" : "Waiting";
         elements.historyList.innerHTML = '<div class="history-empty">No saved analyses yet.</div>';
     } else {
-        elements.historyStatusText.textContent = `${history.items.length} saved analyses`;
+        elements.historyStatusText.textContent = `${history.items.length} latest analyses`;
         elements.historyList.innerHTML = history.items
             .map(
                 (item) => `
-                    <button class="history-item ${item.id === history.activeId ? "is-active" : ""}" type="button" data-history-id="${escapeHtml(item.id)}">
-                        <span class="history-item-topline">
-                            <strong>${escapeHtml(item.symbol || "-")}</strong>
-                            <span>${escapeHtml(item.signal || "Completed")}</span>
-                        </span>
-                        <span class="history-item-meta">${escapeHtml(item.analysis_date || "-")} - ${escapeHtml(String(item.lookback_days || "-"))}d - ${escapeHtml(item.research_depth || "-")}</span>
-                        <span class="history-item-meta">${escapeHtml(formatHistoryTimestamp(item.created_at))} - ${escapeHtml(String(item.section_count || 0))} sections</span>
-                    </button>
+                    <article class="history-item ${item.id === history.activeId ? "is-active" : ""}">
+                        <div class="history-summary-button" role="button" tabindex="0" data-history-summary-id="${escapeHtml(item.id)}">
+                            <span class="history-item-topline">
+                                <strong>${escapeHtml(item.symbol || "-")}</strong>
+                                <span>${escapeHtml(item.signal || "Completed")}</span>
+                            </span>
+                            <span class="history-item-meta">${escapeHtml(item.analysis_date || "-")} - ${escapeHtml(String(item.lookback_days || "-"))}d - ${escapeHtml(item.research_depth || "-")}</span>
+                            <span class="history-item-meta">${escapeHtml(formatHistoryTimestamp(item.created_at))} - ${escapeHtml(String(item.section_count || 0))} sections</span>
+                            <div class="history-item-summary markdown-preview">${renderMarkdown(item.final_markdown || "", "Final markdown is not available for this run.")}</div>
+                        </div>
+                        <button class="history-detail-button" type="button" data-history-detail-id="${escapeHtml(item.id)}">Detail</button>
+                    </article>
                 `,
             )
             .join("");
@@ -2492,7 +2566,7 @@ function renderHistoryPage() {
 
     const item = history.active.item || {};
     const sections = history.active.sections || [];
-    elements.historyDetailTitle.textContent = `${item.symbol || "Analysis"} - ${item.analysis_date || ""}`.trim();
+    elements.historyDetailTitle.textContent = `${history.active.summaryOnly ? "Final Summary" : "Analysis Detail"} - ${item.symbol || "Analysis"} - ${item.analysis_date || ""}`.trim();
     elements.historyDetail.innerHTML = `
         <div class="history-detail-meta">
             <span>${escapeHtml(item.signal || "Completed")}</span>
@@ -2524,12 +2598,14 @@ async function loadHistoryList(force = false) {
         renderHistoryPage();
         return;
     }
-    await ensureAuthorizedSession();
+    if (!state.config?.history?.public_read) {
+        await ensureAuthorizedSession();
+    }
     state.history.loading = true;
     state.history.error = "";
     renderHistoryPage();
     try {
-        const response = await fetch(buildApiUrl("/api/history?limit=40"), {
+        const response = await fetch(buildApiUrl(`/api/history?page=${state.history.page}&limit=${state.history.limit}`), {
             headers: getAuthHeaders(),
             cache: "no-store",
         });
@@ -2538,6 +2614,9 @@ async function loadHistoryList(force = false) {
         }
         const payload = await response.json();
         state.history.items = payload.items || [];
+        state.history.page = Number(payload.page || 1);
+        state.history.limit = Number(payload.limit || HISTORY_PAGE_SIZE);
+        state.history.hasMore = Boolean(payload.has_more);
         state.history.loaded = true;
     } catch (error) {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history.");
@@ -2551,7 +2630,9 @@ async function loadHistoryDetail(historyId) {
     if (!historyId) {
         return;
     }
-    await ensureAuthorizedSession();
+    if (!state.config?.history?.public_read) {
+        await ensureAuthorizedSession();
+    }
     state.history.activeId = historyId;
     state.history.active = null;
     state.history.detailLoading = true;
@@ -3158,12 +3239,31 @@ elements.historyList.addEventListener("click", (event) => {
     if (!(target instanceof HTMLElement)) {
         return;
     }
-    const item = target.closest("[data-history-id]");
-    if (item instanceof HTMLElement) {
-        loadHistoryDetail(item.dataset.historyId).catch((error) => {
+    const detailButton = target.closest("[data-history-detail-id]");
+    if (detailButton instanceof HTMLElement) {
+        loadHistoryDetail(detailButton.dataset.historyDetailId).catch((error) => {
             state.history.error = error instanceof Error ? error.message : String(error || "Could not load history detail.");
             renderHistoryPage();
         });
+        return;
+    }
+    const summaryButton = target.closest("[data-history-summary-id]");
+    if (summaryButton instanceof HTMLElement) {
+        selectHistorySummary(summaryButton.dataset.historySummaryId);
+    }
+});
+elements.historyList.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+        return;
+    }
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const summaryButton = target.closest("[data-history-summary-id]");
+    if (summaryButton instanceof HTMLElement) {
+        event.preventDefault();
+        selectHistorySummary(summaryButton.dataset.historySummaryId);
     }
 });
 elements.chartSymbolList.addEventListener("click", (event) => {

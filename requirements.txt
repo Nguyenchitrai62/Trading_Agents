@@ -4,6 +4,7 @@
 anthropic>=0.57.0
 ccxt>=4.4.90
 fastapi>=0.115.0
+google-auth>=2.40.0
 langchain-core>=0.3.81
 backtrader>=1.9.78.123
 langchain-anthropic>=0.3.15

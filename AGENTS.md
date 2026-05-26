@@ -93,7 +93,6 @@ Mục tiêu sản phẩm không phải là giữ nguyên CLI cũ. Mục tiêu l�
 - `tradingagents/graph/trading_graph.py`: core orchestration của TradingAgentsGraph.
 - `tradingagents/graph/analyst_execution.py`: analyst node mapping và report mapping.
 - `tradingagents/default_config.py`: default runtime config của graph.
-- `.env.example`: tài liệu hóa các biến môi trường cần dùng.
 - `requirements.txt`: nguồn cài dependency duy nhất.
 
 ## Definition Of Done For Core Product Work

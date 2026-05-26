@@ -9,6 +9,7 @@ import os
 import uuid
 import threading
 import time
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from copy import deepcopy
 from datetime import date, datetime
 from pathlib import Path
@@ -23,6 +24,13 @@ from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from pydantic import BaseModel, Field, field_validator
 import requests
+
+try:
+    from google.auth.transport import requests as google_auth_requests
+    from google.oauth2 import id_token as google_id_token
+except ImportError:
+    google_auth_requests = None
+    google_id_token = None
 
 ROOT_DIR = Path(__file__).resolve().parent
 load_dotenv(ROOT_DIR / ".env")
@@ -171,6 +179,42 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _env_csv(name: str, default: str = "") -> list[str]:
+    raw = os.getenv(name, default).strip()
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _normalize_origin(value: str) -> str:
+    origin = value.strip()
+    if origin == "*":
+        return origin
+    return origin.rstrip("/")
+
+
+def _configured_cors_origins() -> list[str]:
+    configured = [_normalize_origin(origin) for origin in _env_csv("CORS_ALLOW_ORIGINS")]
+    if configured:
+        return configured
+
+    frontend_origin = _normalize_origin(
+        os.getenv("FRONTEND_ORIGIN", "")
+        or os.getenv("FRONTEND_URL", "")
+        or os.getenv("PUBLIC_FRONTEND_URL", "")
+    )
+    defaults = [
+        "https://crypto.nguyenchitrai.id.vn",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+    ]
+    if frontend_origin:
+        defaults.insert(0, frontend_origin)
+    return list(dict.fromkeys(defaults))
+
+
 def _memory_limit_mb() -> int | None:
     candidates: list[int] = []
     for path in (
@@ -233,13 +277,18 @@ DEFAULT_MODEL = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
 DEFAULT_ASSET_TYPE = "crypto"
 DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
-GOOGLE_ALLOWED_EMAIL = os.getenv("GOOGLE_ALLOWED_EMAIL", "trainguyenchi30@gmail.com").strip().lower()
+GOOGLE_ALLOWED_EMAIL = os.getenv("GOOGLE_ALLOWED_EMAIL", "").strip().lower()
+GOOGLE_ALLOWED_EMAILS = {
+    email.lower()
+    for email in _env_csv("GOOGLE_ALLOWED_EMAILS", GOOGLE_ALLOWED_EMAIL)
+}
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "").strip()
 TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "").strip()
 RESOURCE_CONSTRAINED_MODE = False
 ANALYSIS_CPU_THREADS = _configured_cpu_threads()
+ANALYSIS_DEFAULT_CONCURRENT_RUNS = 1 if (_memory_limit_mb() or 0) and (_memory_limit_mb() or 0) < 1024 else min(2, ANALYSIS_CPU_THREADS)
 DEFAULT_RESEARCH_DEPTH = "medium"
 DEFAULT_SELECTED_ANALYSTS = DEFAULT_ANALYSTS.copy()
 DEFAULT_CHECKPOINT_ENABLED = False
@@ -248,7 +297,10 @@ ANALYSIS_VERBOSE_RUNTIME_LOGS = _env_bool(
     "ANALYSIS_VERBOSE_RUNTIME_LOGS",
     not RESOURCE_CONSTRAINED_MODE,
 )
-ANALYSIS_MAX_CONCURRENT_RUNS = max(2, ANALYSIS_CPU_THREADS)
+ANALYSIS_MAX_CONCURRENT_RUNS = max(
+    1,
+    _env_int("ANALYSIS_MAX_CONCURRENT_RUNS", ANALYSIS_DEFAULT_CONCURRENT_RUNS),
+)
 ANALYSIS_SSE_QUEUE_MAXSIZE = max(
     8,
     _env_int("ANALYSIS_SSE_QUEUE_MAXSIZE", 32 if RESOURCE_CONSTRAINED_MODE else 128),
@@ -261,12 +313,11 @@ ANALYSIS_TRACE_CHAR_LIMIT = max(
     400,
     _env_int("ANALYSIS_TRACE_CHAR_LIMIT", 1800 if RESOURCE_CONSTRAINED_MODE else 4000),
 )
+AUTH_CACHE_MAX_ENTRIES = max(8, _env_int("AUTH_CACHE_MAX_ENTRIES", 256))
+HISTORY_PUBLIC_READ = _env_bool("HISTORY_PUBLIC_READ", True)
+HISTORY_PAGE_SIZE = 10
 DROPPABLE_SSE_EVENTS = {"analysis_log", "agent_trace"}
-CORS_ALLOW_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",")
-    if origin.strip()
-]
+CORS_ALLOW_ORIGINS = _configured_cors_origins()
 ALLOW_ALL_ORIGINS = not CORS_ALLOW_ORIGINS or CORS_ALLOW_ORIGINS == ["*"]
 
 app = FastAPI(title=APP_TITLE, version=APP_VERSION)
@@ -284,6 +335,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 app.mount("/FE", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
 if IMAGE_DIR.exists():
@@ -370,6 +432,7 @@ class TursoHistoryStore:
         self.database_url = database_url.strip()
         self.auth_token = auth_token.strip()
         self._schema_ready = False
+        self._schema_error = ""
         self._schema_lock = threading.Lock()
 
     @property
@@ -414,9 +477,11 @@ class TursoHistoryStore:
                 return raw
         return raw
 
-    def _execute(self, sql: str, args: list[object] | None = None) -> dict:
+    def _execute_many(self, statements: list[tuple[str, list[object] | None]]) -> list[dict]:
         if not self.configured:
             raise RuntimeError("Turso history database is not configured.")
+        if not statements:
+            return []
         response = requests.post(
             self.pipeline_url,
             headers={
@@ -431,19 +496,28 @@ class TursoHistoryStore:
                             "sql": sql,
                             "args": [self._value_to_hrana(arg) for arg in (args or [])],
                         },
-                    },
+                    }
+                    for sql, args in statements
+                ] + [
                     {"type": "close"},
                 ]
             },
-            timeout=15,
+            timeout=20,
         )
         response.raise_for_status()
         payload = response.json()
-        result = (payload.get("results") or [{}])[0]
-        if result.get("type") == "error":
-            error = result.get("error") or {}
-            raise RuntimeError(error.get("message") or "Turso SQL execution failed.")
-        return ((result.get("response") or {}).get("result") or {})
+        results = payload.get("results") or []
+        output: list[dict] = []
+        for result in results[:len(statements)]:
+            if result.get("type") == "error":
+                error = result.get("error") or {}
+                raise RuntimeError(error.get("message") or "Turso SQL execution failed.")
+            output.append(((result.get("response") or {}).get("result") or {}))
+        return output
+
+    def _execute(self, sql: str, args: list[object] | None = None) -> dict:
+        results = self._execute_many([(sql, args)])
+        return results[0] if results else {}
 
     def _query_rows(self, sql: str, args: list[object] | None = None) -> list[dict]:
         result = self._execute(sql, args)
@@ -454,6 +528,10 @@ class TursoHistoryStore:
             rows.append(dict(zip(columns, row_values)))
         return rows
 
+    def _table_columns(self, table_name: str) -> set[str]:
+        rows = self._query_rows(f"PRAGMA table_info({table_name})")
+        return {str(row.get("name") or "") for row in rows if row.get("name")}
+
     def ensure_schema(self) -> None:
         if not self.configured or self._schema_ready:
             return
@@ -461,6 +539,7 @@ class TursoHistoryStore:
             if self._schema_ready:
                 return
             statements = [
+                "PRAGMA foreign_keys = ON",
                 """
                 CREATE TABLE IF NOT EXISTS analysis_runs (
                     id TEXT PRIMARY KEY,
@@ -473,6 +552,7 @@ class TursoHistoryStore:
                     model TEXT NOT NULL,
                     signal TEXT,
                     elapsed_seconds REAL,
+                    section_count INTEGER NOT NULL DEFAULT 0,
                     user_email TEXT NOT NULL,
                     user_sub TEXT,
                     created_at TEXT NOT NULL
@@ -492,12 +572,76 @@ class TursoHistoryStore:
                     FOREIGN KEY(run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS auth_users (
+                    email TEXT PRIMARY KEY,
+                    google_sub TEXT,
+                    name TEXT,
+                    picture TEXT,
+                    email_verified INTEGER NOT NULL DEFAULT 0,
+                    first_seen_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL
+                )
+                """,
                 "CREATE INDEX IF NOT EXISTS idx_analysis_runs_user_created ON analysis_runs(user_email, created_at DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_runs_created ON analysis_runs(created_at DESC)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_runs_user_symbol_date ON analysis_runs(user_email, symbol, analysis_date DESC)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_sections_run_order ON analysis_sections(run_id, display_order)",
+                "CREATE INDEX IF NOT EXISTS idx_auth_users_google_sub ON auth_users(google_sub)",
+                "CREATE INDEX IF NOT EXISTS idx_auth_users_last_seen ON auth_users(last_seen_at DESC)",
             ]
-            for statement in statements:
-                self._execute(statement)
+            self._execute_many([(statement, None) for statement in statements])
+            run_columns = self._table_columns("analysis_runs")
+            migration_statements: list[tuple[str, list[object] | None]] = []
+            if "section_count" not in run_columns:
+                migration_statements.append(("ALTER TABLE analysis_runs ADD COLUMN section_count INTEGER NOT NULL DEFAULT 0", None))
+            user_columns = self._table_columns("auth_users")
+            if "email_verified" not in user_columns:
+                migration_statements.append(("ALTER TABLE auth_users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0", None))
+            if migration_statements:
+                self._execute_many(migration_statements)
+            self._execute(
+                """
+                UPDATE analysis_runs
+                SET section_count = (
+                    SELECT COUNT(*) FROM analysis_sections s WHERE s.run_id = analysis_runs.id
+                )
+                WHERE section_count = 0
+                """
+            )
             self._schema_ready = True
+            self._schema_error = ""
+
+    def upsert_user(self, user: dict) -> None:
+        if not self.configured:
+            return
+        self.ensure_schema()
+        email = str(user.get("email") or "").strip().lower()
+        if not email:
+            return
+        seen_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        self._execute(
+            """
+            INSERT INTO auth_users (
+                email, google_sub, name, picture, email_verified, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(email) DO UPDATE SET
+                google_sub = excluded.google_sub,
+                name = excluded.name,
+                picture = excluded.picture,
+                email_verified = excluded.email_verified,
+                last_seen_at = excluded.last_seen_at
+            """,
+            [
+                email,
+                user.get("sub"),
+                user.get("name"),
+                user.get("picture"),
+                bool(user.get("email_verified", True)),
+                seen_at,
+                seen_at,
+            ],
+        )
 
     def save_analysis(
         self,
@@ -513,84 +657,119 @@ class TursoHistoryStore:
         self.ensure_schema()
         run_id = request.run_id or f"history-{uuid.uuid4().hex}"
         created_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-        self._execute(
-            """
-            INSERT INTO analysis_runs (
-                id, symbol, asset_type, analysis_date, lookback_days, output_language,
-                research_depth, model, signal, elapsed_seconds, user_email, user_sub, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                symbol = excluded.symbol,
-                asset_type = excluded.asset_type,
-                analysis_date = excluded.analysis_date,
-                lookback_days = excluded.lookback_days,
-                output_language = excluded.output_language,
-                research_depth = excluded.research_depth,
-                model = excluded.model,
-                signal = excluded.signal,
-                elapsed_seconds = excluded.elapsed_seconds,
-                user_email = excluded.user_email,
-                user_sub = excluded.user_sub,
-                created_at = excluded.created_at
-            """,
-            [
-                run_id,
-                symbol,
-                request.asset_type,
-                request.analysis_date,
-                request.lookback_days,
-                request.output_language,
-                request.research_depth,
-                request.model,
-                signal,
-                elapsed_seconds,
-                user.get("email"),
-                user.get("sub"),
-                created_at,
-            ],
-        )
-        self._execute("DELETE FROM analysis_sections WHERE run_id = ?", [run_id])
-        for index, section in enumerate(sections):
-            markdown = str(section.get("markdown") or "").strip()
-            if not markdown:
-                continue
-            section_id = hashlib.sha1(f"{run_id}:{section.get('section_key')}".encode()).hexdigest()
-            self._execute(
+        clean_sections = [section for section in sections if str(section.get("markdown") or "").strip()]
+        statements: list[tuple[str, list[object] | None]] = [
+            (
                 """
-                INSERT INTO analysis_sections (
-                    id, run_id, section_key, title, agent, team, display_order, markdown, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO analysis_runs (
+                    id, symbol, asset_type, analysis_date, lookback_days, output_language,
+                    research_depth, model, signal, elapsed_seconds, section_count, user_email, user_sub, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    asset_type = excluded.asset_type,
+                    analysis_date = excluded.analysis_date,
+                    lookback_days = excluded.lookback_days,
+                    output_language = excluded.output_language,
+                    research_depth = excluded.research_depth,
+                    model = excluded.model,
+                    signal = excluded.signal,
+                    elapsed_seconds = excluded.elapsed_seconds,
+                    section_count = excluded.section_count,
+                    user_email = excluded.user_email,
+                    user_sub = excluded.user_sub,
+                    created_at = excluded.created_at
                 """,
                 [
-                    section_id,
                     run_id,
-                    section.get("section_key"),
-                    section.get("title"),
-                    section.get("agent"),
-                    section.get("team"),
-                    index,
-                    markdown,
+                    symbol,
+                    request.asset_type,
+                    request.analysis_date,
+                    request.lookback_days,
+                    request.output_language,
+                    request.research_depth,
+                    request.model,
+                    signal,
+                    elapsed_seconds,
+                    len(clean_sections),
+                    user.get("email"),
+                    user.get("sub"),
                     created_at,
                 ],
+            ),
+            ("DELETE FROM analysis_sections WHERE run_id = ?", [run_id]),
+        ]
+        for index, section in enumerate(clean_sections):
+            markdown = str(section.get("markdown") or "").strip()
+            section_id = hashlib.sha1(f"{run_id}:{section.get('section_key')}".encode()).hexdigest()
+            statements.append(
+                (
+                    """
+                    INSERT INTO analysis_sections (
+                        id, run_id, section_key, title, agent, team, display_order, markdown, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        section_id,
+                        run_id,
+                        section.get("section_key"),
+                        section.get("title"),
+                        section.get("agent"),
+                        section.get("team"),
+                        index,
+                        markdown,
+                        created_at,
+                    ],
+                )
             )
+        self._execute_many(statements)
         return run_id
 
-    def list_runs(self, user_email: str, limit: int = 40) -> list[dict]:
+    def list_runs(self, user_email: str, limit: int = HISTORY_PAGE_SIZE, offset: int = 0) -> list[dict]:
         self.ensure_schema()
         return self._query_rows(
             """
             SELECT
                 r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
                 r.output_language, r.research_depth, r.model, r.signal,
-                r.elapsed_seconds, r.created_at, COUNT(s.id) AS section_count
+                r.elapsed_seconds, r.created_at, r.section_count,
+                (
+                    SELECT s.markdown
+                    FROM analysis_sections s
+                    WHERE s.run_id = r.id AND s.section_key = 'final_trade_decision'
+                    ORDER BY s.display_order DESC
+                    LIMIT 1
+                ) AS final_markdown
             FROM analysis_runs r
-            LEFT JOIN analysis_sections s ON s.run_id = r.id
             WHERE r.user_email = ?
-            GROUP BY r.id
             ORDER BY r.created_at DESC
             LIMIT ?
+            OFFSET ?
             """,
-            [user_email, limit],
+            [user_email, limit, offset],
+        )
+
+    def list_public_runs(self, limit: int = HISTORY_PAGE_SIZE, offset: int = 0) -> list[dict]:
+        self.ensure_schema()
+        return self._query_rows(
+            """
+            SELECT
+                id, symbol, asset_type, analysis_date, lookback_days,
+                output_language, research_depth, model, signal,
+                elapsed_seconds, created_at, section_count,
+                (
+                    SELECT s.markdown
+                    FROM analysis_sections s
+                    WHERE s.run_id = analysis_runs.id AND s.section_key = 'final_trade_decision'
+                    ORDER BY s.display_order DESC
+                    LIMIT 1
+                ) AS final_markdown
+            FROM analysis_runs
+            ORDER BY created_at DESC
+            LIMIT ?
+            OFFSET ?
+            """,
+            [limit, offset],
         )
 
     def get_run(self, run_id: str, user_email: str) -> dict | None:
@@ -618,6 +797,31 @@ class TursoHistoryStore:
         )
         return {"item": runs[0], "sections": sections}
 
+    def get_public_run(self, run_id: str) -> dict | None:
+        self.ensure_schema()
+        runs = self._query_rows(
+            """
+            SELECT id, symbol, asset_type, analysis_date, lookback_days,
+                output_language, research_depth, model, signal, elapsed_seconds, created_at
+            FROM analysis_runs
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [run_id],
+        )
+        if not runs:
+            return None
+        sections = self._query_rows(
+            """
+            SELECT section_key, title, agent, team, markdown, created_at
+            FROM analysis_sections
+            WHERE run_id = ?
+            ORDER BY display_order ASC
+            """,
+            [run_id],
+        )
+        return {"item": runs[0], "sections": sections}
+
 
 HISTORY_STORE = TursoHistoryStore(TURSO_DATABASE_URL, TURSO_AUTH_TOKEN)
 
@@ -627,8 +831,12 @@ async def initialize_history_database() -> None:
     if not HISTORY_STORE.configured:
         logger.warning("Turso history database is not configured; history persistence is disabled.")
         return
-    await asyncio.to_thread(HISTORY_STORE.ensure_schema)
-    logger.info("Turso history database schema is ready.")
+    try:
+        await asyncio.to_thread(HISTORY_STORE.ensure_schema)
+        logger.info("Turso history database schema is ready.")
+    except Exception as exc:
+        HISTORY_STORE._schema_error = str(exc)
+        logger.exception("Turso history database bootstrap failed; history persistence will retry lazily.")
 
 
 def _extract_auth_token(request: Request) -> str:
@@ -638,16 +846,36 @@ def _extract_auth_token(request: Request) -> str:
     return request.headers.get("X-Google-ID-Token", "").strip()
 
 
-def _validate_google_id_token(token: str) -> dict:
-    if not token:
-        raise HTTPException(status_code=401, detail="Sign in with Google before running analysis.")
+def _prune_auth_cache(now: float) -> None:
+    expired_keys = [key for key, (expires_at, _) in AUTH_CACHE.items() if expires_at <= now]
+    for key in expired_keys:
+        AUTH_CACHE.pop(key, None)
+    overflow = len(AUTH_CACHE) - AUTH_CACHE_MAX_ENTRIES
+    if overflow <= 0:
+        return
+    oldest_keys = [
+        key
+        for key, _ in sorted(AUTH_CACHE.items(), key=lambda item: item[1][0])[:overflow]
+    ]
+    for key in oldest_keys:
+        AUTH_CACHE.pop(key, None)
 
-    token_hash = hashlib.sha256(token.encode("utf-8", errors="ignore")).hexdigest()
-    now = time.time()
-    with AUTH_CACHE_LOCK:
-        cached = AUTH_CACHE.get(token_hash)
-        if cached and cached[0] > now:
-            return cached[1]
+
+def _verify_google_id_token(token: str) -> dict:
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID is not configured on the backend.")
+
+    if google_id_token is not None and google_auth_requests is not None:
+        try:
+            return google_id_token.verify_oauth2_token(
+                token,
+                google_auth_requests.Request(),
+                GOOGLE_CLIENT_ID,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=401, detail="Google sign-in token is invalid or expired.") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=401, detail="Could not verify Google sign-in token.") from exc
 
     try:
         response = requests.get(GOOGLE_TOKENINFO_URL, params={"id_token": token}, timeout=8)
@@ -658,14 +886,32 @@ def _validate_google_id_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Google sign-in token is invalid or expired.")
 
     payload = response.json()
-    email = str(payload.get("email") or "").strip().lower()
-    email_verified = str(payload.get("email_verified") or "").lower() == "true"
     audience = str(payload.get("aud") or "").strip()
-    if GOOGLE_CLIENT_ID and audience != GOOGLE_CLIENT_ID:
+    if audience != GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=401, detail="Google sign-in token was issued for a different client.")
+    return payload
+
+
+def _validate_google_id_token(token: str) -> dict:
+    if not token:
+        raise HTTPException(status_code=401, detail="Sign in with Google before running analysis.")
+    if not GOOGLE_ALLOWED_EMAILS:
+        raise HTTPException(status_code=500, detail="GOOGLE_ALLOWED_EMAIL or GOOGLE_ALLOWED_EMAILS is not configured.")
+
+    token_hash = hashlib.sha256(token.encode("utf-8", errors="ignore")).hexdigest()
+    now = time.time()
+    with AUTH_CACHE_LOCK:
+        _prune_auth_cache(now)
+        cached = AUTH_CACHE.get(token_hash)
+        if cached and cached[0] > now:
+            return cached[1]
+
+    payload = _verify_google_id_token(token)
+    email = str(payload.get("email") or "").strip().lower()
+    email_verified = payload.get("email_verified") is True or str(payload.get("email_verified") or "").lower() == "true"
     if not email or not email_verified:
         raise HTTPException(status_code=403, detail="Google account email is not verified.")
-    if email != GOOGLE_ALLOWED_EMAIL:
+    if email not in GOOGLE_ALLOWED_EMAILS:
         raise HTTPException(status_code=403, detail="This Google account is not allowed to run analysis.")
 
     user = {
@@ -673,6 +919,7 @@ def _validate_google_id_token(token: str) -> dict:
         "sub": str(payload.get("sub") or ""),
         "name": str(payload.get("name") or ""),
         "picture": str(payload.get("picture") or ""),
+        "email_verified": True,
         "authorized": True,
     }
     try:
@@ -686,7 +933,13 @@ def _validate_google_id_token(token: str) -> dict:
 
 async def require_authorized_user(request: Request) -> dict:
     token = _extract_auth_token(request)
-    return await asyncio.to_thread(_validate_google_id_token, token)
+    user = await asyncio.to_thread(_validate_google_id_token, token)
+    if HISTORY_STORE.configured:
+        try:
+            await asyncio.to_thread(HISTORY_STORE.upsert_user, user)
+        except Exception:
+            logger.warning("Could not persist Google user profile to history database.", exc_info=True)
+    return user
 
 
 def build_history_sections(final_state: dict) -> list[dict]:
@@ -1814,6 +2067,18 @@ async def generate_analysis_stream(
     queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=ANALYSIS_SSE_QUEUE_MAXSIZE)
     stream_started_at = time.time()
     cancel_event = threading.Event()
+    slot_release_lock = threading.Lock()
+    slot_released = False
+
+    def release_slot_once() -> None:
+        nonlocal slot_released
+        if not reserved_slot:
+            return
+        with slot_release_lock:
+            if slot_released:
+                return
+            _release_analysis_slot()
+            slot_released = True
 
     if analysis_request.run_id:
         with ACTIVE_ANALYSIS_LOCK:
@@ -1830,10 +2095,21 @@ async def generate_analysis_stream(
         return True
 
     def emit(event: str, data: dict) -> None:
-        asyncio.run_coroutine_threadsafe(
+        if cancel_event.is_set() and event not in {"cancelled", "error"}:
+            return
+        future = asyncio.run_coroutine_threadsafe(
             queue_sse_item(_sse(event, data), event in DROPPABLE_SSE_EVENTS),
             loop,
-        ).result()
+        )
+        try:
+            future.result(timeout=1.0 if cancel_event.is_set() else None)
+        except FutureTimeoutError:
+            future.cancel()
+            logger.warning(
+                "dropping SSE event after client cancellation: run_id=%s event=%s",
+                analysis_request.run_id,
+                event,
+            )
 
     def worker() -> None:
         try:
@@ -1854,7 +2130,15 @@ async def generate_analysis_stream(
             logger.exception("analysis stream crashed")
             emit("error", {"error": str(exc)})
         finally:
-            asyncio.run_coroutine_threadsafe(queue.put(None), loop).result()
+            try:
+                finish_future = asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+                finish_future.result(timeout=1.0)
+            except FutureTimeoutError:
+                finish_future.cancel()
+            except RuntimeError:
+                pass
+            finally:
+                release_slot_once()
 
     worker_task = asyncio.create_task(asyncio.to_thread(worker))
     try:
@@ -1912,8 +2196,6 @@ async def generate_analysis_stream(
         if analysis_request.run_id:
             with ACTIVE_ANALYSIS_LOCK:
                 ACTIVE_ANALYSIS_CANCEL_EVENTS.pop(analysis_request.run_id, None)
-        if reserved_slot:
-            _release_analysis_slot()
         if not worker_task.done():
             cancel_event.set()
             try:
@@ -1956,7 +2238,7 @@ async def health_check() -> dict:
             "max_concurrent_runs": ANALYSIS_MAX_CONCURRENT_RUNS,
             "llm_max_tokens": ANALYSIS_LLM_MAX_TOKENS,
         },
-        "modes": ["analysis", "chat"],
+        "modes": ["analysis"],
     }
 
 
@@ -1984,6 +2266,8 @@ async def public_config() -> dict:
         "history": {
             "configured": HISTORY_STORE.configured,
             "schema_ready": HISTORY_STORE._schema_ready,
+            "public_read": HISTORY_PUBLIC_READ,
+            "page_size": HISTORY_PAGE_SIZE,
         },
         "trading_view": {
             "symbol": os.getenv("TRADING_VIEW_SYMBOL", "BINANCE:BTCUSDT"),
@@ -2000,28 +2284,53 @@ async def auth_me(http_request: Request) -> dict:
 
 
 @app.get("/api/history")
-async def list_analysis_history(http_request: Request, limit: int = 40) -> dict:
-    user = await require_authorized_user(http_request)
+async def list_analysis_history(http_request: Request, page: int = 1, limit: int = HISTORY_PAGE_SIZE) -> dict:
     if not HISTORY_STORE.configured:
         raise HTTPException(status_code=503, detail="Turso history database is not configured.")
-    safe_limit = max(1, min(int(limit or 40), 100))
-    items = await asyncio.to_thread(HISTORY_STORE.list_runs, user["email"], safe_limit)
-    return {"items": items, "configured": True}
+    safe_page = max(1, int(page or 1))
+    safe_limit = max(1, min(int(limit or HISTORY_PAGE_SIZE), HISTORY_PAGE_SIZE))
+    offset = (safe_page - 1) * safe_limit
+    if HISTORY_PUBLIC_READ:
+        rows = await asyncio.to_thread(HISTORY_STORE.list_public_runs, safe_limit + 1, offset)
+        items = rows[:safe_limit]
+        return {
+            "items": items,
+            "configured": True,
+            "public_read": True,
+            "page": safe_page,
+            "limit": safe_limit,
+            "has_more": len(rows) > safe_limit,
+        }
+    user = await require_authorized_user(http_request)
+    rows = await asyncio.to_thread(HISTORY_STORE.list_runs, user["email"], safe_limit + 1, offset)
+    items = rows[:safe_limit]
+    return {
+        "items": items,
+        "configured": True,
+        "public_read": False,
+        "page": safe_page,
+        "limit": safe_limit,
+        "has_more": len(rows) > safe_limit,
+    }
 
 
 @app.get("/api/history/{run_id}")
 async def get_analysis_history(run_id: str, http_request: Request) -> dict:
-    user = await require_authorized_user(http_request)
     if not HISTORY_STORE.configured:
         raise HTTPException(status_code=503, detail="Turso history database is not configured.")
-    result = await asyncio.to_thread(HISTORY_STORE.get_run, run_id, user["email"])
+    if HISTORY_PUBLIC_READ:
+        result = await asyncio.to_thread(HISTORY_STORE.get_public_run, run_id)
+    else:
+        user = await require_authorized_user(http_request)
+        result = await asyncio.to_thread(HISTORY_STORE.get_run, run_id, user["email"])
     if result is None:
         raise HTTPException(status_code=404, detail="Analysis history item was not found.")
     return result
 
 
 @app.post("/api/chat")
-async def chat_completion(request: ChatRequest):
+async def chat_completion(request: ChatRequest, http_request: Request):
+    await require_authorized_user(http_request)
     if not request.messages:
         raise HTTPException(status_code=400, detail="Messages cannot be empty")
 
@@ -2035,7 +2344,8 @@ async def chat_completion(request: ChatRequest):
 
 
 @app.post("/api/analyze/{run_id}/cancel")
-async def cancel_trading_analysis(run_id: str) -> dict:
+async def cancel_trading_analysis(run_id: str, http_request: Request) -> dict:
+    await require_authorized_user(http_request)
     with ACTIVE_ANALYSIS_LOCK:
         cancel_event = ACTIVE_ANALYSIS_CANCEL_EVENTS.get(run_id)
 
