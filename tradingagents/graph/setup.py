@@ -22,6 +22,8 @@ class GraphSetup:
         tool_nodes: Dict[str, ToolNode],
         conditional_logic: ConditionalLogic,
         analyst_concurrency_limit: int = 1,
+        analyst_trace_callback=None,
+        cancel_check=None,
     ):
         """Initialize with required components."""
         self.quick_thinking_llm = quick_thinking_llm
@@ -29,6 +31,8 @@ class GraphSetup:
         self.tool_nodes = tool_nodes
         self.conditional_logic = conditional_logic
         self.analyst_concurrency_limit = analyst_concurrency_limit
+        self.analyst_trace_callback = analyst_trace_callback
+        self.cancel_check = cancel_check
 
     def setup_graph(
         self, selected_analysts=["market", "social", "news", "fundamentals"]
@@ -80,6 +84,8 @@ class GraphSetup:
                     plan,
                     analyst_factories,
                     self.tool_nodes,
+                    trace_callback=self.analyst_trace_callback,
+                    cancel_check=self.cancel_check,
                 ),
             )
         else:

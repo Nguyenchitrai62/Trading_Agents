@@ -1334,6 +1334,31 @@ class AnalysisService:
         ensure_not_cancelled()
 
         config = self.build_analysis_config(request, minimax_settings, runtime_profile)
+
+        def emit_parallel_trace(trace: dict) -> None:
+            if cancel_event.is_set():
+                return
+            phase = str(trace.get("phase") or "analysis")
+            content = self._trim_text(
+                self.format_tool_result_for_display(trace.get("content") or "")
+                if phase == "tool_result"
+                else self._normalize_message_content(trace.get("content") or ""),
+                self.settings.analysis_trace_char_limit,
+            )
+            if not content:
+                return
+            emit(
+                "agent_trace",
+                {
+                    "agent": trace.get("agent") or "Analyst",
+                    "phase": phase,
+                    "title": trace.get("title") or trace.get("agent") or "Analysis",
+                    "content": content,
+                },
+            )
+
+        config["analysis_trace_callback"] = emit_parallel_trace
+        config["analysis_cancel_check"] = ensure_not_cancelled
         emit_analysis_log(
             "Building TradingAgents graph.",
             "graph_setup",

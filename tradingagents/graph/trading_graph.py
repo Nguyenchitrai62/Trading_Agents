@@ -120,6 +120,8 @@ class TradingAgentsGraph:
             self.tool_nodes,
             self.conditional_logic,
             analyst_concurrency_limit=self.config.get("analyst_concurrency_limit", 1),
+            analyst_trace_callback=self.config.get("analysis_trace_callback"),
+            cancel_check=self.config.get("analysis_cancel_check"),
         )
 
         self.propagator = Propagator(
