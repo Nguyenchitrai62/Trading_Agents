@@ -7,6 +7,9 @@
     <link rel="icon" type="image/png" href="./image/LOGO.png">
     <link rel="stylesheet" href="./FE/styles.css">
     <script src="./FE/config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -37,6 +40,7 @@
 
             <div class="topbar-actions">
                 <button id="adminPageButton" class="admin-topbar-button hidden" type="button" data-page="admin" aria-label="Open admin management">Admin</button>
+                <button id="chatPageButton" class="admin-topbar-button hidden" type="button" data-page="chat" aria-label="Open assistant chat">Chat</button>
                 <div id="googleSignInButton" class="google-signin-button"></div>
                 <div id="authProfile" class="auth-profile hidden" aria-label="Signed-in Google profile">
                     <span class="auth-avatar-wrap">
@@ -251,6 +255,58 @@
                     </div>
                 </div>
                 <div id="adminUserList" class="admin-user-list" aria-live="polite"></div>
+            </section>
+        </main>
+
+        <main id="chatPage" class="page-view chat-page hidden" aria-label="Admin assistant chat">
+            <section class="window chat-sidebar-window">
+                <div class="window-header">
+                    <div>
+                        <p class="window-kicker">Assistant workspace</p>
+                        <h2>Chat Sessions</h2>
+                    </div>
+                    <button id="chatNewButton" class="toolbar-button" type="button" aria-label="Create new chat">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 5v14"></path>
+                            <path d="M5 12h14"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div id="chatHistoryList" class="chat-history-list" aria-live="polite"></div>
+            </section>
+
+            <section class="window chat-main-window">
+                <div class="window-header chat-main-header">
+                    <div>
+                        <p class="window-kicker">Shared backend chat</p>
+                        <h2 id="chatCurrentTitle">Welcome Chat</h2>
+                    </div>
+                    <div class="chat-header-actions">
+                        <span id="chatStatusText" class="window-status">Admin only</span>
+                        <label class="chat-model-wrap" for="chatModelSelect">
+                            <span>Model</span>
+                            <select id="chatModelSelect" class="chat-model-select">
+                                <option value="MiniMax-M2.7">MiniMax-M2.7</option>
+                                <option value="MiniMax-M2.5">MiniMax-M2.5</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+
+                <div id="chatMessages" class="chat-messages-board" aria-live="polite"></div>
+
+                <div class="chat-composer">
+                    <textarea id="chatInput" class="chat-composer-input" rows="1" placeholder="Send a message..."></textarea>
+                    <div class="chat-composer-actions">
+                        <button id="chatScrollToBottom" class="toolbar-button" type="button" aria-label="Scroll to bottom">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M12 5v14"></path>
+                                <path d="M6 13l6 6 6-6"></path>
+                            </svg>
+                        </button>
+                        <button id="chatSendButton" class="button primary" type="button">Send</button>
+                    </div>
+                </div>
             </section>
         </main>
     </div>

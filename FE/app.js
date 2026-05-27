@@ -72,7 +72,7 @@ const MIN_ANALYSIS_STOP_DELAY_MS = Math.max(0, Number(APP_SETTINGS.minStopDelayM
 const HISTORY_PAGE_SIZE = Number(HISTORY_SETTINGS.pageSize || HISTORY_SETTINGS.page_size || 10);
 const AUTH_STORAGE_KEY = AUTH_SETTINGS.storageKey || AUTH_SETTINGS.storage_key || "tradingagents.googleAuth";
 const CHART_SYMBOLS_STORAGE_KEY = TRADING_VIEW_SETTINGS.symbolsStorageKey || TRADING_VIEW_SETTINGS.symbols_storage_key || "tradingagents.chartSymbols";
-const PAGES = Array.isArray(APP_SETTINGS.pages) && APP_SETTINGS.pages.length ? APP_SETTINGS.pages : ["agent", "history", "chart", "admin"];
+const PAGES = Array.isArray(APP_SETTINGS.pages) && APP_SETTINGS.pages.length ? APP_SETTINGS.pages : ["agent", "history", "chart", "admin", "chat"];
 const DEFAULT_CHART_SYMBOLS = Array.isArray(TRADING_VIEW_SETTINGS.symbols)
     ? TRADING_VIEW_SETTINGS.symbols
     : ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"];
@@ -221,6 +221,7 @@ const state = {
     auth: createInitialAuthState(),
     history: createEmptyHistoryState(),
     admin: createEmptyAdminState(),
+    chat: createInitialChatState(),
     chart: createInitialChartState(),
     isBusy: false,
     controller: null,
@@ -243,10 +244,12 @@ const elements = {
     historyPageButton: document.getElementById("historyPageButton"),
     chartPageButton: document.getElementById("chartPageButton"),
     adminPageButton: document.getElementById("adminPageButton"),
+    chatPageButton: document.getElementById("chatPageButton"),
     agentPage: document.getElementById("agentPage"),
     historyPage: document.getElementById("historyPage"),
     chartPage: document.getElementById("chartPage"),
     adminPage: document.getElementById("adminPage"),
+    chatPage: document.getElementById("chatPage"),
     authStatusText: document.getElementById("authStatusText"),
     googleSignInButton: document.getElementById("googleSignInButton"),
     authProfile: document.getElementById("authProfile"),
@@ -268,6 +271,15 @@ const elements = {
     refreshAdminUsersButton: document.getElementById("refreshAdminUsersButton"),
     adminUserList: document.getElementById("adminUserList"),
     adminStatusText: document.getElementById("adminStatusText"),
+    chatNewButton: document.getElementById("chatNewButton"),
+    chatHistoryList: document.getElementById("chatHistoryList"),
+    chatCurrentTitle: document.getElementById("chatCurrentTitle"),
+    chatStatusText: document.getElementById("chatStatusText"),
+    chatModelSelect: document.getElementById("chatModelSelect"),
+    chatMessages: document.getElementById("chatMessages"),
+    chatInput: document.getElementById("chatInput"),
+    chatSendButton: document.getElementById("chatSendButton"),
+    chatScrollToBottom: document.getElementById("chatScrollToBottom"),
     phaseText: document.getElementById("phaseText"),
     progressText: document.getElementById("progressText"),
     progressFill: document.getElementById("progressFill"),
@@ -386,6 +398,50 @@ function createEmptyAdminState() {
         users: [],
         error: "",
         savingEmail: "",
+    };
+}
+
+function createChatSession(id, title = "New Chat", messages = []) {
+    const now = new Date().toISOString();
+    return {
+        id,
+        title,
+        createdAt: now,
+        updatedAt: now,
+        messages,
+    };
+}
+
+function createInitialChatState() {
+    const welcomeId = "chat-welcome";
+    const welcomeSession = createChatSession(
+        welcomeId,
+        "Welcome Chat",
+        [
+            {
+                id: `msg-${Date.now()}-welcome`,
+                role: "assistant",
+                content: "## Welcome\n\nThis workspace uses the same backend chat endpoint as the standalone llm page.\n\n- Thinking stream\n- Live content stream\n- Token stats\n- Multi-session history\n\nSign in and open the chat as admin to begin.",
+                thinking: "",
+                thinkingExpanded: false,
+                stats: null,
+                createdAt: new Date().toISOString(),
+            },
+        ],
+    );
+    return {
+        sessions: {
+            [welcomeId]: welcomeSession,
+        },
+        order: [welcomeId],
+        activeId: welcomeId,
+        isStreaming: false,
+        shouldAutoScroll: true,
+        streamBuffer: "",
+        currentEvent: "",
+        controller: null,
+        currentMessageId: "",
+        error: "",
     };
 }
 
@@ -802,6 +858,386 @@ function setMarkdownPreview(element, content, fallback) {
     element.classList.toggle("is-empty", !hasContent);
 }
 
+function getActiveChatSession() {
+    return state.chat.sessions[state.chat.activeId] || null;
+}
+
+function buildChatSessionTitle(session) {
+    const firstUserMessage = (session.messages || []).find((message) => message.role === "user" && message.content);
+    if (!firstUserMessage) {
+        return session.title || "New Chat";
+    }
+    return compactText(stripMarkdownToPlainText(firstUserMessage.content), 34) || "New Chat";
+}
+
+function upsertChatSession(session) {
+    session.updatedAt = new Date().toISOString();
+    state.chat.sessions[session.id] = session;
+    state.chat.order = [session.id, ...state.chat.order.filter((item) => item !== session.id)];
+}
+
+function createChatSessionId() {
+    return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createChatMessage(role, content = "") {
+    return {
+        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role,
+        content,
+        thinking: "",
+        thinkingExpanded: false,
+        stats: null,
+        createdAt: new Date().toISOString(),
+    };
+}
+
+function getChatModel() {
+    const fromSelect = String(elements.chatModelSelect?.value || "").trim();
+    if (fromSelect) {
+        return fromSelect;
+    }
+    return String(state.config?.analysis_defaults?.model || state.config?.default_model || "MiniMax-M2.7");
+}
+
+function updateChatComposerState() {
+    if (!(elements.chatInput instanceof HTMLTextAreaElement) || !(elements.chatSendButton instanceof HTMLButtonElement)) {
+        return;
+    }
+    const hasText = Boolean(elements.chatInput.value.trim());
+    const canUse = Boolean(state.auth.isAdmin && state.auth.idToken);
+    elements.chatSendButton.disabled = !hasText || !canUse || state.chat.isStreaming;
+    if (state.chat.isStreaming) {
+        elements.chatInput.placeholder = "Assistant is responding...";
+    } else if (!state.auth.idToken) {
+        elements.chatInput.placeholder = "Sign in with Google to use chat...";
+    } else if (!state.auth.isAdmin) {
+        elements.chatInput.placeholder = "Admin permission is required for chat.";
+    } else {
+        elements.chatInput.placeholder = "Send a message...";
+    }
+}
+
+function scrollChatToBottom(force = false) {
+    if (!(elements.chatMessages instanceof HTMLElement)) {
+        return;
+    }
+    if (force || state.chat.shouldAutoScroll) {
+        elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+    }
+}
+
+function renderChatHistoryList() {
+    if (!(elements.chatHistoryList instanceof HTMLElement)) {
+        return;
+    }
+    const sessions = state.chat.order
+        .map((id) => state.chat.sessions[id])
+        .filter(Boolean)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    if (!sessions.length) {
+        elements.chatHistoryList.innerHTML = '<div class="chat-empty">No chat sessions yet.</div>';
+        return;
+    }
+    elements.chatHistoryList.innerHTML = sessions.map((session) => {
+        const title = buildChatSessionTitle(session);
+        const isActive = session.id === state.chat.activeId;
+        const meta = formatHistoryTimestamp(session.updatedAt);
+        return `
+            <button type="button" class="chat-session-item ${isActive ? "is-active" : ""}" data-chat-session-id="${escapeHtml(session.id)}">
+                <span class="chat-session-title">${escapeHtml(title)}</span>
+                <span class="chat-session-meta">${escapeHtml(meta)}</span>
+            </button>
+        `;
+    }).join("");
+}
+
+function renderChatMessage(message) {
+    const bodyHtml = renderMarkdown(message.content || "", message.role === "assistant" ? "..." : "");
+    const hasThinking = Boolean(message.thinking && message.thinking.trim());
+    const thinkingClass = message.thinkingExpanded ? "chat-thinking" : "chat-thinking is-collapsed";
+    const thinkingBlock = hasThinking
+        ? `
+            <div class="${thinkingClass}" data-chat-thinking-block="${escapeHtml(message.id)}">
+                <button type="button" class="chat-thinking-toggle" data-chat-thinking-toggle="${escapeHtml(message.id)}" aria-expanded="${message.thinkingExpanded ? "true" : "false"}">
+                    <span>${escapeHtml(message.thinkingExpanded ? "Thinking trace" : "Thinking (collapsed)")}</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                </button>
+                <pre class="chat-thinking-body">${escapeHtml(message.thinking)}</pre>
+            </div>
+        `
+        : "";
+
+    const stats = message.stats;
+    const statsBlock = stats
+        ? `
+            <div class="chat-stats">
+                <span>${escapeHtml(String(stats.tokensPerSecond))} tok/s</span>
+                <span>${escapeHtml(String(stats.tokens))} ${stats.estimated ? "est" : "tok"}</span>
+                <span>${escapeHtml(String(stats.generationTime))}s</span>
+            </div>
+        `
+        : "";
+
+    return `
+        <article class="chat-row ${escapeHtml(message.role)}" data-chat-message-id="${escapeHtml(message.id)}">
+            <div class="chat-bubble markdown-preview">
+                ${thinkingBlock}
+                ${bodyHtml}
+                ${statsBlock}
+                <div class="chat-meta">${escapeHtml(formatHistoryTimestamp(message.createdAt))}</div>
+            </div>
+        </article>
+    `;
+}
+
+function renderChatMessages() {
+    if (!(elements.chatMessages instanceof HTMLElement)) {
+        return;
+    }
+    const session = getActiveChatSession();
+    if (!session) {
+        elements.chatMessages.innerHTML = '<div class="chat-empty">No active chat session.</div>';
+        return;
+    }
+    if (!session.messages.length) {
+        elements.chatMessages.innerHTML = '<div class="chat-empty">Start with a prompt to begin streaming responses.</div>';
+        return;
+    }
+    elements.chatMessages.innerHTML = session.messages.map(renderChatMessage).join("");
+    if (window.hljs) {
+        elements.chatMessages.querySelectorAll("pre code").forEach((block) => {
+            if (!block.classList.contains("hljs")) {
+                window.hljs.highlightElement(block);
+            }
+        });
+    }
+    scrollChatToBottom();
+}
+
+function renderChatPage() {
+    if (!(elements.chatPage instanceof HTMLElement)) {
+        return;
+    }
+    const session = getActiveChatSession();
+    if (elements.chatCurrentTitle instanceof HTMLElement) {
+        elements.chatCurrentTitle.textContent = session ? buildChatSessionTitle(session) : "Welcome Chat";
+    }
+    if (elements.chatStatusText instanceof HTMLElement) {
+        if (state.chat.isStreaming) {
+            elements.chatStatusText.textContent = "Streaming response";
+        } else if (!state.auth.idToken) {
+            elements.chatStatusText.textContent = "Sign in required";
+        } else if (!state.auth.isAdmin) {
+            elements.chatStatusText.textContent = "Admin only";
+        } else {
+            elements.chatStatusText.textContent = "Ready";
+        }
+    }
+    renderChatHistoryList();
+    renderChatMessages();
+    updateChatComposerState();
+}
+
+function createNewChatSession() {
+    const id = createChatSessionId();
+    const session = createChatSession(id);
+    upsertChatSession(session);
+    state.chat.activeId = id;
+    renderChatPage();
+}
+
+function selectChatSession(id) {
+    if (!id || !state.chat.sessions[id]) {
+        return;
+    }
+    state.chat.activeId = id;
+    renderChatPage();
+    scrollChatToBottom(true);
+}
+
+function toggleThinkingMessage(messageId) {
+    const session = getActiveChatSession();
+    if (!session) {
+        return;
+    }
+    const message = session.messages.find((item) => item.id === messageId);
+    if (!message) {
+        return;
+    }
+    message.thinkingExpanded = !message.thinkingExpanded;
+    renderChatMessages();
+}
+
+function parseChatSseBlocks(buffer) {
+    const blocks = [];
+    let working = buffer;
+    let delimiterIndex = working.indexOf("\n\n");
+    while (delimiterIndex !== -1) {
+        const block = working.slice(0, delimiterIndex).trim();
+        if (block) {
+            blocks.push(block);
+        }
+        working = working.slice(delimiterIndex + 2);
+        delimiterIndex = working.indexOf("\n\n");
+    }
+    return { blocks, rest: working };
+}
+
+function parseChatSseEvent(block) {
+    let event = "message";
+    const dataLines = [];
+    const lines = block.split(/\r?\n/);
+    for (const line of lines) {
+        if (line.startsWith("event:")) {
+            event = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trimStart());
+        }
+    }
+    let data = {};
+    if (dataLines.length) {
+        try {
+            data = JSON.parse(dataLines.join("\n"));
+        } catch {
+            data = {};
+        }
+    }
+    return { event, data };
+}
+
+async function sendChatMessage() {
+    if (!(elements.chatInput instanceof HTMLTextAreaElement)) {
+        return;
+    }
+    const prompt = elements.chatInput.value.trim();
+    if (!prompt || state.chat.isStreaming) {
+        return;
+    }
+
+    try {
+        await ensureAuthorizedSession();
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || "Sign in with Google before using chat.");
+        openAuthRequiredAlert(message);
+        return;
+    }
+    if (!state.auth.isAdmin) {
+        openAuthRequiredAlert("Admin permission is required to use Chat.");
+        return;
+    }
+
+    let session = getActiveChatSession();
+    if (!session) {
+        createNewChatSession();
+        session = getActiveChatSession();
+    }
+    if (!session) {
+        return;
+    }
+
+    const userMessage = createChatMessage("user", prompt);
+    const assistantMessage = createChatMessage("assistant", "");
+    assistantMessage.thinkingExpanded = false;
+    session.messages.push(userMessage, assistantMessage);
+    session.title = buildChatSessionTitle(session);
+    upsertChatSession(session);
+
+    elements.chatInput.value = "";
+    elements.chatInput.style.height = "auto";
+
+    state.chat.isStreaming = true;
+    state.chat.error = "";
+    state.chat.currentMessageId = assistantMessage.id;
+    state.chat.streamBuffer = "";
+    state.chat.currentEvent = "";
+    state.chat.shouldAutoScroll = true;
+    state.chat.controller = new AbortController();
+    renderChatPage();
+
+    try {
+        const payloadMessages = session.messages
+            .filter((message) => message.role === "user" || message.role === "assistant")
+            .map((message) => ({ role: message.role, content: message.content || "" }));
+        const response = await apiFetch("/api/chat", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                ...getAuthHeaders(),
+            },
+            body: JSON.stringify({
+                messages: payloadMessages,
+                model: getChatModel(),
+                max_tokens: 128000,
+                temperature: 0.7,
+                stream: true,
+            }),
+            signal: state.chat.controller.signal,
+        });
+
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            state.chat.streamBuffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+            const parsed = parseChatSseBlocks(state.chat.streamBuffer);
+            state.chat.streamBuffer = parsed.rest;
+
+            for (const block of parsed.blocks) {
+                const eventPayload = parseChatSseEvent(block);
+                const message = session.messages.find((item) => item.id === assistantMessage.id);
+                if (!message) {
+                    continue;
+                }
+                if (eventPayload.event === "thinking") {
+                    message.thinking += String(eventPayload.data?.content || "");
+                    message.thinkingExpanded = true;
+                } else if (eventPayload.event === "content") {
+                    message.content += String(eventPayload.data?.content || "");
+                    message.thinkingExpanded = false;
+                } else if (eventPayload.event === "complete") {
+                    message.content = String(eventPayload.data?.text || message.content || "");
+                    message.thinking = String(eventPayload.data?.thinking || message.thinking || "");
+                    message.stats = {
+                        tokensPerSecond: Number(eventPayload.data?.tokens_per_second || 0),
+                        tokens: Number(eventPayload.data?.tokens || 0),
+                        generationTime: Number(eventPayload.data?.generation_time || 0),
+                        estimated: Boolean(eventPayload.data?.tokens_estimated),
+                    };
+                } else if (eventPayload.event === "error") {
+                    throw new Error(String(eventPayload.data?.error || "Chat stream returned an error."));
+                }
+                upsertChatSession(session);
+                renderChatMessages();
+            }
+
+            if (done) {
+                break;
+            }
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || "Chat request failed.");
+        const target = session.messages.find((item) => item.id === assistantMessage.id);
+        if (target) {
+            target.content = target.content || `Error: ${message}`;
+            target.thinkingExpanded = false;
+        }
+        state.chat.error = message;
+        openBackendIssueAlert(message);
+    } finally {
+        state.chat.isStreaming = false;
+        state.chat.controller = null;
+        state.chat.currentMessageId = "";
+        upsertChatSession(session);
+        renderChatPage();
+    }
+}
+
 function stripMarkdownToPlainText(content = "") {
     return String(content)
         .replace(/```[\s\S]*?```/g, " ")
@@ -1017,6 +1453,10 @@ function canOpenAdminPage() {
     return Boolean(state.auth.isAdmin);
 }
 
+function canOpenChatPage() {
+    return Boolean(state.auth.isAdmin);
+}
+
 function getAuthHeaders() {
     if (!state.auth.idToken) {
         return {};
@@ -1096,6 +1536,11 @@ function applyAuthUser(user = {}) {
 }
 
 function clearAuthState() {
+    if (state.chat.controller) {
+        state.chat.controller.abort();
+        state.chat.controller = null;
+    }
+    state.chat.isStreaming = false;
     state.auth = {
         idToken: "",
         profile: null,
@@ -1114,12 +1559,13 @@ function clearAuthState() {
     if (window.google?.accounts?.id) {
         window.google.accounts.id.disableAutoSelect();
     }
-    if (state.page === "history" || state.page === "admin") {
+    if (state.page === "history" || state.page === "admin" || state.page === "chat") {
         state.page = APP_SETTINGS.defaultPage || APP_SETTINGS.default_page || "agent";
     }
     renderAuthState();
     renderHistoryPage();
     renderAdminPage();
+    renderChatPage();
 }
 
 async function validateAuthSession() {
@@ -1376,7 +1822,10 @@ function renderAuthState() {
     if (elements.adminPageButton instanceof HTMLElement) {
         elements.adminPageButton.classList.toggle("hidden", !state.auth.isAdmin);
     }
-    if (state.page === "admin" && !state.auth.isAdmin) {
+    if (elements.chatPageButton instanceof HTMLElement) {
+        elements.chatPageButton.classList.toggle("hidden", !state.auth.isAdmin);
+    }
+    if ((state.page === "admin" || state.page === "chat") && !state.auth.isAdmin) {
         state.page = APP_SETTINGS.defaultPage || APP_SETTINGS.default_page || "agent";
     }
     updateActionAvailability();
@@ -2830,17 +3279,18 @@ function renderPageShell() {
         history: elements.historyPage,
         chart: elements.chartPage,
         admin: elements.adminPage,
+        chat: elements.chatPage,
     };
     Object.entries(pagePanels).forEach(([page, panel]) => {
         if (panel instanceof HTMLElement) {
             panel.classList.toggle("hidden", page !== state.page);
         }
     });
-    [elements.agentPageButton, elements.historyPageButton, elements.chartPageButton, elements.adminPageButton].forEach((button) => {
+    [elements.agentPageButton, elements.historyPageButton, elements.chartPageButton, elements.adminPageButton, elements.chatPageButton].forEach((button) => {
         if (!(button instanceof HTMLElement)) {
             return;
         }
-        if (button.dataset.page === "admin") {
+        if (button.dataset.page === "admin" || button.dataset.page === "chat") {
             button.classList.toggle("hidden", !state.auth.isAdmin);
         }
         const isActive = button.dataset.page === state.page;
@@ -3988,6 +4438,10 @@ function switchPage(page) {
         openAuthRequiredAlert("Admin permission is required to open user management.");
         return;
     }
+    if (page === "chat" && !canOpenChatPage()) {
+        openAuthRequiredAlert("Admin permission is required to use Chat.");
+        return;
+    }
     state.page = page;
     renderPageShell();
     if (page === "history") {
@@ -4004,6 +4458,9 @@ function switchPage(page) {
             state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
             renderAdminPage();
         });
+    }
+    if (page === "chat") {
+        renderChatPage();
     }
 }
 
@@ -4042,6 +4499,7 @@ function renderAll() {
     renderAuthState();
     renderHistoryPage();
     renderAdminPage();
+    renderChatPage();
     renderChartControls();
     renderTopNotice();
     renderProgress();
@@ -4347,6 +4805,19 @@ async function loadConfig() {
     populateLookbackPresets(config);
     elements.lookbackDaysInput.value = config.analysis_defaults.lookback_days;
     elements.modelInput.value = config.analysis_defaults.model;
+    if (elements.chatModelSelect instanceof HTMLSelectElement) {
+        const preferredModel = String(config.analysis_defaults.model || config.default_model || "").trim();
+        if (preferredModel) {
+            const hasPreferred = Array.from(elements.chatModelSelect.options).some((option) => option.value === preferredModel);
+            if (!hasPreferred) {
+                const option = document.createElement("option");
+                option.value = preferredModel;
+                option.textContent = preferredModel;
+                elements.chatModelSelect.prepend(option);
+            }
+            elements.chatModelSelect.value = preferredModel;
+        }
+    }
     elements.checkpointToggle.checked = Boolean(config.analysis_defaults.checkpoint_enabled);
     populateLanguageOptions(config);
     populateAnalystOptions(config);
@@ -4482,6 +4953,7 @@ elements.pageTabs.addEventListener("click", (event) => {
     }
 });
 elements.adminPageButton.addEventListener("click", () => switchPage("admin"));
+elements.chatPageButton?.addEventListener("click", () => switchPage("chat"));
 elements.refreshHistoryButton.addEventListener("click", () => {
     if (!state.auth.idToken && !state.auth.isAuthorized) {
         openAuthRequiredAlert();
@@ -4671,6 +5143,63 @@ elements.adminUserList.addEventListener("click", (event) => {
     if (saveButton instanceof HTMLElement) {
         saveAdminUser(saveButton.dataset.adminSaveUser || "");
     }
+});
+elements.chatNewButton?.addEventListener("click", () => {
+    createNewChatSession();
+});
+elements.chatHistoryList?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const button = target.closest("[data-chat-session-id]");
+    if (button instanceof HTMLElement) {
+        selectChatSession(button.dataset.chatSessionId || "");
+    }
+});
+elements.chatMessages?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const button = target.closest("[data-chat-thinking-toggle]");
+    if (button instanceof HTMLElement) {
+        toggleThinkingMessage(button.dataset.chatThinkingToggle || "");
+    }
+});
+elements.chatMessages?.addEventListener("scroll", () => {
+    if (!(elements.chatMessages instanceof HTMLElement)) {
+        return;
+    }
+    const remaining = elements.chatMessages.scrollHeight - elements.chatMessages.scrollTop - elements.chatMessages.clientHeight;
+    state.chat.shouldAutoScroll = remaining < 100;
+});
+elements.chatScrollToBottom?.addEventListener("click", () => {
+    state.chat.shouldAutoScroll = true;
+    scrollChatToBottom(true);
+});
+elements.chatInput?.addEventListener("input", () => {
+    if (!(elements.chatInput instanceof HTMLTextAreaElement)) {
+        return;
+    }
+    elements.chatInput.style.height = "auto";
+    elements.chatInput.style.height = `${elements.chatInput.scrollHeight}px`;
+    updateChatComposerState();
+});
+elements.chatInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendChatMessage().catch((error) => {
+            const message = error instanceof Error ? error.message : String(error || "Chat failed.");
+            openBackendIssueAlert(message);
+        });
+    }
+});
+elements.chatSendButton?.addEventListener("click", () => {
+    sendChatMessage().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error || "Chat failed.");
+        openBackendIssueAlert(message);
+    });
 });
 elements.runAnalysisButton.addEventListener("click", async () => {
     if (state.isBusy) {
