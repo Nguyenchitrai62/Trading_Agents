@@ -1613,7 +1613,7 @@ async function sendChatMessage() {
             body: JSON.stringify({
                 messages: payloadMessages,
                 model: getChatModel(),
-                max_tokens: 128000,
+                max_tokens: 16384,
                 temperature: 0.7,
                 stream: true,
             }),
