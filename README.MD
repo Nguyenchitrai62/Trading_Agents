@@ -12,6 +12,7 @@ Live frontend: https://crypto.nguyenchitrai.id.vn
 - Static frontend built with plain HTML, CSS, and JavaScript, suitable for Vercel.
 - FastAPI backend suitable for Render or another Python web host.
 - Realtime analysis flow through `POST /api/analyze` with SSE streaming.
+- MiniMax MCP `web_search` and `understand_image` support for live source cross-checking during agent analysis and chat.
 - Admin-only integrated chat inside the main dashboard through `POST /api/chat`, reusing the Google-authenticated backend session flow.
 - Live UI updates for agents, teams, reports, trace output, backend logs, and final decisions.
 - Configurable run settings: symbol, date, lookback, language, analysts, depth, model, and checkpoint mode.
@@ -99,6 +100,9 @@ Common production variables:
 - `CORS_ALLOW_ORIGINS`: required when the frontend and backend are deployed on different origins.
 - `ADMIN_EMAILS`: optional seed admins with analysis and user-management permissions.
 - `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`: optional, enables History/Admin persistence.
+- `MINIMAX_MCP_*`: optional controls for the MiniMax MCP server. MCP is enabled by default for MiniMax; credentials are read from `MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY`, and the MCP host is normally derived from `MINIMAX_BASE_URL`.
+
+Trusted web sources for MCP search live in `tradingagents/default_config.py` under `preferred_reference_sources`. When MiniMax MCP web search is enabled, agents are instructed to retrieve or cross-check every configured trusted URL before final market-facing conclusions, then optionally search beyond those sources.
 
 Most other values in `.env-example` are optional defaults or runtime tuning. Leave them unset unless you need to override the default behavior.
 

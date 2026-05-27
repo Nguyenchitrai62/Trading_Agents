@@ -199,11 +199,13 @@ class AnalysisService:
         }
 
     def build_analysis_runtime_profile(self, request: AnalysisRequest) -> dict:
-        requested_rounds = RESEARCH_DEPTH_OPTIONS[request.research_depth]["rounds"]
+        depth_config = RESEARCH_DEPTH_OPTIONS[request.research_depth]
+        requested_rounds = depth_config["rounds"]
         return {
             "requested_rounds": requested_rounds,
             "effective_rounds": requested_rounds,
             "llm_max_tokens": self.settings.analysis_llm_max_tokens,
+            "mcp_max_tool_rounds": depth_config["mcp_tool_rounds"],
         }
 
     def get_minimax_client(self) -> AsyncAnthropic:
@@ -227,12 +229,96 @@ class AnalysisService:
             )
         return anthropic_messages
 
+    async def create_mcp_chat_response(
+        self,
+        client: AsyncAnthropic,
+        request: ChatRequest,
+        system_message: str,
+        anthropic_messages: list[dict],
+    ):
+        from tradingagents.llm_clients.minimax_mcp import (
+            build_mcp_reference_sources_instruction,
+            get_minimax_mcp_anthropic_tools_async,
+            resolve_minimax_mcp_settings,
+            run_anthropic_mcp_message_loop,
+        )
+
+        minimax_settings = resolve_minimax_settings(self.settings)
+        mcp_settings = resolve_minimax_mcp_settings(
+            provider=minimax_settings["provider"] or "minimax",
+            base_url=minimax_settings["base_url"],
+        )
+        mcp_tools = await get_minimax_mcp_anthropic_tools_async(mcp_settings)
+        if not mcp_tools:
+            return None
+
+        reference_instruction = build_mcp_reference_sources_instruction(
+            TRADINGAGENTS_DEFAULT_CONFIG.get("preferred_reference_sources") or []
+        )
+        full_system_message = (
+            f"{system_message}\n\n{reference_instruction}"
+            if reference_instruction
+            else system_message
+        )
+        return await run_anthropic_mcp_message_loop(
+            client,
+            settings=mcp_settings,
+            model=request.model,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            system=full_system_message,
+            messages=anthropic_messages,
+            tools=mcp_tools,
+        )
+
+    @staticmethod
+    def extract_chat_response_payload(response) -> tuple[str, str, int, int, int]:
+        from tradingagents.llm_clients.minimax_mcp import extract_anthropic_text_and_thinking
+
+        text, thinking = extract_anthropic_text_and_thinking(response)
+        usage = getattr(response, "usage", None)
+        input_tokens = getattr(usage, "input_tokens", 0) or 0
+        output_tokens = getattr(usage, "output_tokens", 0) or 0
+        total_tokens = input_tokens + output_tokens
+        return text, thinking, input_tokens, output_tokens, total_tokens
+
     async def generate_chat_stream(self, request: ChatRequest) -> AsyncIterator[str]:
         try:
             start_time = time.time()
             client = self.get_minimax_client()
             system_message = "You are a helpful assistant."
             anthropic_messages = self.build_anthropic_chat_messages(request)
+
+            mcp_response = await self.create_mcp_chat_response(
+                client,
+                request,
+                system_message,
+                anthropic_messages,
+            )
+            if mcp_response is not None:
+                text, thinking, _input_tokens, output_tokens, _total_tokens = self.extract_chat_response_payload(mcp_response)
+                if thinking:
+                    yield self._sse("thinking", {"content": thinking})
+                if text:
+                    yield self._sse("content", {"content": text})
+
+                end_time = time.time()
+                total_time = end_time - start_time
+                tokens = output_tokens if output_tokens > 0 else len(text) // 4
+                tokens_per_second = tokens / total_time if total_time > 0 else 0
+                yield self._sse(
+                    "complete",
+                    {
+                        "text": text,
+                        "thinking": thinking,
+                        "tokens": tokens,
+                        "tokens_estimated": output_tokens == 0,
+                        "tokens_per_second": round(tokens_per_second, 2),
+                        "generation_time": round(total_time, 2),
+                        "total_time": round(total_time, 2),
+                    },
+                )
+                return
 
             stream = await client.messages.create(
                 model=request.model,
@@ -319,6 +405,30 @@ class AnalysisService:
             system_message = "You are a helpful assistant."
             anthropic_messages = self.build_anthropic_chat_messages(request)
 
+            mcp_response = await self.create_mcp_chat_response(
+                client,
+                request,
+                system_message,
+                anthropic_messages,
+            )
+            if mcp_response is not None:
+                text, _thinking, input_tokens, output_tokens, total_tokens = self.extract_chat_response_payload(mcp_response)
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": text,
+                            }
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": input_tokens,
+                        "completion_tokens": output_tokens,
+                        "total_tokens": total_tokens,
+                    },
+                }
+
             response = await client.messages.create(
                 model=request.model,
                 max_tokens=request.max_tokens,
@@ -365,6 +475,7 @@ class AnalysisService:
                 "global_news_lookback_days": request.lookback_days,
                 "crypto_market_lookback_days": request.lookback_days,
                 "analysis_llm_max_tokens": runtime_profile["llm_max_tokens"],
+                "minimax_mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
                 "checkpoint_enabled": request.checkpoint_enabled,
                 "memory_log_path": None,
                 "persist_analysis_artifacts": False,
@@ -851,6 +962,7 @@ class AnalysisService:
             lookback_days=request.lookback_days,
             research_depth=request.research_depth,
             effective_depth_rounds=runtime_profile["effective_rounds"],
+            mcp_max_tool_rounds=runtime_profile["mcp_max_tool_rounds"],
             llm_max_tokens=runtime_profile["llm_max_tokens"],
             resource_constrained=self.settings.resource_constrained_mode,
             output_language=request.output_language,
@@ -878,6 +990,7 @@ class AnalysisService:
             provider=minimax_settings["provider"],
             model=request.model,
             depth_rounds=runtime_profile["effective_rounds"],
+            mcp_max_tool_rounds=runtime_profile["mcp_max_tool_rounds"],
             max_tokens=runtime_profile["llm_max_tokens"],
         )
         graph = TradingAgentsGraph(selected_analysts=filtered_analysts, debug=False, config=config)
@@ -896,6 +1009,7 @@ class AnalysisService:
                 "output_language": request.output_language,
                 "research_depth": request.research_depth,
                 "depth_rounds": runtime_profile["effective_rounds"],
+                "mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
                 "model": request.model,
                 "llm_max_tokens": runtime_profile["llm_max_tokens"],
                 "resource_constrained": self.settings.resource_constrained_mode,

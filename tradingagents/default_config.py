@@ -17,6 +17,14 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
+    "MINIMAX_MCP_ENABLED":                 "minimax_mcp_enabled",
+    "MINIMAX_MCP_COMMAND":                 "minimax_mcp_command",
+    "MINIMAX_MCP_ARGS":                    "minimax_mcp_args",
+    "MINIMAX_MCP_TOOL_NAMES":              "minimax_mcp_tool_names",
+    "MINIMAX_MCP_MAX_TOOL_ROUNDS":         "minimax_mcp_max_tool_rounds",
+    "MINIMAX_MCP_TOOL_RESULT_CHAR_LIMIT":  "minimax_mcp_tool_result_char_limit",
+    "MINIMAX_MCP_CALL_TIMEOUT_SECONDS":    "minimax_mcp_call_timeout_seconds",
+    "MINIMAX_MCP_LIST_TIMEOUT_SECONDS":    "minimax_mcp_list_timeout_seconds",
 }
 
 
@@ -64,6 +72,20 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "google_thinking_level": None,      # "high", "minimal", etc.
     "openai_reasoning_effort": None,    # "medium", "high", "low"
     "anthropic_effort": None,           # "high", "medium", "low"
+    # MiniMax MCP web tools. These are loaded from the MCP server used by
+    # _test_call_mcp.py, but credentials and host always come from .env.
+    "minimax_mcp_enabled": True,
+    "minimax_mcp_command": "uvx",
+    "minimax_mcp_args": "minimax-coding-plan-mcp -y",
+    "minimax_mcp_tool_names": "web_search,understand_image",
+    # Max number of MCP tool_use -> tool_result cycles before the model must
+    # stop calling tools and produce its best final answer.
+    "minimax_mcp_max_tool_rounds": 4,
+    # Each MCP tool result is truncated to this many characters before being
+    # sent back to the model, to keep context focused and bounded.
+    "minimax_mcp_tool_result_char_limit": 4000,
+    "minimax_mcp_call_timeout_seconds": 90.0,
+    "minimax_mcp_list_timeout_seconds": 45.0,
     # Checkpoint/resume: when True, LangGraph saves state after each node
     # so a crashed run can resume from the last successful step.
     "checkpoint_enabled": False,
@@ -83,9 +105,10 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # timeframe requested by the agent/tool call, paginating provider requests
     # when needed.
     "crypto_market_lookback_days": 7,
-    # High-trust reference sites that analysts should prioritize when the
-    # current model/runtime has web access or can otherwise cross-check live
-    # market context. This is a preference list, not a whitelist.
+    # High-trust reference sites. When MiniMax MCP web_search is enabled,
+    # the model is instructed to retrieve or cross-check every configured URL
+    # before writing market-facing conclusions, then optionally search beyond
+    # them for additional credible context. This is not a whitelist.
     "preferred_reference_sources": [
         {
             "name": "CoinGlass",

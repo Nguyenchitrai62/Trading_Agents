@@ -7,11 +7,19 @@ from langchain_anthropic import ChatAnthropic
 
 from .api_key_env import get_api_key_env
 from .base_client import BaseLLMClient, normalize_content
+from .minimax_mcp import MiniMaxMCPChatModel, resolve_minimax_mcp_settings
 from .validators import validate_model
 
 _PASSTHROUGH_KWARGS = (
     "timeout", "max_retries", "api_key", "max_tokens",
     "callbacks", "http_client", "http_async_client", "effort",
+)
+
+_MCP_KWARGS = (
+    "mcp_enabled", "mcp_command", "mcp_args", "mcp_tool_names",
+    "mcp_max_tool_rounds", "mcp_tool_result_char_limit",
+    "mcp_call_timeout_seconds", "mcp_list_timeout_seconds",
+    "mcp_reference_sources",
 )
 
 # Anthropic's extended-thinking ``effort`` parameter is accepted by Opus 4.5+
@@ -60,6 +68,7 @@ class AnthropicClient(BaseLLMClient):
         """Return configured ChatAnthropic instance."""
         self.warn_if_unknown_model()
         llm_kwargs = {"model": self.model}
+        mcp_kwargs = {key: self.kwargs.get(key) for key in _MCP_KWARGS if key in self.kwargs}
 
         # Resolve base URL and API key for MiniMax / minimax-cn or standard Anthropic
         if self.provider in ("minimax", "minimax-cn"):
@@ -107,7 +116,27 @@ class AnthropicClient(BaseLLMClient):
                 continue
             llm_kwargs[key] = self.kwargs[key]
 
-        return NormalizedChatAnthropic(**llm_kwargs)
+        llm = NormalizedChatAnthropic(**llm_kwargs)
+        if self.provider in ("minimax", "minimax-cn"):
+            mcp_settings = resolve_minimax_mcp_settings(
+                provider=self.provider,
+                base_url=llm_kwargs.get("base_url"),
+                enabled=mcp_kwargs.get("mcp_enabled"),
+                command=mcp_kwargs.get("mcp_command"),
+                args=mcp_kwargs.get("mcp_args"),
+                tool_names=mcp_kwargs.get("mcp_tool_names"),
+                max_tool_rounds=mcp_kwargs.get("mcp_max_tool_rounds"),
+                result_char_limit=mcp_kwargs.get("mcp_tool_result_char_limit"),
+                call_timeout_seconds=mcp_kwargs.get("mcp_call_timeout_seconds"),
+                list_timeout_seconds=mcp_kwargs.get("mcp_list_timeout_seconds"),
+            )
+            return MiniMaxMCPChatModel(
+                llm,
+                settings=mcp_settings,
+                reference_sources=mcp_kwargs.get("mcp_reference_sources"),
+            )
+
+        return llm
 
     def validate_model(self) -> bool:
         """Validate model for Anthropic/MiniMax."""

@@ -44,16 +44,19 @@ RESEARCH_DEPTH_OPTIONS = {
     "quick": {
         "label": "Quick",
         "rounds": 1,
+        "mcp_tool_rounds": 2,
         "description": "Fast scan with minimal debate.",
     },
     "medium": {
         "label": "Medium",
         "rounds": 3,
+        "mcp_tool_rounds": 4,
         "description": "Balanced research depth for regular analysis.",
     },
     "deep": {
         "label": "Deep",
         "rounds": 5,
+        "mcp_tool_rounds": 6,
         "description": "More debate rounds before the final decision.",
     },
 }

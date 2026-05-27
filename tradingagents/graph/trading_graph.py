@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 from langgraph.prebuilt import ToolNode
 
 from tradingagents.llm_clients import create_llm_client
+from tradingagents.llm_clients.minimax_mcp import (
+    get_minimax_mcp_langchain_tools,
+    merge_tools_by_name,
+    resolve_minimax_mcp_settings,
+)
 
 from tradingagents.agents import *
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -157,39 +162,74 @@ class TradingAgentsGraph:
             if effort:
                 kwargs["effort"] = effort
 
+            if provider in ("minimax", "minimax-cn"):
+                kwargs.update(
+                    {
+                        "mcp_enabled": self.config.get("minimax_mcp_enabled", True),
+                        "mcp_command": self.config.get("minimax_mcp_command"),
+                        "mcp_args": self.config.get("minimax_mcp_args"),
+                        "mcp_tool_names": self.config.get("minimax_mcp_tool_names"),
+                        "mcp_max_tool_rounds": self.config.get("minimax_mcp_max_tool_rounds"),
+                        "mcp_tool_result_char_limit": self.config.get("minimax_mcp_tool_result_char_limit"),
+                        "mcp_call_timeout_seconds": self.config.get("minimax_mcp_call_timeout_seconds"),
+                        "mcp_list_timeout_seconds": self.config.get("minimax_mcp_list_timeout_seconds"),
+                        "mcp_reference_sources": self.config.get("preferred_reference_sources"),
+                    }
+                )
+
         return kwargs
 
     def _create_tool_nodes(self) -> Dict[str, ToolNode]:
         """Create tool nodes for different data sources using abstract methods."""
+        mcp_tools = []
+        provider = self.config.get("llm_provider", "").lower()
+        if provider in ("minimax", "minimax-cn"):
+            mcp_settings = resolve_minimax_mcp_settings(
+                provider=provider,
+                base_url=self.config.get("backend_url"),
+                enabled=self.config.get("minimax_mcp_enabled", True),
+                command=self.config.get("minimax_mcp_command"),
+                args=self.config.get("minimax_mcp_args"),
+                tool_names=self.config.get("minimax_mcp_tool_names"),
+                max_tool_rounds=self.config.get("minimax_mcp_max_tool_rounds"),
+                result_char_limit=self.config.get("minimax_mcp_tool_result_char_limit"),
+                call_timeout_seconds=self.config.get("minimax_mcp_call_timeout_seconds"),
+                list_timeout_seconds=self.config.get("minimax_mcp_list_timeout_seconds"),
+            )
+            mcp_tools = get_minimax_mcp_langchain_tools(mcp_settings)
+
+        def with_mcp(tools: list) -> list:
+            return merge_tools_by_name(tools, mcp_tools)
+
         return {
             "market": ToolNode(
-                [
+                with_mcp([
                     get_crypto_ohlcv,
                     get_crypto_indicators,
-                ]
+                ])
             ),
             "social": ToolNode(
-                [
+                with_mcp([
                     # News tools for social media analysis
                     get_news,
-                ]
+                ])
             ),
             "news": ToolNode(
-                [
+                with_mcp([
                     # News and insider information
                     get_news,
                     get_global_news,
                     get_insider_transactions,
-                ]
+                ])
             ),
             "fundamentals": ToolNode(
-                [
+                with_mcp([
                     # Fundamental analysis tools
                     get_fundamentals,
                     get_balance_sheet,
                     get_cashflow,
                     get_income_statement,
-                ]
+                ])
             ),
         }
 
