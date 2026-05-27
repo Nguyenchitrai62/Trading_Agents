@@ -22,7 +22,7 @@ CPU_THREAD_ENV_VARS = (
 )
 DEFAULT_ANALYSTS = ("market", "social", "news", "fundamentals")
 APP_TITLE = "TradingAgents Analysis API"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 DEFAULT_MODEL = "MiniMax-M2.7"
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
 DEFAULT_ASSET_TYPE = "crypto"

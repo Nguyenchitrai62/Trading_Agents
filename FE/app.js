@@ -72,7 +72,9 @@ const MIN_ANALYSIS_STOP_DELAY_MS = Math.max(0, Number(APP_SETTINGS.minStopDelayM
 const HISTORY_PAGE_SIZE = Number(HISTORY_SETTINGS.pageSize || HISTORY_SETTINGS.page_size || 10);
 const AUTH_STORAGE_KEY = AUTH_SETTINGS.storageKey || AUTH_SETTINGS.storage_key || "tradingagents.googleAuth";
 const CHART_SYMBOLS_STORAGE_KEY = TRADING_VIEW_SETTINGS.symbolsStorageKey || TRADING_VIEW_SETTINGS.symbols_storage_key || "tradingagents.chartSymbols";
-const PAGES = Array.isArray(APP_SETTINGS.pages) && APP_SETTINGS.pages.length ? APP_SETTINGS.pages : ["agent", "history", "chart", "admin", "chat"];
+const PAGES = Array.isArray(APP_SETTINGS.pages) && APP_SETTINGS.pages.length
+    ? [...new Set([...APP_SETTINGS.pages, "chat"])]
+    : ["agent", "history", "chart", "admin", "chat"];
 const DEFAULT_CHART_SYMBOLS = Array.isArray(TRADING_VIEW_SETTINGS.symbols)
     ? TRADING_VIEW_SETTINGS.symbols
     : ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "BINANCE:SOLUSDT", "BINANCE:XRPUSDT"];

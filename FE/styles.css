@@ -6164,12 +6164,16 @@ body.is-running .window-status {
 
 /* Auth slot final override: keep the Google-controlled iframe stable on hover. */
 .topbar-actions {
-    width: clamp(44px, 24vw, 288px);
-    min-width: 44px;
-    height: 44px;
+    width: auto;
+    max-width: 100%;
+    min-width: max-content;
+    min-height: 44px;
     justify-self: end;
     justify-content: flex-end;
+    flex-wrap: wrap;
     overflow: visible;
+    position: relative;
+    z-index: 2;
 }
 
 .google-signin-button {
@@ -6213,6 +6217,7 @@ body.is-running .window-status {
 @media (max-width: 1180px) {
     .topbar-actions {
         width: 100%;
+        min-width: 0;
         justify-self: stretch;
         justify-content: flex-end;
     }

@@ -5,7 +5,7 @@
     provider: "minimax",
     defaultModel: "MiniMax-M2.7",
     app: {
-        pages: ["agent", "history", "chart", "admin"],
+        pages: ["agent", "history", "chart", "admin", "chat"],
         defaultPage: "agent",
         coreAnalysts: ["market", "social", "news"],
         traceDisplayLimit: 14,
