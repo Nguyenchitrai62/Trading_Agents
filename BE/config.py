@@ -154,6 +154,7 @@ def _configured_cors_origins() -> list[str]:
     )
     defaults = [
         "https://crypto.nguyenchitrai.id.vn",
+        "https://www.lm.io.vn",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
         "http://localhost:5500",
