@@ -7,28 +7,38 @@ from tradingagents.agents.utils.agent_utils import (
     get_preferred_reference_sources_instruction,
 )
 from tradingagents.dataflows.config import get_config
+from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel
 
 
 def create_news_analyst(llm):
     def news_analyst_node(state):
         current_date = state["trade_date"]
         asset_type = state.get("asset_type", "crypto")
-        asset_label = "asset"
+        asset_label = "crypto asset" if asset_type == "crypto" else "asset"
         instrument_context = build_instrument_context(
             state["company_of_interest"], asset_type
         )
+        prefer_mcp_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
 
-        tools = [
+        tools = [] if prefer_mcp_web_search else [
             get_news,
             get_global_news,
         ]
 
-        system_message = (
-            f"You are a news researcher tasked with analyzing recent news and trends over the past week. Please write a comprehensive report of the current state of the world that is relevant for trading and macroeconomics. Use the available tools: get_news(query, start_date, end_date) for {asset_label}-specific or targeted news searches, and get_global_news(curr_date, look_back_days, limit) for broader macroeconomic news. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
-            + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
-            + get_preferred_reference_sources_instruction()
-            + get_language_instruction()
-        )
+        if prefer_mcp_web_search:
+            system_message = (
+                f"You are a news researcher tasked with analyzing recent news and trends over the past week for a {asset_label}. Use the MiniMax MCP tool `web_search` as your primary retrieval path for live and source-verified evidence, including asset-specific news, macro headlines, ETF and institutional flow coverage, exchange developments, liquidity shifts, and regulatory updates. When current evidence is incomplete, search again instead of relying on stale cached assumptions. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
+                + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+                + get_preferred_reference_sources_instruction()
+                + get_language_instruction()
+            )
+        else:
+            system_message = (
+                f"You are a news researcher tasked with analyzing recent news and trends over the past week. Please write a comprehensive report of the current state of the world that is relevant for trading and macroeconomics. Use the available tools: get_news(query, start_date, end_date) for {asset_label}-specific or targeted news searches, and get_global_news(curr_date, look_back_days, limit) for broader macroeconomic news. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
+                + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+                + get_preferred_reference_sources_instruction()
+                + get_language_instruction()
+            )
 
         prompt = ChatPromptTemplate.from_messages(
             [
@@ -48,11 +58,11 @@ def create_news_analyst(llm):
         )
 
         prompt = prompt.partial(system_message=system_message)
-        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]) or "web_search (MiniMax MCP when available)")
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        chain = prompt | llm.bind_tools(tools)
+        chain = prompt | (llm.bind_tools(tools) if tools else llm.bind_tools([]))
         result = chain.invoke(state["messages"])
 
         report = ""

@@ -5,16 +5,19 @@ the old version had a prompt that demanded social-media analysis but the
 only tool available was Yahoo Finance news — which led LLMs to fabricate
 Reddit/X/StockTwits content under prompt pressure (verified live).
 
-The redesigned agent pre-fetches three complementary data sources before
-the LLM is invoked and injects them into the prompt as structured blocks:
+For non-crypto assets, the agent pre-fetches three complementary data
+sources before the LLM is invoked and injects them into the prompt as
+structured blocks:
 
-  1. News headlines     — Yahoo Finance (institutional framing)
-  2. StockTwits messages — retail-trader posts indexed by cashtag, with
-                           user-labeled Bullish/Bearish sentiment tags
-  3. Reddit posts        — r/wallstreetbets, r/stocks, r/investing
+    1. News headlines      — Yahoo Finance (institutional framing)
+    2. StockTwits messages — retail-trader posts indexed by cashtag, with
+                                                     user-labeled Bullish/Bearish sentiment tags
+    3. Reddit posts        — r/wallstreetbets, r/stocks, r/investing
 
-The agent does not use tool-calling; the data is in the prompt from
-turn 0. The LLM produces the sentiment report in a single invocation.
+For crypto assets under the MiniMax MCP runtime, the agent instead keeps
+tool-calling enabled and pushes the model toward live `web_search` usage so
+sentiment evidence is gathered from current web sources rather than stale
+vendor snapshots.
 
 See: https://github.com/TauricResearch/TradingAgents/issues/557
 """
@@ -26,9 +29,11 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
     get_news,
+    get_preferred_reference_sources_instruction,
 )
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
+from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel
 
 
 def _seven_days_back(trade_date: str) -> str:
@@ -38,9 +43,10 @@ def _seven_days_back(trade_date: str) -> str:
 def create_sentiment_analyst(llm):
     """Create a sentiment analyst node for the trading graph.
 
-    Pre-fetches news + StockTwits + Reddit data, injects them into the
-    prompt as structured blocks, and produces a sentiment report in a
-    single LLM call.
+    Uses live MiniMax MCP web_search for crypto assets when available;
+    otherwise pre-fetches news + StockTwits + Reddit data, injects them
+    into the prompt as structured blocks, and produces a sentiment report
+    in a single LLM call.
     """
 
     def sentiment_analyst_node(state):
@@ -49,22 +55,30 @@ def create_sentiment_analyst(llm):
         start_date = _seven_days_back(end_date)
         asset_type = state.get("asset_type", "crypto")
         instrument_context = build_instrument_context(ticker, asset_type)
+        prefer_mcp_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
 
-        # Pre-fetch all three sources. Each fetcher degrades gracefully and
-        # returns a string (no exceptions surface from here), so the LLM
-        # always sees something — either real data or a clear placeholder.
-        news_block = get_news.func(ticker, start_date, end_date)
-        stocktwits_block = fetch_stocktwits_messages(ticker)
-        reddit_block = fetch_reddit_posts(ticker)
+        if prefer_mcp_web_search:
+            system_message = _build_crypto_web_search_system_message(
+                ticker=ticker,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        else:
+            # Pre-fetch all three sources. Each fetcher degrades gracefully and
+            # returns a string (no exceptions surface from here), so the LLM
+            # always sees something — either real data or a clear placeholder.
+            news_block = get_news.func(ticker, start_date, end_date)
+            stocktwits_block = fetch_stocktwits_messages(ticker)
+            reddit_block = fetch_reddit_posts(ticker)
 
-        system_message = _build_system_message(
-            ticker=ticker,
-            start_date=start_date,
-            end_date=end_date,
-            news_block=news_block,
-            stocktwits_block=stocktwits_block,
-            reddit_block=reddit_block,
-        )
+            system_message = _build_system_message(
+                ticker=ticker,
+                start_date=start_date,
+                end_date=end_date,
+                news_block=news_block,
+                stocktwits_block=stocktwits_block,
+                reddit_block=reddit_block,
+            )
 
         prompt = ChatPromptTemplate.from_messages(
             [
@@ -84,9 +98,9 @@ def create_sentiment_analyst(llm):
         prompt = prompt.partial(current_date=end_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        # No bind_tools — the data is already in the prompt; a single LLM
-        # call produces the report directly.
-        chain = prompt | llm
+        # When MiniMax MCP is available for crypto, bind an empty local tool set
+        # so the graph still exposes MCP web_search tool calls/results explicitly.
+        chain = prompt | (llm.bind_tools([]) if prefer_mcp_web_search else llm)
         result = chain.invoke(state["messages"])
 
         return {
@@ -161,6 +175,40 @@ Produce a sentiment report covering, in order:
 5. **Markdown table** at the end summarizing key sentiment signals, their direction, source, and supporting evidence.
 
 {get_language_instruction()}"""
+
+
+def _build_crypto_web_search_system_message(
+    *,
+    ticker: str,
+    start_date: str,
+    end_date: str,
+) -> str:
+    return f"""You are a crypto market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}.
+
+Use the MiniMax MCP tool `web_search` as your primary retrieval path for live sentiment evidence. Prioritize:
+
+1. Crypto-native news and market commentary.
+2. Community discussion and retail positioning signals surfaced by current web results.
+3. ETF/institutional flow coverage, liquidations, funding-rate commentary, and macro narratives affecting crypto sentiment.
+4. Source verification on any strong claim before you rely on it.
+
+How to analyze:
+
+1. Compare institutional/news framing with crowd and community tone.
+2. Call out divergences between bullish narrative flow and bearish positioning or macro pressure.
+3. Distinguish hard catalysts from opinion and speculation.
+4. Be explicit about data quality: if current web evidence is thin or contradictory, say so.
+5. Treat the output as a sentiment signal for the trader, not as a standalone price forecast.
+
+Output:
+
+1. Overall sentiment direction — Bullish / Bearish / Neutral / Mixed — with a confidence note.
+2. Source-by-source breakdown with supporting evidence from the current web results.
+3. Divergences, alignments, and dominant narratives.
+4. Catalysts and risks.
+5. A Markdown table summarizing key sentiment signals, their direction, source, and supporting evidence.
+
+{get_preferred_reference_sources_instruction()}{get_language_instruction()}"""
 
 
 # ---------------------------------------------------------------------------

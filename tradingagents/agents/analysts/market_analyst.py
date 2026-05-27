@@ -27,6 +27,7 @@ def create_market_analyst(llm):
             " For indicators, the backend may fetch extra candles on that same requested timeframe when a long-window calculation"
             " needs more history, so long-window signals like `close_200_sma` can still be computed without changing timeframe."
             " Use the exact indicator names from the list above, such as `close_10_ema`, `close_50_sma`, `close_200_sma`, `rsi`, `macd`, `boll`, `atr`, `vwma`, and `mfi`."
+            " For live crypto context outside exchange OHLCV data, such as ETF flows, macro headlines, regulatory changes, liquidations, and broader market positioning, prefer the MiniMax MCP tool `web_search` whenever it is available."
         )
 
         system_message = (
