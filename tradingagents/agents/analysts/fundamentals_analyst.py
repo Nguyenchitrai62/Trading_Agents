@@ -18,18 +18,18 @@ def create_fundamentals_analyst(llm):
         current_date = state["trade_date"]
         asset_type = state.get("asset_type", "crypto")
         instrument_context = build_instrument_context(state["company_of_interest"], asset_type)
-        prefer_mcp_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
+        require_companion_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
 
-        tools = [] if prefer_mcp_web_search else [
+        tools = [
             get_fundamentals,
             get_balance_sheet,
             get_cashflow,
             get_income_statement,
         ]
 
-        if prefer_mcp_web_search:
+        if require_companion_web_search:
             system_message = (
-                "You are a researcher tasked with analyzing crypto fundamentals over the past week. Use the MiniMax MCP tool `web_search` as your primary research path for tokenomics, protocol upgrades, ecosystem traction, treasury or issuer developments, institutional and ETF flow commentary, staking or validator dynamics, supply unlocks, governance decisions, and other project-specific fundamental drivers. Do not rely on equity-style financial statement assumptions for crypto assets. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
+                "You are a researcher tasked with analyzing crypto fundamentals over the past week. Use the internal fundamental tools when they provide usable structured data, but do not rely on equity-style financial statement assumptions for crypto assets. Always call the exact MiniMax MCP tool `web_search` at least once in the same analysis for tokenomics, protocol upgrades, ecosystem traction, treasury or issuer developments, institutional and ETF flow commentary, staking or validator dynamics, supply unlocks, governance decisions, and other project-specific fundamental drivers. If an internal tool returns an error, rate-limit notice, or unavailable placeholder, briefly note that limitation and continue with `web_search` plus any successful tool outputs instead of stopping. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
                 + " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
                 + get_preferred_reference_sources_instruction()
                 + get_language_instruction()
@@ -61,11 +61,14 @@ def create_fundamentals_analyst(llm):
         )
 
         prompt = prompt.partial(system_message=system_message)
-        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]) or "web_search (MiniMax MCP when available)")
+        prompt = prompt.partial(
+            tool_names=", ".join([tool.name for tool in tools])
+            + (", web_search" if require_companion_web_search else "")
+        )
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        chain = prompt | (llm.bind_tools(tools) if tools else llm.bind_tools([]))
+        chain = prompt | llm.bind_tools(tools)
 
         result = chain.invoke(state["messages"])
 

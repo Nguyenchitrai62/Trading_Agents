@@ -1,4 +1,7 @@
+import logging
 from typing import Annotated
+
+logger = logging.getLogger(__name__)
 
 # Import from vendor-specific modules
 from .y_finance import (
@@ -149,6 +152,24 @@ def get_vendor(category: str, method: str = None) -> str:
     # Fall back to category-level configuration
     return config.get("data_vendors", {}).get(category, "default")
 
+
+def _is_vendor_failure_result(result) -> bool:
+    if not isinstance(result, str):
+        return False
+
+    normalized = result.strip().lower()
+    if not normalized:
+        return True
+
+    return (
+        normalized.startswith("error ")
+        or normalized.startswith("error:")
+        or "rate limit" in normalized
+        or "http 429" in normalized
+        or "<unavailable" in normalized
+        or " timed out" in normalized
+    )
+
 def route_to_vendor(method: str, *args, **kwargs):
     """Route method calls to appropriate vendor implementation with fallback support."""
     category = get_category_for_method(method)
@@ -165,6 +186,8 @@ def route_to_vendor(method: str, *args, **kwargs):
         if vendor not in fallback_vendors:
             fallback_vendors.append(vendor)
 
+    vendor_failures: list[str] = []
+
     for vendor in fallback_vendors:
         if vendor not in VENDOR_METHODS[method]:
             continue
@@ -173,8 +196,29 @@ def route_to_vendor(method: str, *args, **kwargs):
         impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
 
         try:
-            return impl_func(*args, **kwargs)
-        except AlphaVantageRateLimitError:
-            continue  # Only rate limits trigger fallback
+            result = impl_func(*args, **kwargs)
+        except AlphaVantageRateLimitError as exc:
+            logger.warning("Vendor %s rate limited for %s; trying fallback: %s", vendor, method, exc)
+            vendor_failures.append(f"{vendor}: rate limited")
+            continue
+        except Exception as exc:
+            logger.warning("Vendor %s failed for %s; trying fallback: %s", vendor, method, exc)
+            vendor_failures.append(f"{vendor}: {type(exc).__name__}")
+            continue
 
-    raise RuntimeError(f"No available vendor for '{method}'")
+        if _is_vendor_failure_result(result):
+            snippet = " ".join(str(result).split())[:220]
+            logger.warning(
+                "Vendor %s returned an unavailable result for %s; trying fallback: %s",
+                vendor,
+                method,
+                snippet,
+            )
+            vendor_failures.append(f"{vendor}: unavailable")
+            continue
+
+        return result
+
+    failure_summary = "; ".join(vendor_failures) if vendor_failures else "no vendor configured"
+    logger.warning("All vendors failed for %s: %s", method, failure_summary)
+    return f"<{method} unavailable: {failure_summary}>"

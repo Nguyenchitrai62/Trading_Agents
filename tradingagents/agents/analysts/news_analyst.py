@@ -18,16 +18,16 @@ def create_news_analyst(llm):
         instrument_context = build_instrument_context(
             state["company_of_interest"], asset_type
         )
-        prefer_mcp_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
+        require_companion_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
 
-        tools = [] if prefer_mcp_web_search else [
+        tools = [
             get_news,
             get_global_news,
         ]
 
-        if prefer_mcp_web_search:
+        if require_companion_web_search:
             system_message = (
-                f"You are a news researcher tasked with analyzing recent news and trends over the past week for a {asset_label}. Use the MiniMax MCP tool `web_search` as your primary retrieval path for live and source-verified evidence, including asset-specific news, macro headlines, ETF and institutional flow coverage, exchange developments, liquidity shifts, and regulatory updates. When current evidence is incomplete, search again instead of relying on stale cached assumptions. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
+                f"You are a news researcher tasked with analyzing recent news and trends over the past week for a {asset_label}. Use the internal tools `get_news` and `get_global_news` for structured source coverage, and always call the exact MiniMax MCP tool `web_search` at least once in the same analysis for live and source-verified evidence, including asset-specific news, macro headlines, ETF and institutional flow coverage, exchange developments, liquidity shifts, and regulatory updates. If an internal tool returns an error, rate-limit notice, or unavailable placeholder, briefly note that limitation and continue with `web_search` plus any successful tool outputs instead of stopping. When current evidence is incomplete, search again instead of relying on stale cached assumptions. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
                 + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
                 + get_preferred_reference_sources_instruction()
                 + get_language_instruction()
@@ -58,11 +58,14 @@ def create_news_analyst(llm):
         )
 
         prompt = prompt.partial(system_message=system_message)
-        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]) or "web_search (MiniMax MCP when available)")
+        prompt = prompt.partial(
+            tool_names=", ".join([tool.name for tool in tools])
+            + (", web_search" if require_companion_web_search else "")
+        )
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        chain = prompt | (llm.bind_tools(tools) if tools else llm.bind_tools([]))
+        chain = prompt | llm.bind_tools(tools)
         result = chain.invoke(state["messages"])
 
         report = ""

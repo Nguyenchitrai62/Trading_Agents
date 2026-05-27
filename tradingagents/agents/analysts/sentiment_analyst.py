@@ -14,15 +14,16 @@ structured blocks:
                                                      user-labeled Bullish/Bearish sentiment tags
     3. Reddit posts        — r/wallstreetbets, r/stocks, r/investing
 
-For crypto assets under the MiniMax MCP runtime, the agent instead keeps
-tool-calling enabled and pushes the model toward live `web_search` usage so
-sentiment evidence is gathered from current web sources rather than stale
-vendor snapshots.
+For crypto assets under the MiniMax MCP runtime, the agent still keeps those
+internal sources as optional supporting inputs, but also keeps tool-calling
+enabled and requires live `web_search` usage so sentiment evidence is grounded
+in current web sources rather than stale vendor snapshots alone.
 
 See: https://github.com/TauricResearch/TradingAgents/issues/557
 """
 
 from datetime import datetime, timedelta
+import logging
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from tradingagents.agents.utils.agent_utils import (
@@ -36,17 +37,48 @@ from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
 from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel
 
 
+logger = logging.getLogger(__name__)
+
+
 def _seven_days_back(trade_date: str) -> str:
     return (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+
+
+def _source_should_be_skipped(content: str) -> bool:
+    normalized = str(content or "").strip().lower()
+    if not normalized:
+        return True
+    return (
+        normalized.startswith("error ")
+        or normalized.startswith("error:")
+        or "rate limit" in normalized
+        or "http 429" in normalized
+        or "<unavailable" in normalized
+        or " timed out" in normalized
+    )
+
+
+def _prefetch_source_or_skip(source_name: str, fetcher) -> str:
+    try:
+        content = fetcher()
+    except Exception as exc:
+        logger.warning("%s source failed and will be skipped: %s", source_name, exc)
+        return f"<{source_name} skipped: unavailable>"
+
+    if _source_should_be_skipped(content):
+        snippet = " ".join(str(content).split())[:220]
+        logger.warning("%s source returned unavailable data and will be skipped: %s", source_name, snippet)
+        return f"<{source_name} skipped: unavailable or rate limited>"
+
+    return content
 
 
 def create_sentiment_analyst(llm):
     """Create a sentiment analyst node for the trading graph.
 
-    Uses live MiniMax MCP web_search for crypto assets when available;
-    otherwise pre-fetches news + StockTwits + Reddit data, injects them
-    into the prompt as structured blocks, and produces a sentiment report
-    in a single LLM call.
+    Pre-fetches news + StockTwits + Reddit data as supporting context. When
+    MiniMax MCP is available for crypto assets, the prompt also requires a
+    live web_search pass before the report is drafted.
     """
 
     def sentiment_analyst_node(state):
@@ -57,20 +89,29 @@ def create_sentiment_analyst(llm):
         instrument_context = build_instrument_context(ticker, asset_type)
         prefer_mcp_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
 
+        news_block = _prefetch_source_or_skip(
+            "news",
+            lambda: get_news.func(ticker, start_date, end_date),
+        )
+        stocktwits_block = _prefetch_source_or_skip(
+            "stocktwits",
+            lambda: fetch_stocktwits_messages(ticker),
+        )
+        reddit_block = _prefetch_source_or_skip(
+            "reddit",
+            lambda: fetch_reddit_posts(ticker),
+        )
+
         if prefer_mcp_web_search:
             system_message = _build_crypto_web_search_system_message(
                 ticker=ticker,
                 start_date=start_date,
                 end_date=end_date,
+                news_block=news_block,
+                stocktwits_block=stocktwits_block,
+                reddit_block=reddit_block,
             )
         else:
-            # Pre-fetch all three sources. Each fetcher degrades gracefully and
-            # returns a string (no exceptions surface from here), so the LLM
-            # always sees something — either real data or a clear placeholder.
-            news_block = get_news.func(ticker, start_date, end_date)
-            stocktwits_block = fetch_stocktwits_messages(ticker)
-            reddit_block = fetch_reddit_posts(ticker)
-
             system_message = _build_system_message(
                 ticker=ticker,
                 start_date=start_date,
@@ -182,13 +223,38 @@ def _build_crypto_web_search_system_message(
     ticker: str,
     start_date: str,
     end_date: str,
+    news_block: str,
+    stocktwits_block: str,
+    reddit_block: str,
 ) -> str:
     return f"""You are a crypto market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}.
 
-Use the MiniMax MCP tool `web_search` as your primary retrieval path for live sentiment evidence. Prioritize:
+Use the MiniMax MCP tool `web_search` as your live retrieval path and call it at least once before drafting the report. Treat the prefetched internal sources below as supporting inputs: if one of them was skipped or unavailable, note the limitation briefly and continue with the remaining sources plus `web_search`.
+
+## Prefetched internal sources (supporting context)
+
+### News headlines / vendor news block
+
+<start_of_news>
+{news_block}
+<end_of_news>
+
+### StockTwits messages / symbol stream block
+
+<start_of_stocktwits>
+{stocktwits_block}
+<end_of_stocktwits>
+
+### Reddit posts / community discussion block
+
+<start_of_reddit>
+{reddit_block}
+<end_of_reddit>
+
+Prioritize:
 
 1. Crypto-native news and market commentary.
-2. Community discussion and retail positioning signals surfaced by current web results.
+2. Community discussion and retail positioning signals surfaced by the current web results and the prefetched internal blocks when they are available.
 3. ETF/institutional flow coverage, liquidations, funding-rate commentary, and macro narratives affecting crypto sentiment.
 4. Source verification on any strong claim before you rely on it.
 
