@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from time import monotonic
 from typing import Callable, Dict
 
-from langchain_core.messages import RemoveMessage
+from langchain_core.messages import RemoveMessage, ToolMessage
 from langgraph.prebuilt import ToolNode
 
 from .analyst_execution import AnalystExecutionPlan, AnalystNodeSpec
@@ -40,11 +40,11 @@ def _merge_state_update(state: dict, update: dict) -> None:
         state[key] = value
 
 
-def _tool_call_count(state: dict) -> int:
+def _tool_calls(state: dict) -> list[dict]:
     messages = state.get("messages") or []
     if not messages:
-        return 0
-    return len(getattr(messages[-1], "tool_calls", None) or [])
+        return []
+    return list(getattr(messages[-1], "tool_calls", None) or [])
 
 
 def _message_content(state: dict) -> str:
@@ -69,6 +69,59 @@ def _build_local_state(state: dict) -> dict:
     return local_state
 
 
+def _execute_tool_calls(tool_node: ToolNode, tool_calls: list[dict]) -> dict:
+    tools_by_name = getattr(tool_node, "tools_by_name", None) or getattr(tool_node, "_tools_by_name", {})
+    tool_messages: list[ToolMessage] = []
+
+    for call in tool_calls:
+        tool_name = str(call.get("name") or "")
+        tool_call_id = str(call.get("id") or tool_name)
+        tool = tools_by_name.get(tool_name)
+
+        if tool is None:
+            tool_messages.append(
+                ToolMessage(
+                    content=f"Error: {tool_name} is not a registered tool for this analyst.",
+                    name=tool_name or "tool",
+                    tool_call_id=tool_call_id,
+                    status="error",
+                )
+            )
+            continue
+
+        try:
+            response = tool.invoke(
+                {
+                    "name": tool_name,
+                    "args": call.get("args") or {},
+                    "id": tool_call_id,
+                    "type": "tool_call",
+                }
+            )
+            if isinstance(response, ToolMessage):
+                tool_messages.append(response)
+            else:
+                tool_messages.append(
+                    ToolMessage(
+                        content=str(response),
+                        name=tool_name,
+                        tool_call_id=tool_call_id,
+                    )
+                )
+        except Exception as exc:
+            logger.warning("Tool %s failed in parallel analyst pool: %s", tool_name, exc)
+            tool_messages.append(
+                ToolMessage(
+                    content=f"Error: {tool_name} failed: {exc}",
+                    name=tool_name,
+                    tool_call_id=tool_call_id,
+                    status="error",
+                )
+            )
+
+    return {"messages": tool_messages}
+
+
 def create_parallel_analyst_team(
     plan: AnalystExecutionPlan,
     analyst_factories: Dict[str, Callable[[], Callable[[dict], dict]]],
@@ -88,9 +141,9 @@ def create_parallel_analyst_team(
 
         for iteration in range(1, max_tool_iterations + 1):
             _merge_state_update(local_state, analyst_node(local_state))
-            tool_calls = _tool_call_count(local_state)
+            tool_calls = _tool_calls(local_state)
 
-            if tool_calls <= 0:
+            if not tool_calls:
                 report = str(local_state.get(spec.report_key) or _message_content(local_state)).strip()
                 elapsed = monotonic() - started_at
                 logger.info(
@@ -104,10 +157,10 @@ def create_parallel_analyst_team(
             logger.info(
                 "%s requested %s tool call(s) on analyst iteration %s.",
                 spec.agent_node,
-                tool_calls,
+                len(tool_calls),
                 iteration,
             )
-            _merge_state_update(local_state, tool_node.invoke(local_state))
+            _merge_state_update(local_state, _execute_tool_calls(tool_node, tool_calls))
 
         raise RuntimeError(
             f"{spec.agent_node} exceeded {max_tool_iterations} analyst/tool iterations."
