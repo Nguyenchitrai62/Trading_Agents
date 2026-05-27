@@ -2677,9 +2677,11 @@ body {
 }
 
 .app-shell {
-    width: min(1900px, calc(100vw - 20px));
-    height: calc(100vh - 20px);
-    margin: 10px auto;
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    margin: 0;
+    padding: 10px;
 }
 
 .topbar {
@@ -3102,10 +3104,11 @@ body {
     }
 
     .app-shell {
-        width: calc(100vw - 16px);
+        width: 100vw;
         height: auto;
-        min-height: calc(100vh - 16px);
-        margin: 8px auto;
+        min-height: 100dvh;
+        margin: 0;
+        padding: 8px;
         overflow: visible;
     }
 
@@ -4150,6 +4153,8 @@ body.is-running .window-status {
 .loading-surface {
     position: relative;
     isolation: isolate;
+    overflow: hidden !important;
+    scrollbar-gutter: auto !important;
 }
 
 .loading-surface::before {
