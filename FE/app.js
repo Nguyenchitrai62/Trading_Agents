@@ -429,6 +429,8 @@ function createChatMessage(role, content = "") {
         pendingStats: null,
         createdAt: new Date().toISOString(),
         streamState: role === "assistant" ? "idle" : "ready",
+        streamStartedAt: 0,
+        firstTokenAt: 0,
         lastChunkAt: 0,
         typingCharsPerSecond: 92,
     };
@@ -932,6 +934,12 @@ function normalizeChatMessage(message) {
     if (!("pendingStats" in message)) {
         message.pendingStats = null;
     }
+    if (typeof message.streamStartedAt !== "number") {
+        message.streamStartedAt = 0;
+    }
+    if (typeof message.firstTokenAt !== "number") {
+        message.firstTokenAt = 0;
+    }
     if (typeof message.streamState !== "string") {
         message.streamState = message.role === "assistant" ? "idle" : "ready";
     }
@@ -1041,20 +1049,19 @@ function renderChatStatsMarkup(stats) {
     if (!stats) {
         return "";
     }
+    const totalTime = Number(stats.totalTime || 0);
     return `
-        <span>${escapeHtml(String(stats.tokensPerSecond))} tok/s</span>
-        <span>${escapeHtml(String(stats.tokens))} ${stats.estimated ? "est" : "tok"}</span>
-        <span>${escapeHtml(String(stats.generationTime))}s</span>
+        <span>Speed ${escapeHtml(String(stats.tokensPerSecond))} tok/s</span>
+        <span>Tokens ${escapeHtml(String(stats.tokens))} ${stats.estimated ? "est" : "tok"}</span>
+        <span>Gen ${escapeHtml(String(stats.generationTime))}s</span>
+        ${totalTime > 0 ? `<span>Total ${escapeHtml(String(totalTime))}s</span>` : ""}
     `;
 }
 
-function renderGoogleChatAvatarMarkup() {
+function renderUserChatAvatarMarkup() {
     return `
-        <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-            <path fill="#FFC107" d="M43.61 20.08H42V20H24v8h11.3C33.65 32.66 29.19 36 24 36c-6.62 0-12-5.38-12-12s5.38-12 12-12c3.06 0 5.84 1.15 7.96 3.04l5.66-5.66C34.05 6.05 29.27 4 24 4 12.95 4 4 12.95 4 24s8.95 20 20 20 20-8.95 20-20c0-1.34-.14-2.65-.39-3.92Z"></path>
-            <path fill="#FF3D00" d="M6.31 14.69l6.57 4.82C14.66 15.11 18.96 12 24 12c3.06 0 5.84 1.15 7.96 3.04l5.66-5.66C34.05 6.05 29.27 4 24 4c-7.68 0-14.36 4.34-17.69 10.69Z"></path>
-            <path fill="#4CAF50" d="M24 44c5.16 0 9.86-1.97 13.41-5.19l-6.19-5.24C29.17 35.09 26.7 36 24 36c-5.17 0-9.61-3.31-11.27-7.91l-6.53 5.03C9.5 39.56 16.2 44 24 44Z"></path>
-            <path fill="#1976D2" d="M43.61 20.08H42V20H24v8h11.3c-.79 2.24-2.23 4.18-4.08 5.57h.01l6.19 5.24C36.97 39.17 44 34 44 24c0-1.34-.14-2.65-.39-3.92Z"></path>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path fill="currentColor" d="M12 12c2.76 0 5-2.24 5-5S14.76 2 12 2 7 4.24 7 7s2.24 5 5 5Zm0 2c-3.34 0-10 1.68-10 5v1c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-1c0-3.32-6.66-5-10-5Z"></path>
         </svg>
     `;
 }
@@ -1063,7 +1070,27 @@ function renderChatAvatarMarkup(message) {
     if (message.role === "assistant") {
         return '<img class="chat-avatar-image chat-avatar-logo" src="image/LOGO.png" alt="" loading="lazy">';
     }
-    return renderGoogleChatAvatarMarkup();
+    return renderUserChatAvatarMarkup();
+}
+
+function buildFallbackChatStats(message) {
+    const content = String(message.content || message.renderedContent || "").trim();
+    if (!content) {
+        return null;
+    }
+    const endTime = performance.now();
+    const streamStartedAt = Number(message.streamStartedAt || 0) || endTime;
+    const firstTokenAt = Number(message.firstTokenAt || 0) || streamStartedAt;
+    const generationTime = Math.max(0.01, (endTime - firstTokenAt) / 1000);
+    const totalTime = Math.max(generationTime, (endTime - streamStartedAt) / 1000);
+    const tokens = Math.max(1, Math.round(content.length / 4));
+    return {
+        tokensPerSecond: Number((tokens / generationTime).toFixed(2)),
+        tokens,
+        generationTime: Number(generationTime.toFixed(2)),
+        totalTime: Number(totalTime.toFixed(2)),
+        estimated: true,
+    };
 }
 
 function createChatMessageElement(message) {
@@ -1383,6 +1410,8 @@ function finalizeStreamingMessage(session, message) {
     if (message.pendingStats) {
         message.stats = message.pendingStats;
         message.pendingStats = null;
+    } else if (!message.stats) {
+        message.stats = buildFallbackChatStats(message);
     }
     if (message.streamState !== "error") {
         message.streamState = "complete";
@@ -1522,6 +1551,7 @@ async function sendChatMessage() {
     const userMessage = createChatMessage("user", prompt);
     const assistantMessage = createChatMessage("assistant", "");
     assistantMessage.streamState = "streaming";
+    assistantMessage.streamStartedAt = performance.now();
     session.messages.push(userMessage, assistantMessage);
     session.title = buildChatSessionTitle(session);
     upsertChatSession(session);
@@ -1583,6 +1613,9 @@ async function sendChatMessage() {
                     continue;
                 }
                 if (eventPayload.event === "thinking") {
+                    if (!message.firstTokenAt) {
+                        message.firstTokenAt = performance.now();
+                    }
                     message.thinking += String(eventPayload.data?.content || "");
                     message.streamState = "streaming";
                     if (!message.thinkingPinned) {
@@ -1593,6 +1626,9 @@ async function sendChatMessage() {
                     const nextChunk = String(eventPayload.data?.content || "");
                     if (!nextChunk) {
                         continue;
+                    }
+                    if (!message.firstTokenAt) {
+                        message.firstTokenAt = performance.now();
                     }
                     setChatMessageTargetContent(message, `${message.content || ""}${nextChunk}`);
                     updateChatTypingMetrics(message, nextChunk.length);
@@ -1606,6 +1642,7 @@ async function sendChatMessage() {
                         tokensPerSecond: Number(eventPayload.data?.tokens_per_second || 0),
                         tokens: Number(eventPayload.data?.tokens || 0),
                         generationTime: Number(eventPayload.data?.generation_time || 0),
+                        totalTime: Number(eventPayload.data?.total_time || 0),
                         estimated: Boolean(eventPayload.data?.tokens_estimated),
                     };
                     message.streamState = "settling";
