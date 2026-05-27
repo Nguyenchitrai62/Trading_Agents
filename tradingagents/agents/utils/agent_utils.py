@@ -67,10 +67,11 @@ def get_preferred_reference_sources_instruction() -> str:
         lines.append(line)
 
     return (
-        " When live browsing or source cross-checking is available through the current model or tools,"
-        " you must retrieve or cross-check each of the following user-trusted reference sites before"
-        " writing final market-facing conclusions. You are not restricted to them; after checking"
-        " these sources, use any other credible sources or broader web search when useful."
+        " When MiniMax MCP browsing is available through the current model or tools, use the exact"
+        " tool name web_search to retrieve or cross-check each of the following user-trusted reference"
+        " sites before writing final market-facing conclusions. Do not invent alternate tool names"
+        " such as websearch. You are not restricted to these sites; after checking them, use any"
+        " other credible sources or broader web search when useful."
         " If a trusted source is unreachable, state that limitation:\n"
         + "\n".join(lines)
     )

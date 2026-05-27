@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
@@ -123,6 +124,101 @@ STATE_UPDATE_KEYS = {
     "final_trade_decision",
 }
 
+CHAT_WEB_SEARCH_HINT_TERMS = (
+    "latest",
+    "current",
+    "today",
+    "recent",
+    "newest",
+    "live",
+    "real time",
+    "real-time",
+    "market data",
+    "price",
+    "pricing",
+    "quote",
+    "news",
+    "headline",
+    "earnings",
+    "filing",
+    "10-k",
+    "10q",
+    "investor relations",
+    "guidance",
+    "macro",
+    "cpi",
+    "fomc",
+    "source",
+    "sources",
+    "citation",
+    "citations",
+    "cite",
+    "reference",
+    "references",
+    "verify",
+    "verification",
+    "cross-check",
+    "fact-check",
+    "search",
+    "web",
+    "internet",
+    "browse",
+    "lookup",
+    "look up",
+    "website",
+    "mcp",
+    "web_search",
+    "moi nhat",
+    "mới nhất",
+    "hom nay",
+    "hôm nay",
+    "hien tai",
+    "hiện tại",
+    "thoi gian thuc",
+    "thời gian thực",
+    "gia",
+    "giá",
+    "tin tuc",
+    "tin tức",
+    "tim kiem",
+    "tìm kiếm",
+    "tra cuu",
+    "tra cứu",
+    "nguon",
+    "nguồn",
+    "tham chieu",
+    "tham chiếu",
+    "xac minh",
+    "xác minh",
+    "kiem chung",
+    "kiểm chứng",
+    "kiem tra",
+    "kiểm tra",
+)
+
+CHAT_IMAGE_HINT_TERMS = (
+    "image",
+    "screenshot",
+    "photo",
+    "picture",
+    "chart",
+    "graph",
+    "candlestick",
+    "heatmap",
+    "visual",
+    "understand_image",
+    "anh",
+    "ảnh",
+    "hinh",
+    "hình",
+    "bieu do",
+    "biểu đồ",
+    "do thi",
+    "đồ thị",
+)
+
+CHAT_URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
+
 
 class AnalysisService:
     def __init__(self, settings: BackendSettings, history_store: TursoHistoryStore):
@@ -229,6 +325,64 @@ class AnalysisService:
             )
         return anthropic_messages
 
+    @staticmethod
+    def _normalize_chat_prompt(value: str) -> str:
+        return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+    @staticmethod
+    def get_latest_chat_user_prompt(request: ChatRequest) -> str:
+        for message in reversed(request.messages):
+            if message.role == "user" and message.content.strip():
+                return message.content.strip()
+        return ""
+
+    @classmethod
+    def _prompt_matches_any_term(cls, prompt: str, terms: tuple[str, ...]) -> bool:
+        normalized_prompt = cls._normalize_chat_prompt(prompt)
+        return any(term in normalized_prompt for term in terms)
+
+    @staticmethod
+    def _prompt_contains_direct_url(prompt: str) -> bool:
+        return bool(CHAT_URL_PATTERN.search(prompt or ""))
+
+    @classmethod
+    def build_chat_system_message(cls, request: ChatRequest) -> str:
+        latest_prompt = cls.get_latest_chat_user_prompt(request)
+        contains_direct_url = cls._prompt_contains_direct_url(latest_prompt)
+        needs_web_search = contains_direct_url or cls._prompt_matches_any_term(latest_prompt, CHAT_WEB_SEARCH_HINT_TERMS)
+        needs_image_tool = cls._prompt_matches_any_term(latest_prompt, CHAT_IMAGE_HINT_TERMS)
+
+        routing_lines = [
+            "You are the TradingAgents admin assistant. Answer directly, stay evidence-grounded, and use MiniMax MCP tools whenever they materially improve correctness.",
+            "Tool policy: use the exact tool name web_search for current market data, recent news, source verification, web citations, URL inspection, or whenever the user explicitly asks you to search or check online.",
+            "Tool policy: use understand_image for chart, screenshot, or image inspection when the user provides a usable visual input or image URL.",
+            "Do not say that you cannot access external websites or links when web_search is available in this runtime. Use the tool first, then answer from the retrieved evidence.",
+        ]
+
+        if contains_direct_url:
+            routing_lines.append(
+                "Prompt routing hint: the latest user request includes a direct URL. You should use web_search on that exact URL or a focused site-constrained query before giving the final answer."
+            )
+
+        if needs_web_search:
+            routing_lines.append(
+                "Prompt routing hint: the latest user request appears to need live or externally verified information. You should use web_search before giving the final answer."
+            )
+        if needs_image_tool:
+            routing_lines.append(
+                "Prompt routing hint: the latest user request appears to need chart or image inspection. Use understand_image if a usable visual input or image URL is available; otherwise ask the user for it."
+            )
+        if not needs_web_search and not needs_image_tool:
+            routing_lines.append(
+                "Prompt routing hint: the latest user request does not obviously require outside evidence. Do not force a tool call unless it materially improves the answer."
+            )
+
+        routing_lines.append(
+            "When you use tools, synthesize the evidence instead of dumping raw results, and mention the key sources or artifacts you relied on."
+        )
+
+        return "\n".join(routing_lines)
+
     async def create_mcp_chat_response(
         self,
         client: AsyncAnthropic,
@@ -275,8 +429,9 @@ class AnalysisService:
     def extract_chat_response_payload(response) -> tuple[str, str, int, int, int]:
         from tradingagents.llm_clients.minimax_mcp import extract_anthropic_text_and_thinking
 
-        text, thinking = extract_anthropic_text_and_thinking(response)
-        usage = getattr(response, "usage", None)
+        resolved_response = getattr(response, "response", response)
+        text, thinking = extract_anthropic_text_and_thinking(resolved_response)
+        usage = getattr(resolved_response, "usage", None)
         input_tokens = getattr(usage, "input_tokens", 0) or 0
         output_tokens = getattr(usage, "output_tokens", 0) or 0
         total_tokens = input_tokens + output_tokens
@@ -286,7 +441,7 @@ class AnalysisService:
         try:
             start_time = time.time()
             client = self.get_minimax_client()
-            system_message = "You are a helpful assistant."
+            system_message = self.build_chat_system_message(request)
             anthropic_messages = self.build_anthropic_chat_messages(request)
 
             mcp_response = await self.create_mcp_chat_response(
@@ -296,6 +451,30 @@ class AnalysisService:
                 anthropic_messages,
             )
             if mcp_response is not None:
+                for tool_event in getattr(mcp_response, "tool_events", ()) or ():
+                    phase = str(tool_event.get("phase") or "").strip()
+                    tool_name = str(tool_event.get("tool") or tool_event.get("requested_tool") or "tool")
+                    requested_tool = str(tool_event.get("requested_tool") or tool_name)
+                    if phase == "tool_use":
+                        yield self._sse(
+                            "tool_use",
+                            {
+                                "tool": tool_name,
+                                "requested_tool": requested_tool,
+                                "input": tool_event.get("input") or {},
+                            },
+                        )
+                    elif phase == "tool_result":
+                        content = self._trim_text(str(tool_event.get("content") or ""), 1200)
+                        if content:
+                            yield self._sse(
+                                "tool_result",
+                                {
+                                    "tool": tool_name,
+                                    "requested_tool": requested_tool,
+                                    "content": content,
+                                },
+                            )
                 text, thinking, _input_tokens, output_tokens, _total_tokens = self.extract_chat_response_payload(mcp_response)
                 if thinking:
                     yield self._sse("thinking", {"content": thinking})
@@ -402,7 +581,7 @@ class AnalysisService:
     async def generate_non_streaming_chat(self, request: ChatRequest) -> dict:
         try:
             client = self.get_minimax_client()
-            system_message = "You are a helpful assistant."
+            system_message = self.build_chat_system_message(request)
             anthropic_messages = self.build_anthropic_chat_messages(request)
 
             mcp_response = await self.create_mcp_chat_response(

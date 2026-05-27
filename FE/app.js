@@ -423,6 +423,7 @@ function createChatMessage(role, content = "") {
         renderedContent: normalizedContent,
         queuedContent: "",
         thinking: "",
+        toolTrace: [],
         thinkingExpanded: false,
         thinkingPinned: false,
         stats: null,
@@ -925,6 +926,9 @@ function normalizeChatMessage(message) {
     if (typeof message.thinking !== "string") {
         message.thinking = String(message.thinking || "");
     }
+    if (!Array.isArray(message.toolTrace)) {
+        message.toolTrace = [];
+    }
     if (typeof message.thinkingExpanded !== "boolean") {
         message.thinkingExpanded = false;
     }
@@ -1017,6 +1021,31 @@ function isChatMessageActive(message) {
     return message.role === "assistant" && (state.chat.currentMessageId === message.id || message.streamState === "streaming" || message.streamState === "settling" || Boolean(message.queuedContent));
 }
 
+function formatChatToolTraceValue(value) {
+    if (value == null || value === "") {
+        return "";
+    }
+    if (typeof value === "string") {
+        return value;
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch {
+        return String(value);
+    }
+}
+
+function buildChatThinkingDisplay(message) {
+    const toolTrace = Array.isArray(message.toolTrace)
+        ? message.toolTrace.filter((entry) => typeof entry === "string" && entry.trim()).join("\n\n")
+        : "";
+    const thinking = String(message.thinking || "").trim();
+    if (toolTrace && thinking) {
+        return `${toolTrace}\n\n${thinking}`;
+    }
+    return toolTrace || thinking;
+}
+
 function getChatMessageStatusLabel(message) {
     if (message.role !== "assistant") {
         return "";
@@ -1030,7 +1059,7 @@ function getChatMessageStatusLabel(message) {
     if (message.streamState === "settling") {
         return "Finishing";
     }
-    if (message.streamState === "streaming" && !message.renderedContent && message.thinking) {
+    if (message.streamState === "streaming" && !message.renderedContent && buildChatThinkingDisplay(message)) {
         return "Thinking";
     }
     if (message.streamState === "streaming" && message.queuedContent) {
@@ -1140,7 +1169,8 @@ function updateChatMessageElement(message, options = {}) {
     const badge = article.querySelector(".chat-stream-badge");
     const isActive = isChatMessageActive(message);
     const displayContent = typeof message.renderedContent === "string" ? message.renderedContent : String(message.content || "");
-    const hasThinking = Boolean(message.thinking.trim());
+    const thinkingDisplay = buildChatThinkingDisplay(message);
+    const hasThinking = Boolean(thinkingDisplay.trim());
 
     article.classList.toggle("is-streaming", isActive);
     article.classList.toggle("is-finished", Boolean(message.stats));
@@ -1171,8 +1201,8 @@ function updateChatMessageElement(message, options = {}) {
             ? (message.streamState === "streaming" ? "Thinking live" : "Thinking trace")
             : "Thinking";
         thinkingButton.setAttribute("aria-expanded", message.thinkingExpanded ? "true" : "false");
-        if (thinkingBody.textContent !== message.thinking) {
-            thinkingBody.textContent = message.thinking;
+        if (thinkingBody.textContent !== thinkingDisplay) {
+            thinkingBody.textContent = thinkingDisplay;
             if (message.thinkingExpanded) {
                 if (wasNearBottom) {
                     thinkingBody.scrollTop = thinkingBody.scrollHeight;
@@ -1617,6 +1647,38 @@ async function sendChatMessage() {
                         message.firstTokenAt = performance.now();
                     }
                     message.thinking += String(eventPayload.data?.content || "");
+                    message.streamState = "streaming";
+                    if (!message.thinkingPinned) {
+                        message.thinkingExpanded = true;
+                    }
+                    updateChatMessageElement(message);
+                } else if (eventPayload.event === "tool_use") {
+                    if (!message.firstTokenAt) {
+                        message.firstTokenAt = performance.now();
+                    }
+                    const toolName = String(eventPayload.data?.tool || eventPayload.data?.requested_tool || "tool");
+                    const toolInput = formatChatToolTraceValue(eventPayload.data?.input || {});
+                    const traceLines = [`Tool call: ${toolName}`];
+                    if (toolInput && toolInput !== "{}") {
+                        traceLines.push(`Input: ${toolInput}`);
+                    }
+                    message.toolTrace.push(traceLines.join("\n"));
+                    message.streamState = "streaming";
+                    if (!message.thinkingPinned) {
+                        message.thinkingExpanded = true;
+                    }
+                    updateChatMessageElement(message);
+                } else if (eventPayload.event === "tool_result") {
+                    if (!message.firstTokenAt) {
+                        message.firstTokenAt = performance.now();
+                    }
+                    const toolName = String(eventPayload.data?.tool || eventPayload.data?.requested_tool || "tool");
+                    const summary = compactText(String(eventPayload.data?.content || ""), 360);
+                    const traceLines = [`Tool result: ${toolName}`];
+                    if (summary) {
+                        traceLines.push(summary);
+                    }
+                    message.toolTrace.push(traceLines.join("\n"));
                     message.streamState = "streaming";
                     if (!message.thinkingPinned) {
                         message.thinkingExpanded = true;

@@ -34,6 +34,15 @@ _DEFAULT_MCP_ARGS = "minimax-coding-plan-mcp -y"
 _DEFAULT_MCP_TOOL_NAMES = "web_search,understand_image"
 _DEFAULT_MCP_MAX_TOOL_ROUNDS = 4
 _DEFAULT_MCP_RESULT_CHAR_LIMIT = 4000
+_MCP_TOOL_ALIASES: dict[str, tuple[str, ...]] = {
+    "web_search": ("websearch", "web-search", "webSearch"),
+    "understand_image": ("understandimage", "understand-image", "understandImage"),
+}
+_MCP_TOOL_ALIAS_TO_CANONICAL = {
+    alias: canonical
+    for canonical, aliases in _MCP_TOOL_ALIASES.items()
+    for alias in aliases
+}
 _TOOL_SPEC_CACHE: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
 _CACHE_LOCK = threading.RLock()
 
@@ -59,6 +68,12 @@ class MiniMaxMCPSettings:
             self.tool_names,
             self.api_host,
         )
+
+
+@dataclass(frozen=True)
+class MiniMaxMCPMessageLoopResult:
+    response: Any
+    tool_events: tuple[dict[str, Any], ...] = ()
 
 
 class MiniMaxMCPTool(BaseTool):
@@ -292,6 +307,36 @@ def merge_tools_by_name(primary: Sequence[Any], extras: Sequence[Any]) -> list[A
     return merged
 
 
+def _resolve_canonical_tool_name(tool_name: str) -> str:
+    normalized_name = str(tool_name or "").strip()
+    return _MCP_TOOL_ALIAS_TO_CANONICAL.get(normalized_name, normalized_name)
+
+
+def _expand_tool_specs_with_aliases(specs: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    expanded: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+
+    for spec in specs:
+        canonical_name = str(spec.get("name") or "").strip()
+        if not canonical_name:
+            continue
+
+        for tool_name in (canonical_name, *_MCP_TOOL_ALIASES.get(canonical_name, ())):
+            if tool_name in seen_names:
+                continue
+
+            next_spec = dict(spec)
+            next_spec["name"] = tool_name
+            if tool_name != canonical_name:
+                description = str(spec.get("description") or "").strip()
+                alias_note = f"Alias for {canonical_name}. Use the same input schema and behavior."
+                next_spec["description"] = f"{description} {alias_note}".strip()
+            expanded.append(next_spec)
+            seen_names.add(tool_name)
+
+    return expanded
+
+
 def build_mcp_reference_sources_instruction(reference_sources: Sequence[Any] | None) -> str:
     lines = _format_reference_source_lines(reference_sources)
     base = (
@@ -463,7 +508,7 @@ def get_minimax_mcp_anthropic_tools(settings: MiniMaxMCPSettings) -> list[dict[s
             "description": spec.get("description", ""),
             "input_schema": spec.get("input_schema") or {"type": "object", "properties": {}},
         }
-        for spec in get_minimax_mcp_tool_specs(settings)
+        for spec in _expand_tool_specs_with_aliases(get_minimax_mcp_tool_specs(settings))
     ]
 
 
@@ -474,7 +519,7 @@ async def get_minimax_mcp_anthropic_tools_async(settings: MiniMaxMCPSettings) ->
             "description": spec.get("description", ""),
             "input_schema": spec.get("input_schema") or {"type": "object", "properties": {}},
         }
-        for spec in await get_minimax_mcp_tool_specs_async(settings)
+        for spec in _expand_tool_specs_with_aliases(await get_minimax_mcp_tool_specs_async(settings))
     ]
 
 
@@ -486,7 +531,7 @@ def get_minimax_mcp_langchain_tools(settings: MiniMaxMCPSettings) -> list[MiniMa
             args_schema=spec.get("input_schema") or {"type": "object", "properties": {}},
             mcp_settings=settings,
         )
-        for spec in get_minimax_mcp_tool_specs(settings)
+        for spec in _expand_tool_specs_with_aliases(get_minimax_mcp_tool_specs(settings))
     ]
 
 
@@ -495,11 +540,13 @@ async def call_mcp_tool_async(
     tool_name: str,
     tool_input: dict[str, Any],
 ) -> str:
+    canonical_tool_name = _resolve_canonical_tool_name(tool_name)
+
     async def call_once() -> str:
         async with await _with_mcp_session(settings) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                result = await session.call_tool(tool_name, tool_input)
+                result = await session.call_tool(canonical_tool_name, tool_input)
                 return _stringify_mcp_result(result, settings.result_char_limit)
 
     return await asyncio.wait_for(call_once(), timeout=settings.call_timeout_seconds)
@@ -544,9 +591,10 @@ async def run_anthropic_mcp_message_loop(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     temperature: float | None = None,
-) -> Any:
+) -> MiniMaxMCPMessageLoopResult:
     active_messages = list(messages)
     tool_names = {tool["name"] for tool in tools}
+    tool_events: list[dict[str, Any]] = []
 
     for _ in range(max(1, settings.max_tool_rounds)):
         request_kwargs: dict[str, Any] = {
@@ -564,17 +612,41 @@ async def run_anthropic_mcp_message_loop(
         active_messages.append({"role": "assistant", "content": response.content})
 
         tool_uses = [block for block in response.content if getattr(block, "type", None) == "tool_use"]
-        tool_uses = [tool_use for tool_use in tool_uses if getattr(tool_use, "name", "") in tool_names]
+        tool_uses = [
+            tool_use
+            for tool_use in tool_uses
+            if getattr(tool_use, "name", "") in tool_names
+            or _resolve_canonical_tool_name(getattr(tool_use, "name", "")) in tool_names
+        ]
         if not tool_uses:
-            return response
+            return MiniMaxMCPMessageLoopResult(response=response, tool_events=tuple(tool_events))
 
         tool_results = []
         for tool_use in tool_uses:
+            requested_tool_name = str(getattr(tool_use, "name", "") or "")
+            canonical_tool_name = _resolve_canonical_tool_name(requested_tool_name)
+            tool_input = tool_use.input or {}
+            tool_events.append(
+                {
+                    "phase": "tool_use",
+                    "tool": canonical_tool_name,
+                    "requested_tool": requested_tool_name,
+                    "input": tool_input,
+                }
+            )
             try:
-                content = await call_mcp_tool_async(settings, tool_use.name, tool_use.input or {})
+                content = await call_mcp_tool_async(settings, requested_tool_name, tool_input)
             except Exception as exc:  # pragma: no cover - external MCP failure path
-                logger.warning("MiniMax MCP tool %s failed: %s", tool_use.name, exc)
-                content = f"MiniMax MCP tool {tool_use.name} failed: {exc}"
+                logger.warning("MiniMax MCP tool %s failed: %s", requested_tool_name, exc)
+                content = f"MiniMax MCP tool {requested_tool_name} failed: {exc}"
+            tool_events.append(
+                {
+                    "phase": "tool_result",
+                    "tool": canonical_tool_name,
+                    "requested_tool": requested_tool_name,
+                    "content": content,
+                }
+            )
             tool_results.append(
                 {
                     "type": "tool_result",
@@ -607,7 +679,10 @@ async def run_anthropic_mcp_message_loop(
     }
     if temperature is not None:
         request_kwargs["temperature"] = temperature
-    return await client.messages.create(**request_kwargs)
+    return MiniMaxMCPMessageLoopResult(
+        response=await client.messages.create(**request_kwargs),
+        tool_events=tuple(tool_events),
+    )
 
 
 def extract_anthropic_text_and_thinking(response: Any) -> tuple[str, str]:
