@@ -2449,13 +2449,26 @@ function compactText(value = "", maxLength = 220) {
 
 function tryParseJsonString(value = "") {
     const text = String(value || "").trim();
-    if (!text || !/^[\[{]/.test(text)) {
+    if (!text || !/^[\[{\"]/.test(text)) {
         return null;
     }
     try {
         return JSON.parse(text);
     } catch {
-        return null;
+        const decoded = text
+            .replace(/\\r/g, "\r")
+            .replace(/\\n/g, "\n")
+            .replace(/\\t/g, "\t")
+            .replace(/\\\"/g, '"')
+            .replace(/\\\//g, "/");
+        if (decoded === text || !/^[\[{\"]/.test(decoded.trim())) {
+            return null;
+        }
+        try {
+            return JSON.parse(decoded);
+        } catch {
+            return null;
+        }
     }
 }
 
@@ -2574,7 +2587,12 @@ function formatToolResultMarkdown(content) {
         }
     }
 
-    return String(payload || "").trim();
+    const text = String(payload || "").trim();
+    const parsedText = tryParseJsonString(text);
+    if (parsedText != null) {
+        return formatToolResultMarkdown(parsedText);
+    }
+    return text;
 }
 
 function formatToolResultPlainText(content, maxLength = 320) {
@@ -3609,9 +3627,6 @@ function renderLogEntries(element, entries, emptyText, options = {}) {
     const useDetail = Boolean(options.useDetail);
     const wasNearBottom = isScrolledNearBottom(element, 48);
     const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    const previousRects = new Map(
-        Array.from(element.children).map((child) => [child.dataset.logKey, child.getBoundingClientRect()]),
-    );
     const existingNodes = new Map(
         Array.from(element.querySelectorAll(".event-log-item[data-log-key]")).map((child) => [child.dataset.logKey, child]),
     );
@@ -3647,22 +3662,7 @@ function renderLogEntries(element, entries, emptyText, options = {}) {
         if (!key) {
             return;
         }
-        if (newKeys.has(key)) {
-            child.classList.add("event-log-item-new");
-            return;
-        }
-        const previousRect = previousRects.get(key);
-        if (!previousRect || typeof child.animate !== "function") {
-            return;
-        }
-        const nextRect = child.getBoundingClientRect();
-        const deltaY = previousRect.top - nextRect.top;
-        if (Math.abs(deltaY) > 1) {
-            child.animate(
-                [{ transform: `translateY(${deltaY}px)` }, { transform: "translateY(0)" }],
-                { duration: 380, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
-            );
-        }
+        child.classList.toggle("event-log-item-new", newKeys.has(key));
     });
 
     if (wasNearBottom) {
@@ -3718,11 +3718,12 @@ function renderOperationsRail() {
     setElementLoadingState(elements.eventLog, state.isBusy && !state.run.logEntries.length, "Waiting events");
     setElementLoadingState(elements.executionLog, state.isBusy && !state.run.logEntries.length, "Waiting backend");
 
+    const flashLatestTrace = state.run.flashLatestTrace;
     preserveScrollPosition(elements.toolTraceList, () => {
         elements.toolTraceList.innerHTML = feed.length
             ? feed
                   .map((item) => {
-                      const shouldFlash = state.run.flashLatestTrace && item.id === state.run.latestTraceId;
+                      const shouldFlash = flashLatestTrace && item.id === state.run.latestTraceId;
                       return `
                     <article class="tool-trace-item trace-tone-${escapeHtml(item.tone || "progress")} ${shouldFlash ? "tool-trace-new" : ""} detail-trigger"
                         tabindex="0"
@@ -3746,6 +3747,7 @@ function renderOperationsRail() {
                                     .join("")
                         : '<div class="tool-trace-empty">Agent tool calls and reasoning traces will appear here when the backend stream starts.</div>';
         });
+    state.run.flashLatestTrace = false;
 }
 
 function renderResearchRoom() {
