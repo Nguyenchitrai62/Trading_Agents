@@ -414,22 +414,36 @@ function createChatSession(id, title = "New Chat", messages = []) {
     };
 }
 
+function createChatMessage(role, content = "") {
+    const normalizedContent = String(content || "");
+    return {
+        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role,
+        content: normalizedContent,
+        renderedContent: normalizedContent,
+        queuedContent: "",
+        thinking: "",
+        thinkingExpanded: false,
+        thinkingPinned: false,
+        stats: null,
+        pendingStats: null,
+        createdAt: new Date().toISOString(),
+        streamState: role === "assistant" ? "idle" : "ready",
+        lastChunkAt: 0,
+        typingCharsPerSecond: 92,
+    };
+}
+
 function createInitialChatState() {
     const welcomeId = "chat-welcome";
+    const welcomeMessage = createChatMessage(
+        "assistant",
+        "## Welcome\n\nThis workspace uses the same backend chat endpoint as the integrated dashboard chat.\n\n- Thinking stream\n- Live content stream\n- Token stats\n- Multi-session history\n\nSign in and open the chat as admin to begin.",
+    );
     const welcomeSession = createChatSession(
         welcomeId,
         "Welcome Chat",
-        [
-            {
-                id: `msg-${Date.now()}-welcome`,
-                role: "assistant",
-                content: "## Welcome\n\nThis workspace uses the same backend chat endpoint as the standalone llm page.\n\n- Thinking stream\n- Live content stream\n- Token stats\n- Multi-session history\n\nSign in and open the chat as admin to begin.",
-                thinking: "",
-                thinkingExpanded: false,
-                stats: null,
-                createdAt: new Date().toISOString(),
-            },
-        ],
+        [welcomeMessage],
     );
     return {
         sessions: {
@@ -443,6 +457,9 @@ function createInitialChatState() {
         currentEvent: "",
         controller: null,
         currentMessageId: "",
+        renderedSessionId: "",
+        typingTimer: null,
+        typingLastTickAt: 0,
         error: "",
     };
 }
@@ -861,7 +878,12 @@ function setMarkdownPreview(element, content, fallback) {
 }
 
 function getActiveChatSession() {
-    return state.chat.sessions[state.chat.activeId] || null;
+    const session = state.chat.sessions[state.chat.activeId] || null;
+    if (!session) {
+        return null;
+    }
+    session.messages = (session.messages || []).map((message) => normalizeChatMessage(message));
+    return session;
 }
 
 function buildChatSessionTitle(session) {
@@ -872,8 +894,10 @@ function buildChatSessionTitle(session) {
     return compactText(stripMarkdownToPlainText(firstUserMessage.content), 34) || "New Chat";
 }
 
-function upsertChatSession(session) {
-    session.updatedAt = new Date().toISOString();
+function upsertChatSession(session, options = {}) {
+    if (options.touch !== false) {
+        session.updatedAt = new Date().toISOString();
+    }
     state.chat.sessions[session.id] = session;
     state.chat.order = [session.id, ...state.chat.order.filter((item) => item !== session.id)];
 }
@@ -882,16 +906,41 @@ function createChatSessionId() {
     return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createChatMessage(role, content = "") {
-    return {
-        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        role,
-        content,
-        thinking: "",
-        thinkingExpanded: false,
-        stats: null,
-        createdAt: new Date().toISOString(),
-    };
+function normalizeChatMessage(message) {
+    if (!message || typeof message !== "object") {
+        return createChatMessage("assistant", "");
+    }
+    if (typeof message.content !== "string") {
+        message.content = String(message.content || "");
+    }
+    if (typeof message.renderedContent !== "string") {
+        message.renderedContent = message.content;
+    }
+    if (typeof message.queuedContent !== "string") {
+        message.queuedContent = "";
+    }
+    if (typeof message.thinking !== "string") {
+        message.thinking = String(message.thinking || "");
+    }
+    if (typeof message.thinkingExpanded !== "boolean") {
+        message.thinkingExpanded = false;
+    }
+    if (typeof message.thinkingPinned !== "boolean") {
+        message.thinkingPinned = false;
+    }
+    if (!("pendingStats" in message)) {
+        message.pendingStats = null;
+    }
+    if (typeof message.streamState !== "string") {
+        message.streamState = message.role === "assistant" ? "idle" : "ready";
+    }
+    if (typeof message.lastChunkAt !== "number") {
+        message.lastChunkAt = 0;
+    }
+    if (typeof message.typingCharsPerSecond !== "number") {
+        message.typingCharsPerSecond = 92;
+    }
+    return message;
 }
 
 function getChatModel() {
@@ -909,6 +958,9 @@ function updateChatComposerState() {
     const hasText = Boolean(elements.chatInput.value.trim());
     const canUse = Boolean(state.auth.isAdmin && state.auth.idToken);
     elements.chatSendButton.disabled = !hasText || !canUse || state.chat.isStreaming;
+    if (elements.chatModelSelect instanceof HTMLSelectElement) {
+        elements.chatModelSelect.disabled = !canUse || state.chat.isStreaming;
+    }
     if (state.chat.isStreaming) {
         elements.chatInput.placeholder = "Assistant is responding...";
     } else if (!state.auth.idToken) {
@@ -929,6 +981,170 @@ function scrollChatToBottom(force = false) {
     }
 }
 
+function highlightChatCodeBlocks(root) {
+    if (!window.hljs || !(root instanceof HTMLElement)) {
+        return;
+    }
+    root.querySelectorAll("pre code").forEach((block) => {
+        if (!block.classList.contains("hljs")) {
+            window.hljs.highlightElement(block);
+        }
+    });
+}
+
+function getChatMessageElement(messageId) {
+    if (!(elements.chatMessages instanceof HTMLElement) || !messageId) {
+        return null;
+    }
+    return elements.chatMessages.querySelector(`[data-chat-message-id="${messageId}"]`);
+}
+
+function isChatMessageActive(message) {
+    return message.role === "assistant" && (state.chat.currentMessageId === message.id || message.streamState === "streaming" || message.streamState === "settling" || Boolean(message.queuedContent));
+}
+
+function getChatMessageStatusLabel(message) {
+    if (message.role !== "assistant") {
+        return "";
+    }
+    if (message.streamState === "error") {
+        return "Error";
+    }
+    if (message.streamState === "settling" && message.queuedContent) {
+        return "Typing";
+    }
+    if (message.streamState === "settling") {
+        return "Finishing";
+    }
+    if (message.streamState === "streaming" && !message.renderedContent && message.thinking) {
+        return "Thinking";
+    }
+    if (message.streamState === "streaming" && message.queuedContent) {
+        return "Typing";
+    }
+    if (message.streamState === "streaming") {
+        return "Responding";
+    }
+    if (message.stats) {
+        return "Complete";
+    }
+    return "";
+}
+
+function renderChatStatsMarkup(stats) {
+    if (!stats) {
+        return "";
+    }
+    return `
+        <span>${escapeHtml(String(stats.tokensPerSecond))} tok/s</span>
+        <span>${escapeHtml(String(stats.tokens))} ${stats.estimated ? "est" : "tok"}</span>
+        <span>${escapeHtml(String(stats.generationTime))}s</span>
+    `;
+}
+
+function createChatMessageElement(message) {
+    const article = document.createElement("article");
+    article.className = `chat-row ${message.role}`;
+    article.dataset.chatMessageId = message.id;
+    article.innerHTML = `
+        <div class="chat-avatar" aria-hidden="true">
+            <span>${message.role === "assistant" ? "TA" : "You"}</span>
+        </div>
+        <div class="chat-bubble">
+            <div class="chat-bubble-header">
+                <span class="chat-author">${message.role === "assistant" ? "TradingAgents Assistant" : "You"}</span>
+                <span class="chat-stream-badge" hidden></span>
+            </div>
+            <div class="chat-thinking" hidden>
+                <button type="button" class="chat-thinking-toggle" data-chat-thinking-toggle="${escapeHtml(message.id)}" aria-expanded="false">
+                    <span class="chat-thinking-label">Thinking trace</span>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                </button>
+                <pre class="chat-thinking-body"></pre>
+            </div>
+            <div class="chat-message-body markdown-preview"></div>
+            <div class="chat-stats" hidden></div>
+            <div class="chat-meta"></div>
+        </div>
+    `;
+    updateChatMessageElement(message, { element: article, forceHighlight: true, forceBodyUpdate: true });
+    return article;
+}
+
+function updateChatMessageElement(message, options = {}) {
+    const article = options.element instanceof HTMLElement ? options.element : getChatMessageElement(message.id);
+    if (!(article instanceof HTMLElement)) {
+        return;
+    }
+
+    const bubble = article.querySelector(".chat-bubble");
+    const body = article.querySelector(".chat-message-body");
+    const thinkingBlock = article.querySelector(".chat-thinking");
+    const thinkingLabel = article.querySelector(".chat-thinking-label");
+    const thinkingButton = article.querySelector(".chat-thinking-toggle");
+    const thinkingBody = article.querySelector(".chat-thinking-body");
+    const statsBlock = article.querySelector(".chat-stats");
+    const meta = article.querySelector(".chat-meta");
+    const badge = article.querySelector(".chat-stream-badge");
+    const isActive = isChatMessageActive(message);
+    const displayContent = typeof message.renderedContent === "string" ? message.renderedContent : String(message.content || "");
+    const hasThinking = Boolean(message.thinking.trim());
+
+    article.classList.toggle("is-streaming", isActive);
+    article.classList.toggle("is-finished", Boolean(message.stats));
+    bubble?.classList.toggle("has-thinking", hasThinking);
+
+    if (badge instanceof HTMLElement) {
+        const label = getChatMessageStatusLabel(message);
+        badge.hidden = !label;
+        badge.textContent = label;
+        badge.dataset.state = message.streamState || "idle";
+    }
+
+    if (thinkingBlock instanceof HTMLElement && thinkingLabel instanceof HTMLElement && thinkingButton instanceof HTMLButtonElement && thinkingBody instanceof HTMLElement) {
+        const wasNearBottom = thinkingBody.scrollHeight - thinkingBody.scrollTop - thinkingBody.clientHeight < 20;
+        const previousScrollTop = thinkingBody.scrollTop;
+        thinkingBlock.hidden = !hasThinking;
+        thinkingBlock.classList.toggle("is-collapsed", !message.thinkingExpanded);
+        thinkingLabel.textContent = message.thinkingExpanded
+            ? (message.streamState === "streaming" ? "Thinking live" : "Thinking trace")
+            : "Thinking";
+        thinkingButton.setAttribute("aria-expanded", message.thinkingExpanded ? "true" : "false");
+        if (thinkingBody.textContent !== message.thinking) {
+            thinkingBody.textContent = message.thinking;
+            if (message.thinkingExpanded) {
+                if (wasNearBottom) {
+                    thinkingBody.scrollTop = thinkingBody.scrollHeight;
+                } else {
+                    thinkingBody.scrollTop = previousScrollTop;
+                }
+            }
+        }
+    }
+
+    if (body instanceof HTMLElement) {
+        const bodyStreaming = message.role === "assistant" && isActive;
+        const nextBodyKey = `${bodyStreaming ? "streaming" : "ready"}:${displayContent}`;
+        if (options.forceBodyUpdate || body.dataset.chatBodyKey !== nextBodyKey) {
+            setMarkdownPreview(body, displayContent, bodyStreaming ? "Waiting for response..." : message.role === "assistant" ? "..." : "");
+            body.dataset.chatBodyKey = nextBodyKey;
+            if (!bodyStreaming || options.forceHighlight) {
+                highlightChatCodeBlocks(body);
+            }
+        }
+        body.classList.toggle("is-typing", bodyStreaming);
+    }
+
+    if (statsBlock instanceof HTMLElement) {
+        statsBlock.hidden = !message.stats;
+        statsBlock.innerHTML = message.stats ? renderChatStatsMarkup(message.stats) : "";
+    }
+
+    if (meta instanceof HTMLElement) {
+        meta.textContent = formatHistoryTimestamp(message.createdAt);
+    }
+}
+
 function renderChatHistoryList() {
     if (!(elements.chatHistoryList instanceof HTMLElement)) {
         return;
@@ -945,8 +1161,9 @@ function renderChatHistoryList() {
         const title = buildChatSessionTitle(session);
         const isActive = session.id === state.chat.activeId;
         const meta = formatHistoryTimestamp(session.updatedAt);
+        const isDisabled = state.chat.isStreaming && !isActive;
         return `
-            <button type="button" class="chat-session-item ${isActive ? "is-active" : ""}" data-chat-session-id="${escapeHtml(session.id)}">
+            <button type="button" class="chat-session-item ${isActive ? "is-active" : ""}" data-chat-session-id="${escapeHtml(session.id)}" ${isDisabled ? "disabled" : ""}>
                 <span class="chat-session-title">${escapeHtml(title)}</span>
                 <span class="chat-session-meta">${escapeHtml(meta)}</span>
             </button>
@@ -954,66 +1171,51 @@ function renderChatHistoryList() {
     }).join("");
 }
 
-function renderChatMessage(message) {
-    const bodyHtml = renderMarkdown(message.content || "", message.role === "assistant" ? "..." : "");
-    const hasThinking = Boolean(message.thinking && message.thinking.trim());
-    const thinkingClass = message.thinkingExpanded ? "chat-thinking" : "chat-thinking is-collapsed";
-    const thinkingBlock = hasThinking
-        ? `
-            <div class="${thinkingClass}" data-chat-thinking-block="${escapeHtml(message.id)}">
-                <button type="button" class="chat-thinking-toggle" data-chat-thinking-toggle="${escapeHtml(message.id)}" aria-expanded="${message.thinkingExpanded ? "true" : "false"}">
-                    <span>${escapeHtml(message.thinkingExpanded ? "Thinking trace" : "Thinking (collapsed)")}</span>
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
-                </button>
-                <pre class="chat-thinking-body">${escapeHtml(message.thinking)}</pre>
-            </div>
-        `
-        : "";
-
-    const stats = message.stats;
-    const statsBlock = stats
-        ? `
-            <div class="chat-stats">
-                <span>${escapeHtml(String(stats.tokensPerSecond))} tok/s</span>
-                <span>${escapeHtml(String(stats.tokens))} ${stats.estimated ? "est" : "tok"}</span>
-                <span>${escapeHtml(String(stats.generationTime))}s</span>
-            </div>
-        `
-        : "";
-
-    return `
-        <article class="chat-row ${escapeHtml(message.role)}" data-chat-message-id="${escapeHtml(message.id)}">
-            <div class="chat-bubble markdown-preview">
-                ${thinkingBlock}
-                ${bodyHtml}
-                ${statsBlock}
-                <div class="chat-meta">${escapeHtml(formatHistoryTimestamp(message.createdAt))}</div>
-            </div>
-        </article>
-    `;
-}
-
-function renderChatMessages() {
+function renderChatMessages(forceFull = false) {
     if (!(elements.chatMessages instanceof HTMLElement)) {
         return;
     }
     const session = getActiveChatSession();
     if (!session) {
+        state.chat.renderedSessionId = "";
         elements.chatMessages.innerHTML = '<div class="chat-empty">No active chat session.</div>';
         return;
     }
     if (!session.messages.length) {
+        state.chat.renderedSessionId = session.id;
         elements.chatMessages.innerHTML = '<div class="chat-empty">Start with a prompt to begin streaming responses.</div>';
         return;
     }
-    elements.chatMessages.innerHTML = session.messages.map(renderChatMessage).join("");
-    if (window.hljs) {
-        elements.chatMessages.querySelectorAll("pre code").forEach((block) => {
-            if (!block.classList.contains("hljs")) {
-                window.hljs.highlightElement(block);
-            }
-        });
+
+    const shouldRebuild = forceFull || state.chat.renderedSessionId !== session.id;
+    if (shouldRebuild) {
+        elements.chatMessages.innerHTML = "";
     }
+
+    const expectedIds = new Set(session.messages.map((message) => message.id));
+    Array.from(elements.chatMessages.children).forEach((child) => {
+        if (!(child instanceof HTMLElement)) {
+            return;
+        }
+        const messageId = child.dataset.chatMessageId || "";
+        if (messageId && !expectedIds.has(messageId)) {
+            child.remove();
+        }
+    });
+
+    session.messages.forEach((message, index) => {
+        let element = getChatMessageElement(message.id);
+        if (!(element instanceof HTMLElement)) {
+            element = createChatMessageElement(message);
+        } else {
+            updateChatMessageElement(message);
+        }
+        if (elements.chatMessages.children[index] !== element) {
+            elements.chatMessages.insertBefore(element, elements.chatMessages.children[index] || null);
+        }
+    });
+
+    state.chat.renderedSessionId = session.id;
     scrollChatToBottom();
 }
 
@@ -1036,24 +1238,32 @@ function renderChatPage() {
             elements.chatStatusText.textContent = "Ready";
         }
     }
+    if (elements.chatNewButton instanceof HTMLButtonElement) {
+        elements.chatNewButton.disabled = state.chat.isStreaming;
+    }
     renderChatHistoryList();
     renderChatMessages();
     updateChatComposerState();
 }
 
 function createNewChatSession() {
+    if (state.chat.isStreaming) {
+        return;
+    }
     const id = createChatSessionId();
     const session = createChatSession(id);
     upsertChatSession(session);
     state.chat.activeId = id;
+    state.chat.renderedSessionId = "";
     renderChatPage();
 }
 
 function selectChatSession(id) {
-    if (!id || !state.chat.sessions[id]) {
+    if (!id || !state.chat.sessions[id] || state.chat.isStreaming) {
         return;
     }
     state.chat.activeId = id;
+    state.chat.renderedSessionId = "";
     renderChatPage();
     scrollChatToBottom(true);
 }
@@ -1068,7 +1278,129 @@ function toggleThinkingMessage(messageId) {
         return;
     }
     message.thinkingExpanded = !message.thinkingExpanded;
-    renderChatMessages();
+    message.thinkingPinned = true;
+    if (message.thinkingExpanded && state.chat.currentMessageId === message.id) {
+        state.chat.shouldAutoScroll = false;
+    }
+    updateChatMessageElement(message);
+}
+
+function getCurrentStreamingChatMessage() {
+    const session = getActiveChatSession();
+    if (!session || !state.chat.currentMessageId) {
+        return null;
+    }
+    return session.messages.find((message) => message.id === state.chat.currentMessageId) || null;
+}
+
+function stopChatTypingPump() {
+    if (state.chat.typingTimer) {
+        window.clearInterval(state.chat.typingTimer);
+        state.chat.typingTimer = null;
+    }
+    state.chat.typingLastTickAt = 0;
+}
+
+function startChatTypingPump() {
+    if (state.chat.typingTimer) {
+        return;
+    }
+    state.chat.typingLastTickAt = performance.now();
+    state.chat.typingTimer = window.setInterval(processChatTypingTick, 32);
+}
+
+function setChatMessageTargetContent(message, nextContent) {
+    const targetContent = String(nextContent || "");
+    const visibleContent = String(message.renderedContent || "");
+    message.content = targetContent;
+    if (targetContent.startsWith(visibleContent)) {
+        message.queuedContent = targetContent.slice(visibleContent.length);
+        return;
+    }
+    message.renderedContent = "";
+    message.queuedContent = targetContent;
+}
+
+function updateChatTypingMetrics(message, chunkLength) {
+    const now = performance.now();
+    if (!message.lastChunkAt) {
+        message.typingCharsPerSecond = Math.max(90, Math.min(220, chunkLength * 18));
+        message.lastChunkAt = now;
+        return;
+    }
+    const elapsedMs = Math.max(24, now - message.lastChunkAt);
+    const incomingCharsPerSecond = (chunkLength * 1000) / elapsedMs;
+    message.typingCharsPerSecond = Math.max(42, Math.min(720, (message.typingCharsPerSecond * 0.58) + (incomingCharsPerSecond * 0.42)));
+    message.lastChunkAt = now;
+}
+
+function getChatTypingSpeed(message) {
+    const baseSpeed = Math.max(46, Math.min(420, message.typingCharsPerSecond || 92));
+    const backlogBoost = Math.min(420, Math.pow(Math.max(message.queuedContent.length, 0), 0.88) * 7.2);
+    return Math.min(760, baseSpeed + backlogBoost);
+}
+
+function finalizeStreamingMessage(session, message) {
+    if (message.pendingStats) {
+        message.stats = message.pendingStats;
+        message.pendingStats = null;
+    }
+    if (message.streamState !== "error") {
+        message.streamState = "complete";
+    }
+    message.renderedContent = message.content || message.renderedContent || "";
+    message.queuedContent = "";
+    if (state.chat.currentMessageId === message.id) {
+        state.chat.currentMessageId = "";
+        state.chat.isStreaming = false;
+        state.chat.controller = null;
+        stopChatTypingPump();
+    }
+    upsertChatSession(session);
+    updateChatMessageElement(message, { forceHighlight: true, forceBodyUpdate: true });
+    renderChatPage();
+}
+
+function maybeFinalizeStreamingMessage(session, message) {
+    if (!message || message.queuedContent) {
+        return false;
+    }
+    if (message.streamState !== "settling" && message.streamState !== "error") {
+        return false;
+    }
+    finalizeStreamingMessage(session, message);
+    return true;
+}
+
+function processChatTypingTick() {
+    const session = getActiveChatSession();
+    const message = getCurrentStreamingChatMessage();
+    if (!session || !message) {
+        stopChatTypingPump();
+        return;
+    }
+
+    const now = performance.now();
+    const previousTick = state.chat.typingLastTickAt || now;
+    const elapsedMs = Math.max(16, now - previousTick);
+    state.chat.typingLastTickAt = now;
+
+    if (message.queuedContent) {
+        const stepSize = Math.max(1, Math.round((getChatTypingSpeed(message) * elapsedMs) / 1000));
+        const nextChunk = message.queuedContent.slice(0, stepSize);
+        message.renderedContent += nextChunk;
+        message.queuedContent = message.queuedContent.slice(nextChunk.length);
+        updateChatMessageElement(message, { forceBodyUpdate: true });
+        scrollChatToBottom();
+    }
+
+    if (maybeFinalizeStreamingMessage(session, message)) {
+        return;
+    }
+
+    if (!message.queuedContent && message.streamState !== "streaming") {
+        stopChatTypingPump();
+    }
 }
 
 function parseChatSseBlocks(buffer) {
@@ -1140,7 +1472,7 @@ async function sendChatMessage() {
 
     const userMessage = createChatMessage("user", prompt);
     const assistantMessage = createChatMessage("assistant", "");
-    assistantMessage.thinkingExpanded = false;
+    assistantMessage.streamState = "streaming";
     session.messages.push(userMessage, assistantMessage);
     session.title = buildChatSessionTitle(session);
     upsertChatSession(session);
@@ -1155,6 +1487,7 @@ async function sendChatMessage() {
     state.chat.currentEvent = "";
     state.chat.shouldAutoScroll = true;
     state.chat.controller = new AbortController();
+    stopChatTypingPump();
     renderChatPage();
 
     try {
@@ -1181,6 +1514,9 @@ async function sendChatMessage() {
             throw new Error(await readResponseError(response));
         }
 
+        if (!response.body) {
+            throw new Error("Chat stream is not available right now.");
+        }
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
@@ -1198,27 +1534,51 @@ async function sendChatMessage() {
                 }
                 if (eventPayload.event === "thinking") {
                     message.thinking += String(eventPayload.data?.content || "");
-                    message.thinkingExpanded = true;
+                    message.streamState = "streaming";
+                    if (!message.thinkingPinned) {
+                        message.thinkingExpanded = true;
+                    }
+                    updateChatMessageElement(message);
                 } else if (eventPayload.event === "content") {
-                    message.content += String(eventPayload.data?.content || "");
-                    message.thinkingExpanded = false;
+                    const nextChunk = String(eventPayload.data?.content || "");
+                    if (!nextChunk) {
+                        continue;
+                    }
+                    setChatMessageTargetContent(message, `${message.content || ""}${nextChunk}`);
+                    updateChatTypingMetrics(message, nextChunk.length);
+                    message.streamState = "streaming";
+                    updateChatMessageElement(message);
+                    startChatTypingPump();
                 } else if (eventPayload.event === "complete") {
-                    message.content = String(eventPayload.data?.text || message.content || "");
+                    setChatMessageTargetContent(message, String(eventPayload.data?.text || message.content || ""));
                     message.thinking = String(eventPayload.data?.thinking || message.thinking || "");
-                    message.stats = {
+                    message.pendingStats = {
                         tokensPerSecond: Number(eventPayload.data?.tokens_per_second || 0),
                         tokens: Number(eventPayload.data?.tokens || 0),
                         generationTime: Number(eventPayload.data?.generation_time || 0),
                         estimated: Boolean(eventPayload.data?.tokens_estimated),
                     };
+                    message.streamState = "settling";
+                    updateChatMessageElement(message);
+                    if (message.queuedContent) {
+                        startChatTypingPump();
+                    } else {
+                        maybeFinalizeStreamingMessage(session, message);
+                    }
                 } else if (eventPayload.event === "error") {
                     throw new Error(String(eventPayload.data?.error || "Chat stream returned an error."));
                 }
-                upsertChatSession(session);
-                renderChatMessages();
+                upsertChatSession(session, { touch: false });
             }
 
             if (done) {
+                const finalMessage = session.messages.find((item) => item.id === assistantMessage.id);
+                if (finalMessage && finalMessage.streamState === "streaming") {
+                    finalMessage.streamState = "settling";
+                    if (!finalMessage.queuedContent) {
+                        maybeFinalizeStreamingMessage(session, finalMessage);
+                    }
+                }
                 break;
             }
         }
@@ -1226,15 +1586,22 @@ async function sendChatMessage() {
         const message = error instanceof Error ? error.message : String(error || "Chat request failed.");
         const target = session.messages.find((item) => item.id === assistantMessage.id);
         if (target) {
-            target.content = target.content || `Error: ${message}`;
-            target.thinkingExpanded = false;
+            if (!target.content.trim() && !target.renderedContent.trim()) {
+                target.content = `Error: ${message}`;
+                target.renderedContent = target.content;
+            }
+            target.queuedContent = "";
+            target.pendingStats = null;
+            target.streamState = "error";
+            updateChatMessageElement(target, { forceBodyUpdate: true, forceHighlight: true });
         }
         state.chat.error = message;
-        openBackendIssueAlert(message);
-    } finally {
         state.chat.isStreaming = false;
         state.chat.controller = null;
         state.chat.currentMessageId = "";
+        stopChatTypingPump();
+        openBackendIssueAlert(message);
+    } finally {
         upsertChatSession(session);
         renderChatPage();
     }

@@ -270,6 +270,7 @@
                             <path d="M12 5v14"></path>
                             <path d="M5 12h14"></path>
                         </svg>
+                        <span>New chat</span>
                     </button>
                 </div>
                 <div id="chatHistoryList" class="chat-history-list" aria-live="polite"></div>
@@ -282,7 +283,6 @@
                         <h2 id="chatCurrentTitle">Welcome Chat</h2>
                     </div>
                     <div class="chat-header-actions">
-                        <span id="chatStatusText" class="window-status">Admin only</span>
                         <label class="chat-model-wrap" for="chatModelSelect">
                             <span>Model</span>
                             <select id="chatModelSelect" class="chat-model-select">
@@ -290,21 +290,27 @@
                                 <option value="MiniMax-M2.5">MiniMax-M2.5</option>
                             </select>
                         </label>
+                        <span id="chatStatusText" class="window-status chat-status-pill">Admin only</span>
                     </div>
                 </div>
 
                 <div id="chatMessages" class="chat-messages-board" aria-live="polite"></div>
 
                 <div class="chat-composer">
-                    <textarea id="chatInput" class="chat-composer-input" rows="1" placeholder="Send a message..."></textarea>
-                    <div class="chat-composer-actions">
-                        <button id="chatScrollToBottom" class="toolbar-button" type="button" aria-label="Scroll to bottom">
-                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M12 5v14"></path>
-                                <path d="M6 13l6 6 6-6"></path>
-                            </svg>
-                        </button>
-                        <button id="chatSendButton" class="button primary" type="button">Send</button>
+                    <div class="chat-composer-shell">
+                        <textarea id="chatInput" class="chat-composer-input" rows="1" placeholder="Send a message..."></textarea>
+                        <div class="chat-composer-footer">
+                            <p class="chat-composer-hint">Enter to send<span>Shift + Enter for newline</span></p>
+                            <div class="chat-composer-actions">
+                                <button id="chatScrollToBottom" class="toolbar-button" type="button" aria-label="Scroll to bottom">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M12 5v14"></path>
+                                        <path d="M6 13l6 6 6-6"></path>
+                                    </svg>
+                                </button>
+                                <button id="chatSendButton" class="button primary" type="button">Send message</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
