@@ -62,7 +62,7 @@
         ],
         analysts: [
             { value: "market", label: "Market Analyst" },
-            { value: "social", label: "Sentiment Analyst" },
+            { value: "social", label: "Social Analyst" },
             { value: "news", label: "News Analyst" },
             { value: "fundamentals", label: "Fundamentals Analyst" },
         ],

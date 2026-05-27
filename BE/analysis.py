@@ -1036,10 +1036,13 @@ class AnalysisService:
         sections = snapshot["sections"]
         analysts = []
         first_incomplete = True
+        parallel_analysts_active = current_agent in {"Analyst Team", "Parallel Analyst Team"}
         for spec in selected_specs:
             has_report = bool(sections.get(spec.report_key))
             if has_report:
                 status = "completed"
+            elif parallel_analysts_active and not sections.get("investment_plan"):
+                status = "in_progress"
             elif first_incomplete and not sections.get("investment_plan"):
                 status = "in_progress"
                 first_incomplete = False
@@ -1338,7 +1341,11 @@ class AnalysisService:
         graph = TradingAgentsGraph(selected_analysts=filtered_analysts, debug=False, config=config)
 
         initial_snapshot = self.extract_runtime_snapshot({})
-        current_agent = ANALYST_NODE_SPECS[filtered_analysts[0]].agent_node
+        analyst_parallel_enabled = (
+            int(config.get("analyst_concurrency_limit") or 1) > 1
+            and len(filtered_analysts) > 1
+        )
+        current_agent = "Analyst Team" if analyst_parallel_enabled else ANALYST_NODE_SPECS[filtered_analysts[0]].agent_node
         initial_status = self.build_status_snapshot(initial_snapshot, filtered_analysts, current_agent)
         emit(
             "analysis_meta",
@@ -1357,6 +1364,7 @@ class AnalysisService:
                 "resource_constrained": self.settings.resource_constrained_mode,
                 "selected_analysts": filtered_analysts,
                 "selected_analyst_labels": [ANALYST_NODE_SPECS[key].agent_node for key in filtered_analysts],
+                "analyst_concurrency_limit": int(config.get("analyst_concurrency_limit") or 1),
                 "provider": minimax_settings["provider"],
                 "base_url": minimax_settings["base_url"],
                 "initial_status": initial_status,

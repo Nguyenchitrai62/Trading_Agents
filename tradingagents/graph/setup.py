@@ -9,6 +9,7 @@ from tradingagents.agents.utils.agent_states import AgentState
 
 from .analyst_execution import build_analyst_execution_plan
 from .conditional_logic import ConditionalLogic
+from .parallel_analysts import create_parallel_analyst_team
 
 
 class GraphSetup:
@@ -37,7 +38,7 @@ class GraphSetup:
         Args:
             selected_analysts (list): List of analyst types to include. Options are:
                 - "market": Market analyst
-                - "social": Social media analyst
+                - "social": Social analyst
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
         """
@@ -68,11 +69,24 @@ class GraphSetup:
         # Create workflow
         workflow = StateGraph(AgentState)
 
+        use_parallel_analysts = plan.concurrency_limit > 1 and len(plan.specs) > 1
+        parallel_analyst_node = "Parallel Analyst Team"
+
         # Add analyst nodes to the graph
-        for spec in plan.specs:
-            workflow.add_node(spec.agent_node, analyst_factories[spec.key]())
-            workflow.add_node(spec.clear_node, create_msg_delete())
-            workflow.add_node(spec.tool_node, self.tool_nodes[spec.key])
+        if use_parallel_analysts:
+            workflow.add_node(
+                parallel_analyst_node,
+                create_parallel_analyst_team(
+                    plan,
+                    analyst_factories,
+                    self.tool_nodes,
+                ),
+            )
+        else:
+            for spec in plan.specs:
+                workflow.add_node(spec.agent_node, analyst_factories[spec.key]())
+                workflow.add_node(spec.clear_node, create_msg_delete())
+                workflow.add_node(spec.tool_node, self.tool_nodes[spec.key])
 
         # Add other nodes
         workflow.add_node("Bull Researcher", bull_researcher_node)
@@ -85,28 +99,32 @@ class GraphSetup:
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
         # Define edges
-        # Start with the first analyst
-        workflow.add_edge(START, plan.specs[0].agent_node)
+        if use_parallel_analysts:
+            workflow.add_edge(START, parallel_analyst_node)
+            workflow.add_edge(parallel_analyst_node, "Bull Researcher")
+        else:
+            # Start with the first analyst
+            workflow.add_edge(START, plan.specs[0].agent_node)
 
-        # Connect analysts in sequence
-        for i, spec in enumerate(plan.specs):
-            current_analyst = spec.agent_node
-            current_tools = spec.tool_node
-            current_clear = spec.clear_node
+            # Connect analysts in sequence
+            for i, spec in enumerate(plan.specs):
+                current_analyst = spec.agent_node
+                current_tools = spec.tool_node
+                current_clear = spec.clear_node
 
-            # Add conditional edges for current analyst
-            workflow.add_conditional_edges(
-                current_analyst,
-                getattr(self.conditional_logic, f"should_continue_{spec.key}"),
-                [current_tools, current_clear],
-            )
-            workflow.add_edge(current_tools, current_analyst)
+                # Add conditional edges for current analyst
+                workflow.add_conditional_edges(
+                    current_analyst,
+                    getattr(self.conditional_logic, f"should_continue_{spec.key}"),
+                    [current_tools, current_clear],
+                )
+                workflow.add_edge(current_tools, current_analyst)
 
-            # Connect to next analyst or to Bull Researcher if this is the last analyst
-            if i < len(plan.specs) - 1:
-                workflow.add_edge(current_clear, plan.specs[i + 1].agent_node)
-            else:
-                workflow.add_edge(current_clear, "Bull Researcher")
+                # Connect to next analyst or to Bull Researcher if this is the last analyst
+                if i < len(plan.specs) - 1:
+                    workflow.add_edge(current_clear, plan.specs[i + 1].agent_node)
+                else:
+                    workflow.add_edge(current_clear, "Bull Researcher")
 
         # Add remaining edges
         workflow.add_conditional_edges(

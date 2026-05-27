@@ -24,7 +24,7 @@ def create_neutral_debator(llm):
 Your task is to challenge both the Aggressive and Conservative Analysts, pointing out where each perspective may be overly optimistic or overly cautious. Use insights from the following data sources to support a moderate, sustainable strategy to adjust the trader's decision:
 
 Market Research Report: {market_research_report}
-Social Media Sentiment Report: {sentiment_report}
+Social Report: {sentiment_report}
 Latest World Affairs Report: {news_report}
 Asset Fundamentals/Context Report: {fundamentals_report}
 Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_aggressive_response} Here is the last response from the conservative analyst: {current_conservative_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.

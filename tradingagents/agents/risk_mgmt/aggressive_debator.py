@@ -24,7 +24,7 @@ def create_aggressive_debator(llm):
 Your task is to create a compelling case for the trader's decision by questioning and critiquing the conservative and neutral stances to demonstrate why your high-reward perspective offers the best path forward. Incorporate insights from the following sources into your arguments:
 
 Market Research Report: {market_research_report}
-Social Media Sentiment Report: {sentiment_report}
+Social Report: {sentiment_report}
 Latest World Affairs Report: {news_report}
 Asset Fundamentals/Context Report: {fundamentals_report}
 Here is the current conversation history: {history} Here are the last arguments from the conservative analyst: {current_conservative_response} Here are the last arguments from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.

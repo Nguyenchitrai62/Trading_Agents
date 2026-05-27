@@ -67,8 +67,8 @@ SECTION_META = {
         "team": "Analyst Team",
     },
     "sentiment_report": {
-        "title": "Sentiment Analysis",
-        "agent": "Sentiment Analyst",
+        "title": "Social Analysis",
+        "agent": "Social Analyst",
         "team": "Analyst Team",
     },
     "news_report": {

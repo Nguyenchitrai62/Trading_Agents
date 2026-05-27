@@ -15,6 +15,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_OUTPUT_LANGUAGE":      "output_language",
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS":    "max_debate_rounds",
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
+    "TRADINGAGENTS_ANALYST_CONCURRENCY_LIMIT": "analyst_concurrency_limit",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
     "MINIMAX_MCP_ENABLED":                 "minimax_mcp_enabled",
@@ -96,7 +97,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,
     "max_recur_limit": 100,
-    "analyst_concurrency_limit": 1,
+    "analyst_concurrency_limit": 4,
     # News / data fetching parameters tuned for crypto-first analysis.
     # Article counts are left to the provider/tool defaults unless an agent
     # explicitly requests a limit through the tool interface.

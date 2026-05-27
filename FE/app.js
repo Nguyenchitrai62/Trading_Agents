@@ -8,7 +8,7 @@ const GROUP_LABELS = {
 
 const REPORT_BY_ANALYST = {
     market: { section: "market_report", title: "Market Analysis" },
-    social: { section: "sentiment_report", title: "Sentiment Analysis" },
+    social: { section: "sentiment_report", title: "Social Analysis" },
     news: { section: "news_report", title: "News Analysis" },
     fundamentals: { section: "fundamentals_report", title: "Fundamentals Analysis" },
 };
@@ -20,11 +20,11 @@ const REPORT_DETAIL_BY_AGENT = {
         title: REPORT_BY_ANALYST.market.title,
         subtitle: "Market Analyst",
     },
-    "Sentiment Analyst": {
+    "Social Analyst": {
         type: "report",
         section: REPORT_BY_ANALYST.social.section,
         title: REPORT_BY_ANALYST.social.title,
-        subtitle: "Sentiment Analyst",
+        subtitle: "Social Analyst",
     },
     "News Analyst": {
         type: "report",
@@ -41,8 +41,10 @@ const REPORT_DETAIL_BY_AGENT = {
 };
 
 const COMPACT_AGENT_LABELS = {
+    "Analyst Team": "Signals",
+    "Parallel Analyst Team": "Signals",
     "Market Analyst": "Market",
-    "Sentiment Analyst": "Social",
+    "Social Analyst": "Social",
     "News Analyst": "News",
     "Fundamentals Analyst": "Fund",
     "Research Manager": "Lead",
@@ -109,7 +111,7 @@ const HISTORY_FLOW_SECTION_META = {
         description: "Price action, technical structure, and market regime context.",
     },
     sentiment_report: {
-        shortTitle: "Sentiment",
+        shortTitle: "Social",
         tone: "signal",
         icon: "social",
         description: "Social sentiment, crowd positioning, and narrative momentum.",
@@ -1867,7 +1869,7 @@ function normalizeFrontendConfig() {
         analysis_options: {
             analysts: options.analysts || [
                 { value: "market", label: "Market Analyst" },
-                { value: "social", label: "Sentiment Analyst" },
+                { value: "social", label: "Social Analyst" },
                 { value: "news", label: "News Analyst" },
                 { value: "fundamentals", label: "Fundamentals Analyst" },
             ],

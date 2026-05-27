@@ -1,4 +1,4 @@
-"""Sentiment analyst — multi-source sentiment analysis for a target ticker.
+"""Social analyst — multi-source social analysis for a target ticker.
 
 Previously named ``social_media_analyst``. Renamed and redesigned because
 the old version had a prompt that demanded social-media analysis but the

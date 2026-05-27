@@ -210,7 +210,7 @@ class TradingAgentsGraph:
             ),
             "social": ToolNode(
                 with_mcp([
-                    # News tools for social media analysis
+                    # News tools for social analysis
                     get_news,
                 ])
             ),

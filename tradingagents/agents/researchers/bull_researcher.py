@@ -26,7 +26,7 @@ Key points to focus on:
 
 Resources available:
 Market research report: {market_research_report}
-Social media sentiment report: {sentiment_report}
+Social report: {sentiment_report}
 Latest world affairs news: {news_report}
 {fundamentals_label}: {fundamentals_report}
 Conversation history of the debate: {history}

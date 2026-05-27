@@ -24,7 +24,7 @@ def create_conservative_debator(llm):
 Your task is to actively counter the arguments of the Aggressive and Neutral Analysts, highlighting where their views may overlook potential threats or fail to prioritize sustainability. Respond directly to their points, drawing from the following data sources to build a convincing case for a low-risk approach adjustment to the trader's decision:
 
 Market Research Report: {market_research_report}
-Social Media Sentiment Report: {sentiment_report}
+Social Report: {sentiment_report}
 Latest World Affairs Report: {news_report}
 Asset Fundamentals/Context Report: {fundamentals_report}
 Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_aggressive_response} Here is the last response from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
