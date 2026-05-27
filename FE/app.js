@@ -1673,7 +1673,7 @@ async function sendChatMessage() {
                         message.firstTokenAt = performance.now();
                     }
                     const toolName = String(eventPayload.data?.tool || eventPayload.data?.requested_tool || "tool");
-                    const summary = compactText(String(eventPayload.data?.content || ""), 360);
+                    const summary = formatToolResultPlainText(eventPayload.data?.content || "", 360);
                     const traceLines = [`Tool result: ${toolName}`];
                     if (summary) {
                         traceLines.push(summary);
@@ -2447,6 +2447,148 @@ function compactText(value = "", maxLength = 220) {
     return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
 }
 
+function tryParseJsonString(value = "") {
+    const text = String(value || "").trim();
+    if (!text || !/^[\[{]/.test(text)) {
+        return null;
+    }
+    try {
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
+}
+
+function unwrapToolResultPayload(value) {
+    if (typeof value === "string") {
+        const parsed = tryParseJsonString(value);
+        return parsed == null ? value.trim() : unwrapToolResultPayload(parsed);
+    }
+    if (Array.isArray(value)) {
+        if (value.length === 1) {
+            return unwrapToolResultPayload(value[0]);
+        }
+        return value.map((item) => unwrapToolResultPayload(item));
+    }
+    if (value && typeof value === "object") {
+        const blockType = String(value.type || "").trim().toLowerCase();
+        if (blockType === "text" && typeof value.text === "string") {
+            return unwrapToolResultPayload(value.text);
+        }
+        const keys = Object.keys(value);
+        if (keys.length === 1 && keys[0] === "content") {
+            return unwrapToolResultPayload(value.content);
+        }
+    }
+    return value;
+}
+
+function formatToolResultItems(items) {
+    if (!Array.isArray(items)) {
+        return [];
+    }
+    const lines = [];
+    items.forEach((item) => {
+        let title = "";
+        let link = "";
+        let snippet = "";
+        let date = "";
+        if (item && typeof item === "object") {
+            title = String(item.title || item.name || item.query || item.link || item.url || "Untitled").trim();
+            link = String(item.link || item.url || "").trim();
+            snippet = String(item.snippet || item.description || item.summary || "").trim();
+            date = String(item.date || item.published || item.published_at || "").trim();
+        } else {
+            title = String(item || "").trim();
+        }
+        if (!title) {
+            return;
+        }
+        lines.push(link ? `- [${title}](${link})` : `- ${title}`);
+        if (date) {
+            lines.push(`  Date: ${date}`);
+        }
+        if (snippet) {
+            lines.push(`  ${snippet}`);
+        }
+    });
+    return lines;
+}
+
+function formatToolResultMarkdown(content) {
+    const payload = unwrapToolResultPayload(content);
+
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+        const lines = [];
+        const answer = String(payload.answer || payload.summary || "").trim();
+        if (answer) {
+            lines.push(answer);
+        }
+
+        const organic = payload.organic || payload.results;
+        if (Array.isArray(organic) && organic.length) {
+            if (lines.length) {
+                lines.push("");
+            }
+            lines.push("Search results:");
+            lines.push(...formatToolResultItems(organic));
+        }
+
+        const news = payload.news || payload.top_stories;
+        if (Array.isArray(news) && news.length) {
+            if (lines.length) {
+                lines.push("");
+            }
+            lines.push("Related news:");
+            lines.push(...formatToolResultItems(news));
+        }
+
+        const relatedSearches = Array.isArray(payload.related_searches)
+            ? payload.related_searches
+                  .map((item) => (item && typeof item === "object" ? String(item.query || "").trim() : String(item || "").trim()))
+                  .filter(Boolean)
+            : [];
+        if (relatedSearches.length) {
+            if (lines.length) {
+                lines.push("");
+            }
+            lines.push(`Related searches: ${relatedSearches.join("; ")}`);
+        }
+
+        if (lines.length) {
+            return lines.join("\n").trim();
+        }
+
+        try {
+            return `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
+        } catch {
+            return String(content || "").trim();
+        }
+    }
+
+    if (Array.isArray(payload)) {
+        try {
+            return `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
+        } catch {
+            return String(content || "").trim();
+        }
+    }
+
+    return String(payload || "").trim();
+}
+
+function formatToolResultPlainText(content, maxLength = 320) {
+    return compactText(stripMarkdownToPlainText(formatToolResultMarkdown(content)), maxLength);
+}
+
+function formatTraceContentForDisplay(phase = "analysis", content = "") {
+    const raw = typeof content === "string" ? content : formatStructuredValue(content);
+    if (phase === "tool_result") {
+        return formatToolResultMarkdown(raw);
+    }
+    return String(raw || "").trim();
+}
+
 function buildContentFingerprint(...parts) {
     return parts
         .map((part) => stripMarkdownToPlainText(String(part || "")).toLowerCase())
@@ -2587,7 +2729,7 @@ function getFeedToneForPhase(phase = "progress") {
 function pushAgentTrace(trace) {
     const agent = trace.agent || state.run.status?.current_agent || "Agent";
     const phase = trace.phase || "analysis";
-    const content = String(trace.content || "").trim();
+    const content = formatTraceContentForDisplay(phase, trace.content || "");
     const fingerprint = buildContentFingerprint(agent, phase, trace.title || agent, content);
     if (!content || (fingerprint && state.run.seenTraceFingerprints.has(fingerprint))) {
         return;
@@ -2613,7 +2755,7 @@ function pushAgentTrace(trace) {
     state.run.flashLatestTrace = wasAtLatest;
     pushStreamFeed({
         title: `${agent} - ${entry.title}`,
-        content: compactText(entry.content, 260),
+        content: compactText(stripMarkdownToPlainText(entry.content), 260),
         tone: entry.tone,
     });
 }
@@ -3597,7 +3739,7 @@ function renderOperationsRail() {
                             <span class="trace-phase-badge">${escapeHtml(formatTracePhaseLabel(item.phase))}</span>
                             <span>${escapeHtml(item.title || "Live update")}</span>
                         </div>
-                        <p>${escapeHtml(compactText(item.content || "", 320))}</p>
+                        <p>${escapeHtml(compactText(stripMarkdownToPlainText(item.content || ""), 320))}</p>
                     </article>
                                 `;
                                     })
@@ -3740,8 +3882,8 @@ function formatTraceDetailMarkdown(entry) {
         return "";
     }
 
-    const content = String(entry.content || "").trim();
-    const looksStructured = /^[\[{]/.test(content) || /^analysis\s/.test(content);
+    const content = formatTraceContentForDisplay(entry.phase, entry.content || "");
+    const looksStructured = entry.phase !== "tool_result" && (/^[\[{]/.test(content) || /^analysis\s/.test(content));
     const hasLink = /https?:\/\//.test(content);
     const body = looksStructured && !hasLink ? `\`\`\`text\n${content}\n\`\`\`` : content;
     return [
