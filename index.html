@@ -93,7 +93,7 @@
                 <div id="teamStatusGrid" class="team-status-grid"></div>
             </section>
 
-            <section class="window backend-log-window" aria-label="Backend analysis log">
+            <section class="window backend-log-window detail-trigger" data-detail-key="backendLog" tabindex="0" role="button" aria-label="Open Backend Log detail">
                 <div class="window-header execution-log-header">
                     <div>
                         <p class="window-kicker">Runtime stream</p>
@@ -345,7 +345,7 @@
                 </div>
 
                 <div class="config-grid four-up compact-grid-secondary">
-                    <label class="field">
+                    <label id="lookbackDaysField" class="field hidden">
                         <span>Lookback days</span>
                         <input id="lookbackDaysInput" type="number" min="1" step="1">
                     </label>

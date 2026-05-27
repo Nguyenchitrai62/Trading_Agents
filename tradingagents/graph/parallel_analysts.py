@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from time import monotonic
 from typing import Callable, Dict
@@ -69,6 +70,21 @@ def _build_local_state(state: dict) -> dict:
     return local_state
 
 
+def _tag_trace_message(message: object, agent_name: str) -> object:
+    additional_kwargs = dict(getattr(message, "additional_kwargs", {}) or {})
+    additional_kwargs["agent"] = agent_name
+
+    if hasattr(message, "model_copy"):
+        return message.model_copy(update={"additional_kwargs": additional_kwargs}, deep=True)
+
+    tagged = copy.copy(message)
+    try:
+        tagged.additional_kwargs = additional_kwargs
+    except Exception:
+        pass
+    return tagged
+
+
 def _execute_tool_calls(tool_node: ToolNode, tool_calls: list[dict]) -> dict:
     tools_by_name = getattr(tool_node, "tools_by_name", None) or getattr(tool_node, "_tools_by_name", {})
     tool_messages: list[ToolMessage] = []
@@ -132,8 +148,9 @@ def create_parallel_analyst_team(
     max_workers = min(max(1, plan.concurrency_limit), len(specs))
     analyst_nodes = {spec.key: analyst_factories[spec.key]() for spec in specs}
 
-    def run_analyst(spec: AnalystNodeSpec, state: dict) -> tuple[str, str]:
+    def run_analyst(spec: AnalystNodeSpec, state: dict) -> tuple[str, str, list[object]]:
         local_state = _build_local_state(state)
+        initial_message_count = len(local_state.get("messages") or [])
         analyst_node = analyst_nodes[spec.key]
         tool_node = tool_nodes[spec.key]
         started_at = monotonic()
@@ -152,7 +169,11 @@ def create_parallel_analyst_team(
                     elapsed,
                     iteration,
                 )
-                return spec.report_key, report
+                trace_messages = [
+                    _tag_trace_message(message, spec.agent_node)
+                    for message in (local_state.get("messages") or [])[initial_message_count:]
+                ]
+                return spec.report_key, report, trace_messages
 
             logger.info(
                 "%s requested %s tool call(s) on analyst iteration %s.",
@@ -172,7 +193,8 @@ def create_parallel_analyst_team(
             max_workers,
             ", ".join(spec.agent_node for spec in specs),
         )
-        results: dict[str, str] = {}
+        results: dict[str, object] = {}
+        trace_messages: list[object] = []
         started_at = monotonic()
 
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="analyst") as executor:
@@ -181,13 +203,16 @@ def create_parallel_analyst_team(
                 for spec in specs
             }
             for future in as_completed(futures):
-                report_key, report = future.result()
+                report_key, report, analyst_trace_messages = future.result()
                 results[report_key] = report
+                trace_messages.extend(analyst_trace_messages)
 
         logger.info(
             "Parallel analyst pool completed in %.2fs.",
             monotonic() - started_at,
         )
+        if trace_messages:
+            results["messages"] = trace_messages
         return results
 
     return parallel_analyst_team_node

@@ -93,6 +93,7 @@ const DETAIL_PANEL_META = {
     neutralRisk: { title: "Neutral Analyst", subtitle: "Risk Room" },
     portfolioDecision: { title: "Final Decision", subtitle: "Portfolio Management" },
     eventLog: { title: "Event Log", subtitle: "SSE Timeline", mode: "markdown" },
+    backendLog: { title: "Backend Log", subtitle: "Runtime stream", mode: "markdown" },
 };
 
 const HISTORY_FLOW_SECTION_ORDER = {
@@ -335,6 +336,7 @@ const elements = {
     symbolInput: document.getElementById("symbolInput"),
     analysisDateInput: document.getElementById("analysisDateInput"),
     lookbackPresetSelect: document.getElementById("lookbackPresetSelect"),
+    lookbackDaysField: document.getElementById("lookbackDaysField"),
     lookbackDaysInput: document.getElementById("lookbackDaysInput"),
     languageSelect: document.getElementById("languageSelect"),
     customLanguageField: document.getElementById("customLanguageField"),
@@ -2386,12 +2388,20 @@ function getResolvedAssetType() {
     return "crypto";
 }
 
+function getSelectedLookbackDays() {
+    const selectedPreset = elements.lookbackPresetSelect.value;
+    if (selectedPreset && selectedPreset !== CUSTOM_LOOKBACK_VALUE) {
+        return Math.max(1, Number(selectedPreset || 1));
+    }
+    return Math.max(1, Number(elements.lookbackDaysInput.value || 7));
+}
+
 function collectConfigDraft() {
     return {
         symbol: normalizeCryptoSymbol(elements.symbolInput.value),
         asset_type: "crypto",
         analysis_date: elements.analysisDateInput.value,
-        lookback_days: Number(elements.lookbackDaysInput.value || 7),
+        lookback_days: getSelectedLookbackDays(),
         output_language: getOutputLanguage(),
         selected_analysts: getCheckedAnalysts(),
         research_depth: getSelectedDepth(),
@@ -3279,10 +3289,22 @@ function syncLookbackPreset() {
     if (!state.config) {
         return;
     }
+    if (elements.lookbackPresetSelect.value === CUSTOM_LOOKBACK_VALUE) {
+        syncLookbackControls();
+        return;
+    }
     const presets = state.config.analysis_options.lookback_presets || [];
     const days = Number(elements.lookbackDaysInput.value || 0);
     const matched = presets.find((preset) => preset.days === days);
     elements.lookbackPresetSelect.value = matched ? matched.value : CUSTOM_LOOKBACK_VALUE;
+    syncLookbackControls();
+}
+
+function syncLookbackControls() {
+    const isCustom = elements.lookbackPresetSelect.value === CUSTOM_LOOKBACK_VALUE;
+    elements.lookbackDaysField?.classList.toggle("hidden", !isCustom);
+    elements.lookbackDaysInput.disabled = !isCustom;
+    elements.lookbackDaysInput.required = isCustom;
 }
 
 function syncAnalystAvailability() {
@@ -3876,6 +3898,8 @@ function getDetailContent(detail) {
             return { content: state.run.sections.final_trade_decision || "", fallback: "The Portfolio Manager has not finalized a decision yet." };
         case "eventLog":
             return { content: formatEventLogMarkdown(), fallback: "No SSE events yet." };
+        case "backendLog":
+            return { content: formatBackendLogMarkdown(), fallback: "No backend log lines yet." };
         default:
             return { content: "", fallback: "No data yet." };
     }
@@ -3909,6 +3933,22 @@ function formatEventLogMarkdown(limit = 80) {
     return entries
         .map(
             (entry) => `### ${entry.label}\n- **Time:** ${entry.timestamp}\n- **Summary:** ${entry.summary}`,
+        )
+        .join("\n\n");
+}
+
+function formatBackendLogMarkdown(limit = EXECUTION_LOG_DISPLAY_LIMIT) {
+    const entries = state.run.logEntries.slice(-limit);
+    if (!entries.length) {
+        return "";
+    }
+
+    return entries
+        .map(
+            (entry) => {
+                const detail = entry.detail || entry.summary || "";
+                return `### ${entry.label}\n- **Time:** ${entry.timestamp}\n\n\`\`\`text\n${detail}\n\`\`\``;
+            },
         )
         .join("\n\n");
 }
@@ -5431,7 +5471,6 @@ function bindConfigInputListeners() {
     [
         elements.symbolInput,
         elements.analysisDateInput,
-        elements.lookbackPresetSelect,
         elements.lookbackDaysInput,
         elements.modelInput,
         elements.customLanguageInput,
@@ -5441,8 +5480,13 @@ function bindConfigInputListeners() {
     elements.lookbackPresetSelect.addEventListener("change", () => {
         if (elements.lookbackPresetSelect.value !== CUSTOM_LOOKBACK_VALUE) {
             elements.lookbackDaysInput.value = elements.lookbackPresetSelect.value;
+        } else if (!elements.lookbackDaysInput.value) {
+            elements.lookbackDaysInput.value = state.config?.analysis_defaults?.lookback_days || 7;
         }
         refreshConfigUi();
+        if (elements.lookbackPresetSelect.value === CUSTOM_LOOKBACK_VALUE) {
+            elements.lookbackDaysInput.focus();
+        }
     });
     elements.languageSelect.addEventListener("change", () => {
         refreshConfigUi();

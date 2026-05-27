@@ -894,6 +894,7 @@ class AnalysisService:
                     "content": cls._normalize_message_content(getattr(message, "content", "")),
                     "tool_calls": getattr(message, "tool_calls", []),
                     "tool_call_id": getattr(message, "tool_call_id", ""),
+                    "additional_kwargs": getattr(message, "additional_kwargs", {}),
                 },
                 ensure_ascii=False,
                 sort_keys=True,
@@ -913,6 +914,10 @@ class AnalysisService:
             if signature in seen_signatures:
                 continue
             seen_signatures.add(signature)
+            message_agent = (
+                (getattr(message, "additional_kwargs", {}) or {}).get("agent")
+                or current_agent
+            )
 
             if isinstance(message, HumanMessage):
                 continue
@@ -928,7 +933,7 @@ class AnalysisService:
                 emit(
                     "agent_trace",
                     {
-                        "agent": current_agent or "Tool Runner",
+                        "agent": message_agent or "Tool Runner",
                         "phase": "tool_result",
                         "title": str(tool_name),
                         "content": content,
@@ -942,9 +947,9 @@ class AnalysisService:
                     emit(
                         "agent_trace",
                         {
-                            "agent": current_agent or "Analyst",
+                            "agent": message_agent or "Analyst",
                             "phase": "tool_call",
-                            "title": current_agent or "Tool call",
+                            "title": message_agent or "Tool call",
                             "content": "\n".join(self._tool_call_summary(tool_call) for tool_call in tool_calls),
                         },
                     )
@@ -956,9 +961,9 @@ class AnalysisService:
                     emit(
                         "agent_trace",
                         {
-                            "agent": current_agent or "Analyst",
+                            "agent": message_agent or "Analyst",
                             "phase": "analysis",
-                            "title": current_agent or "Analysis",
+                            "title": message_agent or "Analysis",
                             "content": content,
                         },
                     )
