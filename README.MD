@@ -1,140 +1,67 @@
 # TradingAgents Crypto Dashboard
 
-TradingAgents Crypto Dashboard is a crypto-focused multi-agent market analysis platform. The FastAPI backend reuses the core orchestration under `tradingagents/`, runs the analyst, research, trader, risk, and portfolio manager workflow, then streams progress to a browser dashboard with Server-Sent Events (SSE).
+TradingAgents is a crypto-focused multi-agent analysis dashboard.
 
-This repository is no longer a CLI-first demo. The current product focus is a realtime dashboard, backend agent orchestration, and a deployable split frontend/backend architecture.
+- Frontend: plain HTML/CSS/JavaScript in [index.html](index.html) and [FE/](FE).
+- Backend: FastAPI in [BE/](BE) with [app.py](app.py) as the entrypoint.
+- Core orchestration: reused from [tradingagents/](tradingagents).
+- Main transport: Server-Sent Events for live analysis and live chat streaming.
 
-Live frontend: https://crypto.nguyenchitrai.id.vn
+## Current Product Surface
 
-## Highlights
+- Realtime analysis dashboard via `POST /api/analyze`.
+- Admin-only integrated chat page in the main dashboard via `POST /api/chat`.
+- Google sign-in, backend session exchange, and role-based access.
+- History/Admin APIs with optional Turso persistence.
+- TradingView chart page with local watchlist support.
 
-- Crypto-first analysis with BTC/USDT defaults and TradingView chart support.
-- Static frontend built with plain HTML, CSS, and JavaScript, suitable for Vercel.
-- FastAPI backend suitable for Render or another Python web host.
-- Realtime analysis flow through `POST /api/analyze` with SSE streaming.
-- Live UI updates for agents, teams, reports, trace output, backend logs, and final decisions.
-- Configurable run settings: symbol, date, lookback, language, analysts, depth, model, and checkpoint mode.
-- Google sign-in with admin-managed run permissions.
-- Optional Turso persistence for History and user access control.
-- TradingView chart page with a browser-stored watchlist.
+`llm.html` is no longer part of the main frontend flow. Chat is integrated directly into the main dashboard.
 
-## Architecture
+## Key Files
 
-```text
-Static dashboard
-  -> FastAPI backend
-  -> tradingagents graph/core
-  -> SSE stream back to the UI
-  -> optional Turso History/Admin persistence
-```
+- [app.py](app.py): bootstrap entrypoint.
+- [BE/server.py](BE/server.py): FastAPI routes.
+- [BE/auth.py](BE/auth.py): Google auth and backend session handling.
+- [BE/analysis.py](BE/analysis.py): analysis/chat streaming.
+- [index.html](index.html): dashboard shell.
+- [FE/app.js](FE/app.js): frontend state, SSE parsing, chat, history, chart, auth.
+- [FE/styles.css](FE/styles.css): dashboard and integrated chat UI.
+- [FE/config.js](FE/config.js): frontend defaults.
 
-Key files:
-
-- `app.py`: uvicorn entrypoint that imports `BE.server:app`.
-- `BE/`: FastAPI backend, auth, analysis streaming, history, and admin APIs.
-- `index.html`, `FE/app.js`, `FE/styles.css`, `FE/config.js`: frontend dashboard.
-- `tradingagents/`: multi-agent orchestration, agents, graph logic, dataflows, and LLM clients.
-- `requirements.txt`: the only dependency installation source.
-
-## Main Analysis Flow
-
-1. The user signs in with Google.
-2. The frontend loads public configuration from `FE/config.js` and `/api/config`.
-3. The user selects analysis settings and starts a run.
-4. The frontend calls `POST /api/analyze` with a JSON body and auth headers.
-5. The backend runs `TradingAgentsGraph` and emits SSE events.
-6. The dashboard renders progress, reports, debates, traces, logs, and the final decision in realtime.
-7. If Turso is configured, completed analysis sections are saved to History.
-
-## Local Setup
-
-Create `.env`:
+## Quick Start
 
 ```powershell
 Copy-Item .env-example .env
-```
-
-Install dependencies:
-
-```powershell
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-Run the backend and bundled static frontend:
-
-```powershell
 .\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
-Open the dashboard:
+Open: `http://127.0.0.1:8000`
 
-```text
-http://127.0.0.1:8000
-```
+## Minimum Environment
 
-Health check:
+- `MINIMAX_API_KEY` or `MINIMAX_CN_API_KEY`
+- `GOOGLE_CLIENT_ID`
 
-```text
-http://127.0.0.1:8000/health
-```
+Common optional variables:
 
-If `FE/config.js` points to a deployed backend, override it locally with:
+- `CORS_ALLOW_ORIGINS`
+- `ADMIN_EMAILS`
+- `TURSO_DATABASE_URL`
+- `TURSO_AUTH_TOKEN`
 
-```text
-http://127.0.0.1:8000/?api_base_url=http://127.0.0.1:8000
-```
+Keep all real secrets only in backend environment variables.
 
-## Environment
+## Deployment Intent
 
-Minimum variables for a working analysis flow:
-
-- `MINIMAX_API_KEY` or `MINIMAX_CN_API_KEY`: required for analysis.
-- `GOOGLE_CLIENT_ID`: required for Google sign-in.
-
-Common production variables:
-
-- `CORS_ALLOW_ORIGINS`: required when the frontend and backend are deployed on different origins.
-- `ADMIN_EMAILS`: optional seed admins with analysis and user-management permissions.
-- `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`: optional, enables History/Admin persistence.
-
-Most other values in `.env-example` are optional defaults or runtime tuning. Leave them unset unless you need to override the default behavior.
-
-Do not commit real secrets in `.env`.
-
-## Deployment
-
-Recommended deployment stack:
-
-- Frontend: [Vercel](https://vercel.com/) static hosting.
-- Backend: [Render](https://render.com/) FastAPI service.
-- Database: [Turso](https://turso.tech), only when History/Admin persistence is needed.
-- LLM: MiniMax. The [MiniMax Token Plan](https://platform.minimax.io/docs/guides/pricing-token-plan) Starter tier starts at `$10/month`, which is enough to run the full analysis flow for this project.
-
-This stack keeps the frontend, backend, and database on practical free tiers for small deployments; only the LLM usage normally needs a paid plan.
-
-Backend start command:
-
-```powershell
-uvicorn app:app --host 0.0.0.0 --port $env:PORT
-```
-
-Deploy the frontend as static assets:
-
-- `index.html`
-- `FE/`
-- `image/`
-
-When frontend and backend use different origins:
-
-- Set `FE/config.js` `apiBaseUrl` to the backend origin.
-- Set `CORS_ALLOW_ORIGINS` to the real frontend origin for your deployment.
-- Keep MiniMax, Google, and Turso secrets only in backend environment variables.
+- Frontend: Vercel or any static host.
+- Backend: Render or another Python host.
+- Database: Turso only when persistence is needed.
 
 ## Notes
 
-- `asset_type` currently supports crypto only.
-- History currently requires login; public history mode is not enabled in the backend.
-- Telegram bot, MongoDB, and frontend frameworks are not part of the current implementation.
-- This is a research assistant, not financial advice.
+- The current product is crypto-first.
+- Chat and analysis both depend on Google-authenticated backend sessions.
+- This project is a research assistant, not financial advice.

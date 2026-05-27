@@ -452,6 +452,7 @@ function createInitialChatState() {
         order: [welcomeId],
         activeId: welcomeId,
         isStreaming: false,
+        isSubmitting: false,
         shouldAutoScroll: true,
         streamBuffer: "",
         currentEvent: "",
@@ -957,11 +958,16 @@ function updateChatComposerState() {
     }
     const hasText = Boolean(elements.chatInput.value.trim());
     const canUse = Boolean(state.auth.isAdmin && state.auth.idToken);
-    elements.chatSendButton.disabled = !hasText || !canUse || state.chat.isStreaming;
+    const isLocked = Boolean(state.chat.isStreaming || state.chat.isSubmitting);
+    elements.chatSendButton.disabled = !hasText || !canUse || isLocked;
     if (elements.chatModelSelect instanceof HTMLSelectElement) {
-        elements.chatModelSelect.disabled = !canUse || state.chat.isStreaming;
+        elements.chatModelSelect.disabled = !canUse || isLocked;
     }
-    if (state.chat.isStreaming) {
+    elements.chatInput.disabled = !canUse || isLocked;
+    elements.chatInput.setAttribute("aria-busy", isLocked ? "true" : "false");
+    if (state.chat.isSubmitting) {
+        elements.chatInput.placeholder = "Preparing response...";
+    } else if (state.chat.isStreaming) {
         elements.chatInput.placeholder = "Assistant is responding...";
     } else if (!state.auth.idToken) {
         elements.chatInput.placeholder = "Sign in with Google to use chat...";
@@ -1042,13 +1048,31 @@ function renderChatStatsMarkup(stats) {
     `;
 }
 
+function renderGoogleChatAvatarMarkup() {
+    return `
+        <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+            <path fill="#FFC107" d="M43.61 20.08H42V20H24v8h11.3C33.65 32.66 29.19 36 24 36c-6.62 0-12-5.38-12-12s5.38-12 12-12c3.06 0 5.84 1.15 7.96 3.04l5.66-5.66C34.05 6.05 29.27 4 24 4 12.95 4 4 12.95 4 24s8.95 20 20 20 20-8.95 20-20c0-1.34-.14-2.65-.39-3.92Z"></path>
+            <path fill="#FF3D00" d="M6.31 14.69l6.57 4.82C14.66 15.11 18.96 12 24 12c3.06 0 5.84 1.15 7.96 3.04l5.66-5.66C34.05 6.05 29.27 4 24 4c-7.68 0-14.36 4.34-17.69 10.69Z"></path>
+            <path fill="#4CAF50" d="M24 44c5.16 0 9.86-1.97 13.41-5.19l-6.19-5.24C29.17 35.09 26.7 36 24 36c-5.17 0-9.61-3.31-11.27-7.91l-6.53 5.03C9.5 39.56 16.2 44 24 44Z"></path>
+            <path fill="#1976D2" d="M43.61 20.08H42V20H24v8h11.3c-.79 2.24-2.23 4.18-4.08 5.57h.01l6.19 5.24C36.97 39.17 44 34 44 24c0-1.34-.14-2.65-.39-3.92Z"></path>
+        </svg>
+    `;
+}
+
+function renderChatAvatarMarkup(message) {
+    if (message.role === "assistant") {
+        return '<img class="chat-avatar-image chat-avatar-logo" src="image/LOGO.png" alt="" loading="lazy">';
+    }
+    return renderGoogleChatAvatarMarkup();
+}
+
 function createChatMessageElement(message) {
     const article = document.createElement("article");
     article.className = `chat-row ${message.role}`;
     article.dataset.chatMessageId = message.id;
     article.innerHTML = `
-        <div class="chat-avatar" aria-hidden="true">
-            <span>${message.role === "assistant" ? "TA" : "You"}</span>
+        <div class="chat-avatar ${message.role === "assistant" ? "is-assistant" : "is-user"}" aria-hidden="true">
+            ${renderChatAvatarMarkup(message)}
         </div>
         <div class="chat-bubble">
             <div class="chat-bubble-header">
@@ -1077,6 +1101,7 @@ function updateChatMessageElement(message, options = {}) {
         return;
     }
 
+    const avatar = article.querySelector(".chat-avatar");
     const bubble = article.querySelector(".chat-bubble");
     const body = article.querySelector(".chat-message-body");
     const thinkingBlock = article.querySelector(".chat-thinking");
@@ -1092,6 +1117,15 @@ function updateChatMessageElement(message, options = {}) {
 
     article.classList.toggle("is-streaming", isActive);
     article.classList.toggle("is-finished", Boolean(message.stats));
+    if (avatar instanceof HTMLElement) {
+        avatar.classList.toggle("is-user", message.role === "user");
+        avatar.classList.toggle("is-assistant", message.role === "assistant");
+        const nextAvatarKey = `${message.role}`;
+        if (avatar.dataset.chatAvatarKey !== nextAvatarKey) {
+            avatar.innerHTML = renderChatAvatarMarkup(message);
+            avatar.dataset.chatAvatarKey = nextAvatarKey;
+        }
+    }
     bubble?.classList.toggle("has-thinking", hasThinking);
 
     if (badge instanceof HTMLElement) {
@@ -1157,11 +1191,12 @@ function renderChatHistoryList() {
         elements.chatHistoryList.innerHTML = '<div class="chat-empty">No chat sessions yet.</div>';
         return;
     }
+    const isLocked = Boolean(state.chat.isStreaming || state.chat.isSubmitting);
     elements.chatHistoryList.innerHTML = sessions.map((session) => {
         const title = buildChatSessionTitle(session);
         const isActive = session.id === state.chat.activeId;
         const meta = formatHistoryTimestamp(session.updatedAt);
-        const isDisabled = state.chat.isStreaming && !isActive;
+        const isDisabled = isLocked;
         return `
             <button type="button" class="chat-session-item ${isActive ? "is-active" : ""}" data-chat-session-id="${escapeHtml(session.id)}" ${isDisabled ? "disabled" : ""}>
                 <span class="chat-session-title">${escapeHtml(title)}</span>
@@ -1223,12 +1258,16 @@ function renderChatPage() {
     if (!(elements.chatPage instanceof HTMLElement)) {
         return;
     }
+    const isLocked = Boolean(state.chat.isStreaming || state.chat.isSubmitting);
     const session = getActiveChatSession();
+    elements.chatPage.classList.toggle("is-busy", isLocked);
     if (elements.chatCurrentTitle instanceof HTMLElement) {
         elements.chatCurrentTitle.textContent = session ? buildChatSessionTitle(session) : "Welcome Chat";
     }
     if (elements.chatStatusText instanceof HTMLElement) {
-        if (state.chat.isStreaming) {
+        if (state.chat.isSubmitting) {
+            elements.chatStatusText.textContent = "Preparing response";
+        } else if (state.chat.isStreaming) {
             elements.chatStatusText.textContent = "Streaming response";
         } else if (!state.auth.idToken) {
             elements.chatStatusText.textContent = "Sign in required";
@@ -1239,7 +1278,7 @@ function renderChatPage() {
         }
     }
     if (elements.chatNewButton instanceof HTMLButtonElement) {
-        elements.chatNewButton.disabled = state.chat.isStreaming;
+        elements.chatNewButton.disabled = isLocked;
     }
     renderChatHistoryList();
     renderChatMessages();
@@ -1247,7 +1286,7 @@ function renderChatPage() {
 }
 
 function createNewChatSession() {
-    if (state.chat.isStreaming) {
+    if (state.chat.isStreaming || state.chat.isSubmitting) {
         return;
     }
     const id = createChatSessionId();
@@ -1259,7 +1298,7 @@ function createNewChatSession() {
 }
 
 function selectChatSession(id) {
-    if (!id || !state.chat.sessions[id] || state.chat.isStreaming) {
+    if (!id || !state.chat.sessions[id] || state.chat.isStreaming || state.chat.isSubmitting) {
         return;
     }
     state.chat.activeId = id;
@@ -1445,18 +1484,26 @@ async function sendChatMessage() {
         return;
     }
     const prompt = elements.chatInput.value.trim();
-    if (!prompt || state.chat.isStreaming) {
+    if (!prompt || state.chat.isStreaming || state.chat.isSubmitting) {
         return;
     }
+
+    state.chat.isSubmitting = true;
+    state.chat.error = "";
+    renderChatPage();
 
     try {
         await ensureAuthorizedSession();
     } catch (error) {
+        state.chat.isSubmitting = false;
+        renderChatPage();
         const message = error instanceof Error ? error.message : String(error || "Sign in with Google before using chat.");
         openAuthRequiredAlert(message);
         return;
     }
     if (!state.auth.isAdmin) {
+        state.chat.isSubmitting = false;
+        renderChatPage();
         openAuthRequiredAlert("Admin permission is required to use Chat.");
         return;
     }
@@ -1467,6 +1514,8 @@ async function sendChatMessage() {
         session = getActiveChatSession();
     }
     if (!session) {
+        state.chat.isSubmitting = false;
+        renderChatPage();
         return;
     }
 
@@ -1480,6 +1529,7 @@ async function sendChatMessage() {
     elements.chatInput.value = "";
     elements.chatInput.style.height = "auto";
 
+    state.chat.isSubmitting = false;
     state.chat.isStreaming = true;
     state.chat.error = "";
     state.chat.currentMessageId = assistantMessage.id;
@@ -1602,6 +1652,7 @@ async function sendChatMessage() {
         stopChatTypingPump();
         openBackendIssueAlert(message);
     } finally {
+        state.chat.isSubmitting = false;
         upsertChatSession(session);
         renderChatPage();
     }
