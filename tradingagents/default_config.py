@@ -81,9 +81,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # Max number of MCP tool_use -> tool_result cycles before the model must
     # stop calling tools and produce its best final answer.
     "minimax_mcp_max_tool_rounds": 4,
-    # Each MCP tool result is truncated to this many characters before being
-    # sent back to the model, to keep context focused and bounded.
-    "minimax_mcp_tool_result_char_limit": 4000,
+    # Set to 0 to disable truncation. When positive, each MCP tool result is
+    # truncated to this many characters before being sent back to the model.
+    "minimax_mcp_tool_result_char_limit": 0,
     "minimax_mcp_call_timeout_seconds": 90.0,
     "minimax_mcp_list_timeout_seconds": 45.0,
     # Checkpoint/resume: when True, LangGraph saves state after each node

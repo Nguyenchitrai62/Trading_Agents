@@ -353,10 +353,7 @@ class BackendSettings:
                 512,
                 _env_int("ANALYSIS_LLM_MAX_TOKENS", 8000),
             ),
-            analysis_trace_char_limit=max(
-                400,
-                _env_int("ANALYSIS_TRACE_CHAR_LIMIT", 4000),
-            ),
+            analysis_trace_char_limit=max(0, _env_int("ANALYSIS_TRACE_CHAR_LIMIT", 0)),
             auth_cache_max_entries=max(8, _env_int("AUTH_CACHE_MAX_ENTRIES", 256)),
             auth_session_secret=auth_session_secret,
             auth_session_persistent=auth_session_persistent,

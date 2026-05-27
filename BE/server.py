@@ -104,6 +104,9 @@ def create_app() -> FastAPI:
             "configured": minimax_settings["configured"],
             "provider": minimax_settings["provider"] or "minimax",
             "default_model": SETTINGS.default_model,
+            "chat": {
+                "max_tokens": SETTINGS.analysis_llm_max_tokens,
+            },
             "auth": {
                 "google_client_id": SETTINGS.google_client_id,
             },

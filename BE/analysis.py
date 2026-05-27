@@ -10,7 +10,7 @@ import logging
 import re
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from copy import deepcopy
 
@@ -259,9 +259,110 @@ class AnalysisService:
     def _trim_text(value: str, limit: int) -> str:
         if limit <= 0 or len(value) <= limit:
             return value
-        suffix = "\n\n[truncated for constrained runtime]"
+        suffix = "\n\n[truncated by configured trace limit]"
         safe_limit = max(0, limit - len(suffix))
         return value[:safe_limit].rstrip() + suffix
+
+    @staticmethod
+    def _try_parse_json(value: str) -> object | None:
+        text = (value or "").strip()
+        if not text or text[0] not in "[{":
+            return None
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+    @classmethod
+    def _unwrap_tool_display_payload(cls, value: object) -> object:
+        if isinstance(value, str):
+            parsed = cls._try_parse_json(value)
+            return cls._unwrap_tool_display_payload(parsed) if parsed is not None else value.strip()
+
+        if isinstance(value, list):
+            if len(value) == 1:
+                return cls._unwrap_tool_display_payload(value[0])
+            return [cls._unwrap_tool_display_payload(item) for item in value]
+
+        if isinstance(value, dict):
+            block_type = str(value.get("type") or "").strip().lower()
+            if block_type == "text" and isinstance(value.get("text"), str):
+                return cls._unwrap_tool_display_payload(value.get("text") or "")
+            if set(value.keys()) == {"content"}:
+                return cls._unwrap_tool_display_payload(value.get("content"))
+        return value
+
+    @staticmethod
+    def _format_search_result_items(items: list[object]) -> list[str]:
+        lines: list[str] = []
+        for item in items:
+            if isinstance(item, dict):
+                title = str(item.get("title") or item.get("name") or item.get("query") or item.get("link") or "Untitled").strip()
+                link = str(item.get("link") or item.get("url") or "").strip()
+                snippet = str(item.get("snippet") or item.get("description") or item.get("summary") or "").strip()
+                date = str(item.get("date") or item.get("published") or item.get("published_at") or "").strip()
+            else:
+                title = str(item).strip()
+                link = ""
+                snippet = ""
+                date = ""
+
+            if not title:
+                continue
+
+            lines.append(f"- [{title}]({link})" if link else f"- {title}")
+            if date:
+                lines.append(f"  Date: {date}")
+            if snippet:
+                lines.append(f"  {snippet}")
+
+        return lines
+
+    @classmethod
+    def format_tool_result_for_display(cls, content: object) -> str:
+        payload = cls._unwrap_tool_display_payload(content)
+
+        if isinstance(payload, dict):
+            lines: list[str] = []
+            answer = str(payload.get("answer") or payload.get("summary") or "").strip()
+            if answer:
+                lines.append(answer)
+
+            organic = payload.get("organic")
+            if isinstance(organic, list) and organic:
+                if lines:
+                    lines.append("")
+                lines.append("Search results:")
+                lines.extend(cls._format_search_result_items(organic))
+
+            news = payload.get("news") or payload.get("top_stories")
+            if isinstance(news, list) and news:
+                if lines:
+                    lines.append("")
+                lines.append("Related news:")
+                lines.extend(cls._format_search_result_items(news))
+
+            related_searches = payload.get("related_searches")
+            if isinstance(related_searches, list) and related_searches:
+                related_queries = [
+                    str(item.get("query") or "").strip() if isinstance(item, dict) else str(item).strip()
+                    for item in related_searches
+                ]
+                related_queries = [item for item in related_queries if item]
+                if related_queries:
+                    if lines:
+                        lines.append("")
+                    lines.append("Related searches: " + "; ".join(related_queries))
+
+            if lines:
+                return "\n".join(lines).strip()
+
+            return "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n```"
+
+        if isinstance(payload, list):
+            return "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n```"
+
+        return str(payload or "").strip()
 
     def try_reserve_analysis_slot(self) -> bool:
         with self.active_analysis_lock:
@@ -383,12 +484,53 @@ class AnalysisService:
 
         return "\n".join(routing_lines)
 
+    def resolve_chat_max_tokens(self, request: ChatRequest) -> int:
+        requested_max_tokens = int(getattr(request, "max_tokens", 0) or 0)
+        if requested_max_tokens <= 0:
+            return self.settings.analysis_llm_max_tokens
+        return max(512, min(requested_max_tokens, self.settings.analysis_llm_max_tokens))
+
+    def build_chat_tool_event_sse(self, tool_event: dict[str, object]) -> str | None:
+        phase = str(tool_event.get("phase") or "").strip()
+        tool_name = str(tool_event.get("tool") or tool_event.get("requested_tool") or "tool")
+        requested_tool = str(tool_event.get("requested_tool") or tool_name)
+
+        if phase == "tool_use":
+            return self._sse(
+                "tool_use",
+                {
+                    "tool": tool_name,
+                    "requested_tool": requested_tool,
+                    "input": tool_event.get("input") or {},
+                },
+            )
+
+        if phase == "tool_result":
+            content = self._trim_text(
+                self.format_tool_result_for_display(tool_event.get("content") or ""),
+                self.settings.analysis_trace_char_limit,
+            )
+            if not content:
+                return None
+            return self._sse(
+                "tool_result",
+                {
+                    "tool": tool_name,
+                    "requested_tool": requested_tool,
+                    "content": content,
+                },
+            )
+
+        return None
+
     async def create_mcp_chat_response(
         self,
         client: AsyncAnthropic,
         request: ChatRequest,
         system_message: str,
         anthropic_messages: list[dict],
+        max_tokens: int,
+        on_tool_event: Callable[[dict[str, object]], Awaitable[None]] | None = None,
     ):
         from tradingagents.llm_clients.minimax_mcp import (
             build_mcp_reference_sources_instruction,
@@ -418,11 +560,12 @@ class AnalysisService:
             client,
             settings=mcp_settings,
             model=request.model,
-            max_tokens=request.max_tokens,
+            max_tokens=max_tokens,
             temperature=request.temperature,
             system=full_system_message,
             messages=anthropic_messages,
             tools=mcp_tools,
+            on_tool_event=on_tool_event,
         )
 
     @staticmethod
@@ -444,37 +587,55 @@ class AnalysisService:
             system_message = self.build_chat_system_message(request)
             anthropic_messages = self.build_anthropic_chat_messages(request)
 
-            mcp_response = await self.create_mcp_chat_response(
-                client,
-                request,
-                system_message,
-                anthropic_messages,
+            chat_max_tokens = self.resolve_chat_max_tokens(request)
+            tool_event_queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+
+            async def enqueue_tool_event(tool_event: dict[str, object]) -> None:
+                await tool_event_queue.put(dict(tool_event))
+
+            mcp_task = asyncio.create_task(
+                self.create_mcp_chat_response(
+                    client,
+                    request,
+                    system_message,
+                    anthropic_messages,
+                    max_tokens=chat_max_tokens,
+                    on_tool_event=enqueue_tool_event,
+                )
             )
+            mcp_response = None
+            while True:
+                if mcp_task.done() and tool_event_queue.empty():
+                    mcp_response = mcp_task.result()
+                    break
+
+                next_tool_event = asyncio.create_task(tool_event_queue.get())
+                done, _pending = await asyncio.wait(
+                    {mcp_task, next_tool_event},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                if next_tool_event in done:
+                    tool_event_payload = self.build_chat_tool_event_sse(next_tool_event.result())
+                    if tool_event_payload:
+                        yield tool_event_payload
+                else:
+                    next_tool_event.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await next_tool_event
+
+                if mcp_task in done and tool_event_queue.empty():
+                    mcp_response = mcp_task.result()
+                    break
+
+                await asyncio.sleep(0)
+
+            while not tool_event_queue.empty():
+                tool_event_payload = self.build_chat_tool_event_sse(tool_event_queue.get_nowait())
+                if tool_event_payload:
+                    yield tool_event_payload
+
             if mcp_response is not None:
-                for tool_event in getattr(mcp_response, "tool_events", ()) or ():
-                    phase = str(tool_event.get("phase") or "").strip()
-                    tool_name = str(tool_event.get("tool") or tool_event.get("requested_tool") or "tool")
-                    requested_tool = str(tool_event.get("requested_tool") or tool_name)
-                    if phase == "tool_use":
-                        yield self._sse(
-                            "tool_use",
-                            {
-                                "tool": tool_name,
-                                "requested_tool": requested_tool,
-                                "input": tool_event.get("input") or {},
-                            },
-                        )
-                    elif phase == "tool_result":
-                        content = self._trim_text(str(tool_event.get("content") or ""), 1200)
-                        if content:
-                            yield self._sse(
-                                "tool_result",
-                                {
-                                    "tool": tool_name,
-                                    "requested_tool": requested_tool,
-                                    "content": content,
-                                },
-                            )
                 text, thinking, _input_tokens, output_tokens, _total_tokens = self.extract_chat_response_payload(mcp_response)
                 if thinking:
                     yield self._sse("thinking", {"content": thinking})
@@ -501,7 +662,7 @@ class AnalysisService:
 
             stream = await client.messages.create(
                 model=request.model,
-                max_tokens=request.max_tokens,
+                max_tokens=chat_max_tokens,
                 temperature=request.temperature,
                 system=system_message,
                 messages=anthropic_messages,
@@ -583,12 +744,14 @@ class AnalysisService:
             client = self.get_minimax_client()
             system_message = self.build_chat_system_message(request)
             anthropic_messages = self.build_anthropic_chat_messages(request)
+            chat_max_tokens = self.resolve_chat_max_tokens(request)
 
             mcp_response = await self.create_mcp_chat_response(
                 client,
                 request,
                 system_message,
                 anthropic_messages,
+                max_tokens=chat_max_tokens,
             )
             if mcp_response is not None:
                 text, _thinking, input_tokens, output_tokens, total_tokens = self.extract_chat_response_payload(mcp_response)
@@ -610,7 +773,7 @@ class AnalysisService:
 
             response = await client.messages.create(
                 model=request.model,
-                max_tokens=request.max_tokens,
+                max_tokens=chat_max_tokens,
                 temperature=request.temperature,
                 system=system_message,
                 messages=anthropic_messages,
@@ -757,7 +920,7 @@ class AnalysisService:
             if isinstance(message, ToolMessage):
                 tool_name = getattr(message, "name", None) or getattr(message, "tool_call_id", None) or "tool"
                 content = self._trim_text(
-                    self._normalize_message_content(getattr(message, "content", "")),
+                    self.format_tool_result_for_display(getattr(message, "content", "")),
                     self.settings.analysis_trace_char_limit,
                 )
                 if not content:

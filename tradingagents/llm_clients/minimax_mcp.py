@@ -4,10 +4,12 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shlex
 import threading
+import uuid
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any, Awaitable, Callable, Iterable, Sequence
 
 from dotenv import find_dotenv, load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -33,11 +35,13 @@ _DEFAULT_MCP_COMMAND = "uvx"
 _DEFAULT_MCP_ARGS = "minimax-coding-plan-mcp -y"
 _DEFAULT_MCP_TOOL_NAMES = "web_search,understand_image"
 _DEFAULT_MCP_MAX_TOOL_ROUNDS = 4
-_DEFAULT_MCP_RESULT_CHAR_LIMIT = 4000
+_DEFAULT_MCP_RESULT_CHAR_LIMIT = 0
 _MCP_TOOL_ALIASES: dict[str, tuple[str, ...]] = {
     "web_search": ("websearch", "web-search", "webSearch"),
     "understand_image": ("understandimage", "understand-image", "understandImage"),
 }
+_TEXTUAL_TOOL_CALL_OPEN_RE = re.compile(r"<(?P<tag>toolcall|tool_call)\b[^>]*>", re.IGNORECASE)
+_TEXTUAL_TOOL_CALL_CLOSE_RE = re.compile(r"\s*</(?:toolcall|tool_call|tool)>", re.IGNORECASE)
 _MCP_TOOL_ALIAS_TO_CANONICAL = {
     alias: canonical
     for canonical, aliases in _MCP_TOOL_ALIASES.items()
@@ -282,6 +286,12 @@ def resolve_minimax_mcp_settings(
         pass
 
     provider = provider.lower()
+    raw_result_char_limit = result_char_limit if result_char_limit is not None else _env_int(
+        "MINIMAX_MCP_TOOL_RESULT_CHAR_LIMIT",
+        _DEFAULT_MCP_RESULT_CHAR_LIMIT,
+    )
+    normalized_result_char_limit = 0 if raw_result_char_limit <= 0 else max(1000, raw_result_char_limit)
+
     return MiniMaxMCPSettings(
         enabled=_env_bool("MINIMAX_MCP_ENABLED", True) if enabled is None else bool(enabled),
         command=(command or os.getenv("MINIMAX_MCP_COMMAND", _DEFAULT_MCP_COMMAND)).strip() or _DEFAULT_MCP_COMMAND,
@@ -290,7 +300,7 @@ def resolve_minimax_mcp_settings(
         api_key=_resolve_api_key(provider),
         api_host=_derive_api_host(provider, base_url),
         max_tool_rounds=max(1, max_tool_rounds or _env_int("MINIMAX_MCP_MAX_TOOL_ROUNDS", _DEFAULT_MCP_MAX_TOOL_ROUNDS)),
-        result_char_limit=max(1000, result_char_limit or _env_int("MINIMAX_MCP_TOOL_RESULT_CHAR_LIMIT", _DEFAULT_MCP_RESULT_CHAR_LIMIT)),
+        result_char_limit=normalized_result_char_limit,
         call_timeout_seconds=max(5.0, call_timeout_seconds or _env_float("MINIMAX_MCP_CALL_TIMEOUT_SECONDS", 90.0)),
         list_timeout_seconds=max(5.0, list_timeout_seconds or _env_float("MINIMAX_MCP_LIST_TIMEOUT_SECONDS", 45.0)),
     )
@@ -335,6 +345,193 @@ def _expand_tool_specs_with_aliases(specs: Sequence[dict[str, Any]]) -> list[dic
             seen_names.add(tool_name)
 
     return expanded
+
+
+def _serialize_content_block(block: Any) -> dict[str, Any]:
+    if isinstance(block, dict):
+        return dict(block)
+
+    model_dump = getattr(block, "model_dump", None)
+    if callable(model_dump):
+        try:
+            serialized = model_dump(mode="json", exclude_none=True)
+        except TypeError:
+            serialized = model_dump(exclude_none=True)
+        if isinstance(serialized, dict):
+            return serialized
+
+    dict_method = getattr(block, "dict", None)
+    if callable(dict_method):
+        serialized = dict_method(exclude_none=True)
+        if isinstance(serialized, dict):
+            return serialized
+
+    serialized = {
+        key: value
+        for key, value in getattr(block, "__dict__", {}).items()
+        if not key.startswith("_") and value is not None
+    }
+    block_type = getattr(block, "type", None)
+    if block_type is not None:
+        serialized.setdefault("type", block_type)
+    return serialized
+
+
+def _content_block_value(block: Any, key: str, default: Any = None) -> Any:
+    if isinstance(block, dict):
+        return block.get(key, default)
+    return getattr(block, key, default)
+
+
+def _extract_balanced_json_object(text: str) -> tuple[str | None, int]:
+    start = text.find("{")
+    if start < 0:
+        return None, 0
+
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+        if char == "{":
+            depth += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1], index + 1
+
+    return None, 0
+
+
+def _parse_textual_tool_use_blocks(
+    text: str,
+    tool_names: set[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not text:
+        return [], []
+
+    assistant_blocks: list[dict[str, Any]] = []
+    tool_uses: list[dict[str, Any]] = []
+    cursor = 0
+
+    while True:
+        match = _TEXTUAL_TOOL_CALL_OPEN_RE.search(text, cursor)
+        if match is None:
+            break
+
+        if match.start() > cursor:
+            assistant_blocks.append({"type": "text", "text": text[cursor:match.start()]})
+
+        json_payload, json_end = _extract_balanced_json_object(text[match.end() :])
+        if not json_payload:
+            assistant_blocks.append({"type": "text", "text": text[match.start() : match.end()]})
+            cursor = match.end()
+            continue
+
+        next_cursor = match.end() + json_end
+        closing_match = _TEXTUAL_TOOL_CALL_CLOSE_RE.match(text[next_cursor:])
+        if closing_match is not None:
+            next_cursor += closing_match.end()
+
+        try:
+            payload = json.loads(json_payload)
+        except json.JSONDecodeError:
+            assistant_blocks.append({"type": "text", "text": text[match.start() : next_cursor]})
+            cursor = next_cursor
+            continue
+
+        requested_tool_name = str(payload.get("name") or payload.get("tool") or "").strip()
+        canonical_tool_name = _resolve_canonical_tool_name(requested_tool_name)
+        tool_input = payload.get("parameters")
+        if tool_input is None:
+            tool_input = payload.get("args")
+        if tool_input is None:
+            tool_input = payload.get("input")
+        if tool_input is None:
+            tool_input = {}
+
+        if (
+            not requested_tool_name
+            or not isinstance(tool_input, dict)
+            or (requested_tool_name not in tool_names and canonical_tool_name not in tool_names)
+        ):
+            assistant_blocks.append({"type": "text", "text": text[match.start() : next_cursor]})
+            cursor = next_cursor
+            continue
+
+        tool_use = {
+            "type": "tool_use",
+            "id": f"text-tool-{uuid.uuid4().hex}",
+            "name": requested_tool_name,
+            "input": tool_input,
+        }
+        assistant_blocks.append(tool_use)
+        tool_uses.append(tool_use)
+        cursor = next_cursor
+
+    if cursor < len(text):
+        assistant_blocks.append({"type": "text", "text": text[cursor:]})
+
+    return [
+        block
+        for block in assistant_blocks
+        if block.get("type") != "text" or str(block.get("text") or "")
+    ], tool_uses
+
+
+def _extract_response_tool_uses(
+    response: Any,
+    tool_names: set[str],
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    assistant_content: list[Any] = []
+    tool_uses: list[dict[str, Any]] = []
+
+    for block in getattr(response, "content", []) or []:
+        block_type = _content_block_value(block, "type")
+        if block_type == "text":
+            parsed_blocks, parsed_tool_uses = _parse_textual_tool_use_blocks(
+                str(_content_block_value(block, "text", "") or ""),
+                tool_names,
+            )
+            if parsed_tool_uses:
+                assistant_content.extend(parsed_blocks)
+                tool_uses.extend(parsed_tool_uses)
+                continue
+
+        serialized = _serialize_content_block(block)
+        assistant_content.append(serialized)
+        if block_type != "tool_use":
+            continue
+
+        requested_tool_name = str(serialized.get("name") or "").strip()
+        canonical_tool_name = _resolve_canonical_tool_name(requested_tool_name)
+        if requested_tool_name not in tool_names and canonical_tool_name not in tool_names:
+            continue
+
+        tool_uses.append(
+            {
+                "type": "tool_use",
+                "id": str(serialized.get("id") or f"tool-use-{uuid.uuid4().hex}"),
+                "name": requested_tool_name,
+                "input": serialized.get("input") or {},
+            }
+        )
+
+    return assistant_content, tool_uses
 
 
 def build_mcp_reference_sources_instruction(reference_sources: Sequence[Any] | None) -> str:
@@ -576,8 +773,8 @@ def _stringify_mcp_result(result: Any, char_limit: int) -> str:
     text = "\n".join(part for part in parts if part).strip()
     if not text:
         text = str(result)
-    if len(text) > char_limit:
-        text = text[:char_limit].rstrip() + "\n\n[MiniMax MCP result truncated]"
+    if char_limit > 0 and len(text) > char_limit:
+        text = text[:char_limit].rstrip() + "\n\n[MiniMax MCP result truncated by configured limit]"
     return text
 
 
@@ -591,6 +788,7 @@ async def run_anthropic_mcp_message_loop(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     temperature: float | None = None,
+    on_tool_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> MiniMaxMCPMessageLoopResult:
     active_messages = list(messages)
     tool_names = {tool["name"] for tool in tools}
@@ -609,23 +807,17 @@ async def run_anthropic_mcp_message_loop(
             request_kwargs["temperature"] = temperature
 
         response = await client.messages.create(**request_kwargs)
-        active_messages.append({"role": "assistant", "content": response.content})
-
-        tool_uses = [block for block in response.content if getattr(block, "type", None) == "tool_use"]
-        tool_uses = [
-            tool_use
-            for tool_use in tool_uses
-            if getattr(tool_use, "name", "") in tool_names
-            or _resolve_canonical_tool_name(getattr(tool_use, "name", "")) in tool_names
-        ]
+        assistant_content, tool_uses = _extract_response_tool_uses(response, tool_names)
+        active_messages.append({"role": "assistant", "content": assistant_content or response.content})
         if not tool_uses:
             return MiniMaxMCPMessageLoopResult(response=response, tool_events=tuple(tool_events))
 
         tool_results = []
         for tool_use in tool_uses:
-            requested_tool_name = str(getattr(tool_use, "name", "") or "")
+            requested_tool_name = str(tool_use.get("name") or "")
             canonical_tool_name = _resolve_canonical_tool_name(requested_tool_name)
-            tool_input = tool_use.input or {}
+            tool_input = tool_use.get("input") or {}
+            tool_use_id = str(tool_use.get("id") or requested_tool_name or f"tool-use-{uuid.uuid4().hex}")
             tool_events.append(
                 {
                     "phase": "tool_use",
@@ -634,6 +826,8 @@ async def run_anthropic_mcp_message_loop(
                     "input": tool_input,
                 }
             )
+            if on_tool_event is not None:
+                await on_tool_event(dict(tool_events[-1]))
             try:
                 content = await call_mcp_tool_async(settings, requested_tool_name, tool_input)
             except Exception as exc:  # pragma: no cover - external MCP failure path
@@ -647,10 +841,12 @@ async def run_anthropic_mcp_message_loop(
                     "content": content,
                 }
             )
+            if on_tool_event is not None:
+                await on_tool_event(dict(tool_events[-1]))
             tool_results.append(
                 {
                     "type": "tool_result",
-                    "tool_use_id": tool_use.id,
+                    "tool_use_id": tool_use_id,
                     "content": content,
                 }
             )

@@ -1613,7 +1613,7 @@ async function sendChatMessage() {
             body: JSON.stringify({
                 messages: payloadMessages,
                 model: getChatModel(),
-                max_tokens: 16384,
+                max_tokens: Number(state.config?.chat?.max_tokens || 8000),
                 temperature: 0.7,
                 stream: true,
             }),
@@ -1836,6 +1836,9 @@ function normalizeFrontendConfig() {
         provider: source.provider || "minimax",
         api_base_url: getConfiguredApiBaseUrl(),
         default_model: defaultModel,
+        chat: {
+            max_tokens: Number(source.chat?.maxTokens || source.chat?.max_tokens || 8000),
+        },
         auth: {
             google_client_id: "",
         },
@@ -1905,6 +1908,10 @@ function mergeBackendConfig(frontendConfig, backendConfig) {
         trading_view: {
             ...frontendConfig.trading_view,
             ...(backendConfig.trading_view || {}),
+        },
+        chat: {
+            ...frontendConfig.chat,
+            ...(backendConfig.chat || {}),
         },
         analysis_defaults: {
             ...frontendConfig.analysis_defaults,

@@ -78,7 +78,7 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[Message]
     model: str = SETTINGS.default_model
-    max_tokens: int = 128000
+    max_tokens: int = SETTINGS.analysis_llm_max_tokens
     temperature: float = 1
     stream: bool = True
 
