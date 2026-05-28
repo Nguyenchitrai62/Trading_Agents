@@ -3,7 +3,7 @@
     // apiBaseUrl: "http://103.77.242.137:8001",
     // apiBaseUrl: "http://localhost:8000",
     provider: "minimax",
-    defaultModel: "MiniMax-M2.7",
+    defaultModel: "MiniMax-M2.5",
     app: {
         pages: ["agent", "history", "chart", "admin", "chat"],
         defaultPage: "agent",
@@ -35,8 +35,8 @@
         lookbackDays: 7,
         outputLanguage: "Vietnamese",
         selectedAnalysts: ["market", "social", "news", "fundamentals"],
-        researchDepth: "quick",
-        model: "MiniMax-M2.7",
+        researchDepth: "medium",
+        model: "MiniMax-M2.5",
         checkpointEnabled: false,
     },
     analysisOptions: {
@@ -59,6 +59,10 @@
             "German",
             "Arabic",
             "Russian",
+        ],
+        models: [
+            { value: "MiniMax-M2.5", label: "MiniMax M2.5" },
+            { value: "MiniMax-M2.7", label: "MiniMax M2.7" },
         ],
         analysts: [
             { value: "market", label: "Market Analyst" },

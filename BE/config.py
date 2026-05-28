@@ -23,11 +23,11 @@ CPU_THREAD_ENV_VARS = (
 DEFAULT_ANALYSTS = ("market", "social", "news", "fundamentals")
 APP_TITLE = "TradingAgents Analysis API"
 APP_VERSION = "0.1.1"
-DEFAULT_MODEL = "MiniMax-M2.7"
+DEFAULT_MODEL = "MiniMax-M2.5"
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
 DEFAULT_ASSET_TYPE = "crypto"
 DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
-DEFAULT_RESEARCH_DEPTH = "quick"
+DEFAULT_RESEARCH_DEPTH = "medium"
 DEFAULT_CHECKPOINT_ENABLED = False
 DEFAULT_HISTORY_PAGE_SIZE = 10
 DEFAULT_HISTORY_ACCESS_DAYS = 7
@@ -302,7 +302,7 @@ class BackendSettings:
         )
         cors_allow_origins = tuple(_configured_cors_origins())
         allow_all_origins = not cors_allow_origins or cors_allow_origins == ("*",)
-        default_model = os.getenv("MINIMAX_MODEL", "").strip() or "MiniMax-M2.7"
+        default_model = os.getenv("MINIMAX_MODEL", "").strip() or DEFAULT_MODEL
         admin_emails = frozenset(
             email.lower() for email in _env_csv("ADMIN_EMAILS", ",".join(DEFAULT_ADMIN_EMAILS))
         )

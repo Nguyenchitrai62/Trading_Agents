@@ -286,8 +286,8 @@
                         <label class="chat-model-wrap" for="chatModelSelect">
                             <span>Model</span>
                             <select id="chatModelSelect" class="chat-model-select">
-                                <option value="MiniMax-M2.7">MiniMax-M2.7</option>
                                 <option value="MiniMax-M2.5">MiniMax-M2.5</option>
+                                <option value="MiniMax-M2.7">MiniMax-M2.7</option>
                             </select>
                         </label>
                         <span id="chatStatusText" class="window-status chat-status-pill">Admin only</span>
@@ -342,42 +342,31 @@
                         <span>Window preset</span>
                         <select id="lookbackPresetSelect"></select>
                     </label>
+                    <label id="lookbackDaysField" class="field field-muted">
+                        <span>Lookback days</span>
+                        <input id="lookbackDaysInput" type="number" min="1" step="1" placeholder="Use Custom preset">
+                    </label>
                 </div>
 
                 <div class="config-grid four-up compact-grid-secondary">
-                    <label id="lookbackDaysField" class="field hidden">
-                        <span>Lookback days</span>
-                        <input id="lookbackDaysInput" type="number" min="1" step="1">
-                    </label>
                     <label class="field">
                         <span>Language</span>
                         <select id="languageSelect"></select>
                     </label>
-                    <label id="customLanguageField" class="field hidden">
+                    <label id="customLanguageField" class="field field-muted">
                         <span>Custom language</span>
-                        <input id="customLanguageInput" type="text" placeholder="Vietnamese">
+                        <input id="customLanguageInput" type="text" placeholder="Use Custom language">
                     </label>
                     <label class="field">
                         <span>LLM model</span>
-                        <input id="modelInput" type="text" placeholder="MiniMax-M2.7">
-                    </label>
-                    <label class="toggle-field compact-toggle-field">
-                        <span>Checkpoint</span>
-                        <input id="checkpointToggle" type="checkbox">
+                        <select id="modelSelect"></select>
                     </label>
                 </div>
 
                 <div class="config-grid compact-config-choices">
                     <section class="config-section compact-config-section">
-                        <div class="config-section-header config-section-header-split compact-section-header">
-                            <div>
-                                <h3>Analyst team</h3>
-                            </div>
-                            <div class="section-actions compact-actions">
-                                <button id="selectAllAnalystsButton" type="button" class="text-button">All</button>
-                                <button id="selectCoreAnalystsButton" type="button" class="text-button">Core</button>
-                                <button id="clearAnalystsButton" type="button" class="text-button">Clear</button>
-                            </div>
+                        <div class="config-section-header compact-section-header">
+                            <h3>Analyst team</h3>
                         </div>
                         <div id="analystOptions" class="checkbox-grid compact-option-grid"></div>
                     </section>
@@ -389,8 +378,6 @@
                         <div id="depthOptions" class="depth-grid compact-depth-grid"></div>
                     </section>
                 </div>
-
-                <div id="configPreview" class="config-preview compact-config-preview"></div>
 
                 <div class="modal-actions">
                     <button id="saveConfigButton" type="button" class="button secondary">Apply</button>

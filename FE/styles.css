@@ -6729,35 +6729,68 @@ body.is-running .window-status {
 
 #configForm.compact-config-form {
     gap: 10px 12px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+        "primary"
+        "secondary"
+        "choices"
+        "actions";
 }
 
 #configForm .compact-grid-primary {
-    grid-template-columns: minmax(180px, 1fr) minmax(160px, 0.74fr) minmax(170px, 0.74fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 #configForm .compact-grid-secondary {
-    grid-template-columns: minmax(120px, 0.62fr) minmax(150px, 0.7fr) minmax(180px, 1fr) minmax(210px, 1.06fr) minmax(120px, 0.52fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-#configForm .compact-config-section,
-#configPreview.compact-config-preview {
+#configForm .compact-config-choices {
+    grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
+    align-items: stretch;
+    width: 100%;
+}
+
+#configForm .compact-config-section {
+    height: 100%;
+    align-content: start;
+}
+
+#configForm .field.field-muted {
+    opacity: 0.72;
+}
+
+#configForm .field.field-muted > span {
+    color: rgba(19, 33, 42, 0.68);
+}
+
+#configForm .field.field-muted input:disabled,
+#configForm .field.field-muted select:disabled {
+    cursor: not-allowed;
+}
+
+#configForm .compact-config-section {
     padding: 12px;
+}
+
+.compact-option-grid,
+.compact-depth-grid {
+    grid-auto-rows: 1fr;
+}
+
+.compact-option-grid {
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+}
+
+.compact-depth-grid {
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
 }
 
 .checkbox-card,
 .depth-card {
-    min-height: 42px;
-    padding: 9px 10px;
-}
-
-.config-summary-chip {
-    min-height: 56px;
-    padding: 8px 10px;
-}
-
-.config-summary-note {
-    margin: 0;
-    padding: 8px 10px;
+    min-height: 58px;
+    padding: 10px 12px;
+    align-content: center;
 }
 
 @media (max-width: 960px) {
@@ -6766,7 +6799,13 @@ body.is-running .window-status {
     }
 
     #configForm .compact-grid-primary,
-    #configForm .compact-grid-secondary {
+    #configForm .compact-grid-secondary,
+    #configForm .compact-config-choices {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .compact-option-grid,
+    .compact-depth-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
@@ -6774,9 +6813,9 @@ body.is-running .window-status {
 @media (max-width: 720px) {
     #configForm .compact-grid-primary,
     #configForm .compact-grid-secondary,
+    #configForm .compact-config-choices,
     .compact-option-grid,
-    .compact-depth-grid,
-    #configPreview.compact-config-preview {
+    .compact-depth-grid {
         grid-template-columns: 1fr;
     }
 }

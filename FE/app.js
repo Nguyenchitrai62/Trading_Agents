@@ -65,7 +65,6 @@ const APP_SETTINGS = FRONTEND_BOOTSTRAP.app || {};
 const AUTH_SETTINGS = FRONTEND_BOOTSTRAP.auth || {};
 const HISTORY_SETTINGS = FRONTEND_BOOTSTRAP.history || {};
 const TRADING_VIEW_SETTINGS = FRONTEND_BOOTSTRAP.tradingView || FRONTEND_BOOTSTRAP.trading_view || {};
-const CORE_ANALYSTS = Array.isArray(APP_SETTINGS.coreAnalysts) ? APP_SETTINGS.coreAnalysts : ["market", "social", "news"];
 const CUSTOM_LOOKBACK_VALUE = "__custom__";
 const TRACE_DISPLAY_LIMIT = Number(APP_SETTINGS.traceDisplayLimit || APP_SETTINGS.trace_display_limit || 14);
 const LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.logDisplayLimit || APP_SETTINGS.log_display_limit || 12);
@@ -342,13 +341,8 @@ const elements = {
     customLanguageField: document.getElementById("customLanguageField"),
     customLanguageInput: document.getElementById("customLanguageInput"),
     analystOptions: document.getElementById("analystOptions"),
-    selectAllAnalystsButton: document.getElementById("selectAllAnalystsButton"),
-    selectCoreAnalystsButton: document.getElementById("selectCoreAnalystsButton"),
-    clearAnalystsButton: document.getElementById("clearAnalystsButton"),
     depthOptions: document.getElementById("depthOptions"),
-    modelInput: document.getElementById("modelInput"),
-    checkpointToggle: document.getElementById("checkpointToggle"),
-    configPreview: document.getElementById("configPreview"),
+    modelSelect: document.getElementById("modelSelect"),
 };
 
 [elements.configModal, elements.detailModal, elements.alertModal].forEach((modal) => {
@@ -384,44 +378,33 @@ function createEmptyRunState() {
 
 function createEmptyHistoryState() {
     return {
-        loaded: false,
-        loading: false,
-        detailLoading: false,
         items: [],
-        activeId: null,
-        active: null,
+        loading: false,
+        loaded: false,
+        error: "",
         page: 1,
         limit: HISTORY_PAGE_SIZE,
         hasMore: false,
-        error: "",
+        activeId: "",
+        active: null,
+        detailLoading: false,
     };
 }
 
 function createEmptyAdminState() {
     return {
-        loaded: false,
-        loading: false,
         users: [],
+        loading: false,
+        loaded: false,
         error: "",
         savingEmail: "",
     };
 }
 
-function createChatSession(id, title = "New Chat", messages = []) {
-    const now = new Date().toISOString();
-    return {
-        id,
-        title,
-        createdAt: now,
-        updatedAt: now,
-        messages,
-    };
-}
-
-function createChatMessage(role, content = "") {
+function createChatMessage(role = "assistant", content = "") {
     const normalizedContent = String(content || "");
     return {
-        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: `chat-msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         role,
         content: normalizedContent,
         renderedContent: normalizedContent,
@@ -438,6 +421,17 @@ function createChatMessage(role, content = "") {
         firstTokenAt: 0,
         lastChunkAt: 0,
         typingCharsPerSecond: 92,
+    };
+}
+
+function createChatSession(id = createChatSessionId(), title = "New Chat", messages = []) {
+    const timestamp = new Date().toISOString();
+    return {
+        id,
+        title: String(title || "New Chat"),
+        messages: Array.isArray(messages) ? messages.map((message) => normalizeChatMessage(message)) : [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
     };
 }
 
@@ -487,6 +481,32 @@ function normalizeTradingViewSymbol(value = "") {
     return `BINANCE:${compact}USDT`;
 }
 
+function normalizeTradingViewInterval(value = "") {
+    const raw = String(value || "").trim().toUpperCase();
+    if (!raw) {
+        return "";
+    }
+
+    const aliases = {
+        D: "1D",
+        W: "1W",
+        M: "1M",
+        "1H": "60",
+        "2H": "120",
+        "4H": "240",
+    };
+
+    if (aliases[raw]) {
+        return aliases[raw];
+    }
+
+    if (/^\d+$/.test(raw) || /^\d+[DWM]$/.test(raw)) {
+        return raw;
+    }
+
+    return "";
+}
+
 function readStoredChartSymbols() {
     const raw = safeReadLocalStorage(CHART_SYMBOLS_STORAGE_KEY);
     if (!raw) {
@@ -500,36 +520,18 @@ function readStoredChartSymbols() {
     }
 }
 
-function normalizeTradingViewInterval(value = "") {
-    const raw = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
-    if (!raw) {
-        return "";
-    }
-    const aliases = {
-        "1M": "1",
-        "3M": "3",
-        "5M": "5",
-        "15M": "15",
-        "30M": "30",
-        "1H": "60",
-        "2H": "120",
-        "4H": "240",
-        "1D": "D",
-        "1W": "W",
-        "1MO": "M",
-    };
-    return aliases[raw] || raw;
-}
-
 function createInitialChartState() {
     const storedSymbols = readStoredChartSymbols();
-    const symbols = [...new Set((storedSymbols && storedSymbols.length ? storedSymbols : DEFAULT_CHART_SYMBOLS).map(normalizeTradingViewSymbol).filter(Boolean))];
+    const symbols = (storedSymbols && storedSymbols.length ? storedSymbols : DEFAULT_CHART_SYMBOLS)
+        .map(normalizeTradingViewSymbol)
+        .filter(Boolean);
+
     return {
         loaded: false,
         loading: false,
         widgetReady: false,
         pendingSymbol: "",
-        symbol: symbols[0],
+        symbol: symbols[0] || "BINANCE:BTCUSDT",
         interval: normalizeTradingViewInterval(DEFAULT_CHART_INTERVAL) || "60",
         symbols,
         draggingSymbol: "",
@@ -965,7 +967,7 @@ function getChatModel() {
     if (fromSelect) {
         return fromSelect;
     }
-    return String(state.config?.analysis_defaults?.model || state.config?.default_model || "MiniMax-M2.7");
+    return String(state.config?.analysis_defaults?.model || state.config?.default_model || "MiniMax-M2.5");
 }
 
 function updateChatComposerState() {
@@ -1833,7 +1835,7 @@ function normalizeFrontendConfig() {
     const defaults = source.analysisDefaults || source.analysis_defaults || {};
     const options = source.analysisOptions || source.analysis_options || {};
     const tradingView = source.tradingView || source.trading_view || {};
-    const defaultModel = source.defaultModel || source.default_model || defaults.model || "MiniMax-M2.7";
+    const defaultModel = source.defaultModel || source.default_model || defaults.model || "MiniMax-M2.5";
 
     return {
         configured: true,
@@ -1864,7 +1866,7 @@ function normalizeFrontendConfig() {
             lookback_days: Number(defaults.lookbackDays || defaults.lookback_days || 7),
             output_language: defaults.outputLanguage || defaults.output_language || "Vietnamese",
             selected_analysts: defaults.selectedAnalysts || defaults.selected_analysts || ["market", "social", "news", "fundamentals"],
-            research_depth: defaults.researchDepth || defaults.research_depth || "quick",
+            research_depth: defaults.researchDepth || defaults.research_depth || "medium",
             model: defaultModel,
             checkpoint_enabled: Boolean(defaults.checkpointEnabled ?? defaults.checkpoint_enabled ?? false),
         },
@@ -1883,6 +1885,10 @@ function normalizeFrontendConfig() {
                 { value: "90", label: "90 days", days: 90 },
             ],
             output_languages: options.outputLanguages || options.output_languages || ["Vietnamese", "English"],
+            models: options.models || [
+                { value: "MiniMax-M2.5", label: "MiniMax M2.5" },
+                { value: "MiniMax-M2.7", label: "MiniMax M2.7" },
+            ],
             research_depths: options.researchDepths || options.research_depths || [
                 { value: "quick", label: "Quick", rounds: 1, description: "Fast scan with minimal debate." },
                 { value: "medium", label: "Medium", rounds: 3, description: "Balanced research depth for regular analysis." },
@@ -2405,8 +2411,8 @@ function collectConfigDraft() {
         output_language: getOutputLanguage(),
         selected_analysts: getCheckedAnalysts(),
         research_depth: getSelectedDepth(),
-        model: elements.modelInput.value.trim(),
-        checkpoint_enabled: elements.checkpointToggle.checked,
+        model: String(elements.modelSelect?.value || "").trim(),
+        checkpoint_enabled: false,
     };
 }
 
@@ -2446,7 +2452,7 @@ function getConfigSnapshot() {
             selected_analysts: state.config.analysis_defaults.selected_analysts,
             research_depth: state.config.analysis_defaults.research_depth,
             model: state.config.analysis_defaults.model,
-            checkpoint_enabled: Boolean(state.config.analysis_defaults.checkpoint_enabled),
+            checkpoint_enabled: false,
         };
     }
 }
@@ -3416,7 +3422,9 @@ function readConfigForm() {
 
 function syncLanguageControls() {
     const isCustom = elements.languageSelect.value === "__custom__";
-    elements.customLanguageField.classList.toggle("hidden", !isCustom);
+    elements.customLanguageField?.classList.toggle("field-muted", !isCustom);
+    elements.customLanguageInput.disabled = !isCustom;
+    elements.customLanguageInput.required = isCustom;
 }
 
 function syncLookbackPreset() {
@@ -3436,7 +3444,7 @@ function syncLookbackPreset() {
 
 function syncLookbackControls() {
     const isCustom = elements.lookbackPresetSelect.value === CUSTOM_LOOKBACK_VALUE;
-    elements.lookbackDaysField?.classList.toggle("hidden", !isCustom);
+    elements.lookbackDaysField?.classList.toggle("field-muted", !isCustom);
     elements.lookbackDaysInput.disabled = !isCustom;
     elements.lookbackDaysInput.required = isCustom;
 }
@@ -3452,56 +3460,11 @@ function syncAnalystAvailability() {
     card?.classList.remove("checkbox-card-disabled");
 }
 
-function renderConfigPreview() {
-    if (!state.config) {
-        elements.configPreview.innerHTML = "";
-        return;
-    }
-
-    const payload = collectConfigDraft();
-    const depthMap = Object.fromEntries(
-        state.config.analysis_options.research_depths.map((item) => [item.value, item.label]),
-    );
-    const analystLabelMap = Object.fromEntries(
-        state.config.analysis_options.analysts.map((item) => [item.value, item.label]),
-    );
-    const analystNames = payload.selected_analysts.map((key) => analystLabelMap[key] || key);
-    const chips = [
-        ["Symbol", payload.symbol || "-"],
-        ["Window", `${payload.lookback_days || 0}d`],
-        ["Language", payload.output_language || "-"],
-        ["Depth", depthMap[payload.research_depth] || payload.research_depth],
-        ["Model", payload.model || "-"],
-        ["Analysts", analystNames.length ? analystNames.join(" / ") : "None selected"],
-        ["Checkpoint", payload.checkpoint_enabled ? "On" : "Off"],
-    ];
-
-    const notes = [];
-    if (!analystNames.length) {
-        notes.push("Select at least one analyst before running.");
-    }
-
-    elements.configPreview.innerHTML = `
-        ${chips
-            .map(
-                ([label, value]) => `
-                    <article class="config-summary-chip" title="${escapeHtml(`${label}: ${value}`)}">
-                        <span>${escapeHtml(label)}</span>
-                        <strong>${escapeHtml(value)}</strong>
-                    </article>
-                `,
-            )
-            .join("")}
-        ${notes[0] ? `<p class="config-summary-note">${escapeHtml(notes[0])}</p>` : ""}
-    `;
-}
-
 function refreshConfigUi() {
     syncLanguageControls();
     syncLookbackPreset();
     syncAnalystAvailability();
     renderTopNotice();
-    renderConfigPreview();
     if (!state.isBusy) {
         renderTeamStatusGrid();
     }
@@ -5645,6 +5608,44 @@ function populateLookbackPresets(config) {
         .join("");
 }
 
+function populateModelOptions(config) {
+    const preferredModel = String(config.analysis_defaults.model || config.default_model || "").trim();
+    const configuredModels = Array.isArray(config.analysis_options.models) ? config.analysis_options.models : [];
+    const options = configuredModels
+        .map((item) => {
+            if (typeof item === "string") {
+                return { value: item, label: item };
+            }
+            return {
+                value: String(item?.value || item?.label || "").trim(),
+                label: String(item?.label || item?.value || "").trim(),
+            };
+        })
+        .filter((item) => item.value && item.label);
+
+    if (preferredModel && !options.some((item) => item.value === preferredModel)) {
+        options.unshift({ value: preferredModel, label: preferredModel });
+    }
+
+    const optionMarkup = options
+        .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
+        .join("");
+
+    if (elements.modelSelect instanceof HTMLSelectElement) {
+        elements.modelSelect.innerHTML = optionMarkup;
+        if (preferredModel) {
+            elements.modelSelect.value = preferredModel;
+        }
+    }
+
+    if (elements.chatModelSelect instanceof HTMLSelectElement) {
+        elements.chatModelSelect.innerHTML = optionMarkup;
+        if (preferredModel) {
+            elements.chatModelSelect.value = preferredModel;
+        }
+    }
+}
+
 function populateAnalystOptions(config) {
     const defaults = new Set(config.analysis_defaults.selected_analysts);
     elements.analystOptions.innerHTML = config.analysis_options.analysts
@@ -5680,10 +5681,7 @@ function bindConfigInputListeners() {
         elements.symbolInput,
         elements.analysisDateInput,
         elements.lookbackDaysInput,
-        elements.modelInput,
         elements.customLanguageInput,
-        elements.checkpointToggle,
-        elements.languageSelect,
     ].filter(Boolean).forEach((element) => element.addEventListener("input", sync));
     elements.lookbackPresetSelect.addEventListener("change", () => {
         if (elements.lookbackPresetSelect.value !== CUSTOM_LOOKBACK_VALUE) {
@@ -5698,19 +5696,13 @@ function bindConfigInputListeners() {
     });
     elements.languageSelect.addEventListener("change", () => {
         refreshConfigUi();
-    });
-    elements.analystOptions.addEventListener("change", sync);
-    elements.depthOptions.addEventListener("change", sync);
-}
-
-function setAnalystSelection(values) {
-    const selected = new Set(values);
-    Array.from(elements.analystOptions.querySelectorAll('input[type="checkbox"]')).forEach((input) => {
-        if (!input.disabled) {
-            input.checked = selected.has(input.value);
+        if (elements.languageSelect.value === "__custom__") {
+            elements.customLanguageInput.focus();
         }
     });
-    refreshConfigUi();
+    elements.modelSelect?.addEventListener("change", sync);
+    elements.analystOptions.addEventListener("change", sync);
+    elements.depthOptions.addEventListener("change", sync);
 }
 
 async function loadConfig() {
@@ -5728,22 +5720,8 @@ async function loadConfig() {
     elements.analysisDateInput.value = config.analysis_defaults.analysis_date;
     populateLookbackPresets(config);
     elements.lookbackDaysInput.value = config.analysis_defaults.lookback_days;
-    elements.modelInput.value = config.analysis_defaults.model;
-    if (elements.chatModelSelect instanceof HTMLSelectElement) {
-        const preferredModel = String(config.analysis_defaults.model || config.default_model || "").trim();
-        if (preferredModel) {
-            const hasPreferred = Array.from(elements.chatModelSelect.options).some((option) => option.value === preferredModel);
-            if (!hasPreferred) {
-                const option = document.createElement("option");
-                option.value = preferredModel;
-                option.textContent = preferredModel;
-                elements.chatModelSelect.prepend(option);
-            }
-            elements.chatModelSelect.value = preferredModel;
-        }
-    }
-    elements.checkpointToggle.checked = Boolean(config.analysis_defaults.checkpoint_enabled);
     populateLanguageOptions(config);
+    populateModelOptions(config);
     populateAnalystOptions(config);
     populateDepthOptions(config);
     bindConfigInputListeners();
@@ -6139,15 +6117,6 @@ elements.runAnalysisButton.addEventListener("click", async () => {
 elements.saveConfigButton.addEventListener("click", () => {
     refreshConfigUi();
     closeConfigModal();
-});
-elements.selectAllAnalystsButton.addEventListener("click", () => {
-    setAnalystSelection(state.config?.analysis_options?.analysts?.map((item) => item.value) || []);
-});
-elements.selectCoreAnalystsButton.addEventListener("click", () => {
-    setAnalystSelection(CORE_ANALYSTS);
-});
-elements.clearAnalystsButton.addEventListener("click", () => {
-    setAnalystSelection([]);
 });
 elements.configForm.addEventListener("submit", async (event) => {
     event.preventDefault();
