@@ -6243,10 +6243,6 @@ body.is-running .window-status {
     margin-left: auto;
 }
 
-.chat-page.is-busy {
-    cursor: progress;
-}
-
 .chat-composer-actions .toolbar-button {
     width: 42px;
     height: 42px;

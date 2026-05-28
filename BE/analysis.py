@@ -447,11 +447,24 @@ class AnalysisService:
         return bool(CHAT_URL_PATTERN.search(prompt or ""))
 
     @classmethod
-    def build_chat_system_message(cls, request: ChatRequest) -> str:
+    def get_chat_tool_routing_flags(cls, request: ChatRequest) -> dict[str, bool]:
         latest_prompt = cls.get_latest_chat_user_prompt(request)
         contains_direct_url = cls._prompt_contains_direct_url(latest_prompt)
         needs_web_search = contains_direct_url or cls._prompt_matches_any_term(latest_prompt, CHAT_WEB_SEARCH_HINT_TERMS)
         needs_image_tool = cls._prompt_matches_any_term(latest_prompt, CHAT_IMAGE_HINT_TERMS)
+        return {
+            "contains_direct_url": contains_direct_url,
+            "needs_web_search": needs_web_search,
+            "needs_image_tool": needs_image_tool,
+            "needs_tool_assistance": needs_web_search or needs_image_tool,
+        }
+
+    @classmethod
+    def build_chat_system_message(cls, request: ChatRequest) -> str:
+        routing = cls.get_chat_tool_routing_flags(request)
+        contains_direct_url = routing["contains_direct_url"]
+        needs_web_search = routing["needs_web_search"]
+        needs_image_tool = routing["needs_image_tool"]
 
         routing_lines = [
             "You are the TradingAgents admin assistant. Answer directly, stay evidence-grounded, and use MiniMax MCP tools whenever they materially improve correctness.",
@@ -586,79 +599,83 @@ class AnalysisService:
             client = self.get_minimax_client()
             system_message = self.build_chat_system_message(request)
             anthropic_messages = self.build_anthropic_chat_messages(request)
+            use_mcp_chat_tools = bool(self.get_chat_tool_routing_flags(request)["needs_tool_assistance"])
 
             chat_max_tokens = self.resolve_chat_max_tokens(request)
-            tool_event_queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+            if use_mcp_chat_tools:
+                tool_event_queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
 
-            async def enqueue_tool_event(tool_event: dict[str, object]) -> None:
-                await tool_event_queue.put(dict(tool_event))
+                async def enqueue_tool_event(tool_event: dict[str, object]) -> None:
+                    await tool_event_queue.put(dict(tool_event))
 
-            mcp_task = asyncio.create_task(
-                self.create_mcp_chat_response(
-                    client,
-                    request,
-                    system_message,
-                    anthropic_messages,
-                    max_tokens=chat_max_tokens,
-                    on_tool_event=enqueue_tool_event,
+                yield self._sse("thinking", {"content": "Preparing tool-assisted response..."})
+
+                mcp_task = asyncio.create_task(
+                    self.create_mcp_chat_response(
+                        client,
+                        request,
+                        system_message,
+                        anthropic_messages,
+                        max_tokens=chat_max_tokens,
+                        on_tool_event=enqueue_tool_event,
+                    )
                 )
-            )
-            mcp_response = None
-            while True:
-                if mcp_task.done() and tool_event_queue.empty():
-                    mcp_response = mcp_task.result()
-                    break
+                mcp_response = None
+                while True:
+                    if mcp_task.done() and tool_event_queue.empty():
+                        mcp_response = mcp_task.result()
+                        break
 
-                next_tool_event = asyncio.create_task(tool_event_queue.get())
-                done, _pending = await asyncio.wait(
-                    {mcp_task, next_tool_event},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
+                    next_tool_event = asyncio.create_task(tool_event_queue.get())
+                    done, _pending = await asyncio.wait(
+                        {mcp_task, next_tool_event},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
 
-                if next_tool_event in done:
-                    tool_event_payload = self.build_chat_tool_event_sse(next_tool_event.result())
+                    if next_tool_event in done:
+                        tool_event_payload = self.build_chat_tool_event_sse(next_tool_event.result())
+                        if tool_event_payload:
+                            yield tool_event_payload
+                    else:
+                        next_tool_event.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await next_tool_event
+
+                    if mcp_task in done and tool_event_queue.empty():
+                        mcp_response = mcp_task.result()
+                        break
+
+                    await asyncio.sleep(0)
+
+                while not tool_event_queue.empty():
+                    tool_event_payload = self.build_chat_tool_event_sse(tool_event_queue.get_nowait())
                     if tool_event_payload:
                         yield tool_event_payload
-                else:
-                    next_tool_event.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await next_tool_event
 
-                if mcp_task in done and tool_event_queue.empty():
-                    mcp_response = mcp_task.result()
-                    break
+                if mcp_response is not None:
+                    text, thinking, _input_tokens, output_tokens, _total_tokens = self.extract_chat_response_payload(mcp_response)
+                    if thinking:
+                        yield self._sse("thinking", {"content": thinking})
+                    if text:
+                        yield self._sse("content", {"content": text})
 
-                await asyncio.sleep(0)
-
-            while not tool_event_queue.empty():
-                tool_event_payload = self.build_chat_tool_event_sse(tool_event_queue.get_nowait())
-                if tool_event_payload:
-                    yield tool_event_payload
-
-            if mcp_response is not None:
-                text, thinking, _input_tokens, output_tokens, _total_tokens = self.extract_chat_response_payload(mcp_response)
-                if thinking:
-                    yield self._sse("thinking", {"content": thinking})
-                if text:
-                    yield self._sse("content", {"content": text})
-
-                end_time = time.time()
-                total_time = end_time - start_time
-                tokens = output_tokens if output_tokens > 0 else len(text) // 4
-                tokens_per_second = tokens / total_time if total_time > 0 else 0
-                yield self._sse(
-                    "complete",
-                    {
-                        "text": text,
-                        "thinking": thinking,
-                        "tokens": tokens,
-                        "tokens_estimated": output_tokens == 0,
-                        "tokens_per_second": round(tokens_per_second, 2),
-                        "generation_time": round(total_time, 2),
-                        "total_time": round(total_time, 2),
-                    },
-                )
-                return
+                    end_time = time.time()
+                    total_time = end_time - start_time
+                    tokens = output_tokens if output_tokens > 0 else len(text) // 4
+                    tokens_per_second = tokens / total_time if total_time > 0 else 0
+                    yield self._sse(
+                        "complete",
+                        {
+                            "text": text,
+                            "thinking": thinking,
+                            "tokens": tokens,
+                            "tokens_estimated": output_tokens == 0,
+                            "tokens_per_second": round(tokens_per_second, 2),
+                            "generation_time": round(total_time, 2),
+                            "total_time": round(total_time, 2),
+                        },
+                    )
+                    return
 
             stream = await client.messages.create(
                 model=request.model,
@@ -745,31 +762,33 @@ class AnalysisService:
             system_message = self.build_chat_system_message(request)
             anthropic_messages = self.build_anthropic_chat_messages(request)
             chat_max_tokens = self.resolve_chat_max_tokens(request)
+            use_mcp_chat_tools = bool(self.get_chat_tool_routing_flags(request)["needs_tool_assistance"])
 
-            mcp_response = await self.create_mcp_chat_response(
-                client,
-                request,
-                system_message,
-                anthropic_messages,
-                max_tokens=chat_max_tokens,
-            )
-            if mcp_response is not None:
-                text, _thinking, input_tokens, output_tokens, total_tokens = self.extract_chat_response_payload(mcp_response)
-                return {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": text,
+            if use_mcp_chat_tools:
+                mcp_response = await self.create_mcp_chat_response(
+                    client,
+                    request,
+                    system_message,
+                    anthropic_messages,
+                    max_tokens=chat_max_tokens,
+                )
+                if mcp_response is not None:
+                    text, _thinking, input_tokens, output_tokens, total_tokens = self.extract_chat_response_payload(mcp_response)
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": text,
+                                }
                             }
-                        }
-                    ],
-                    "usage": {
-                        "prompt_tokens": input_tokens,
-                        "completion_tokens": output_tokens,
-                        "total_tokens": total_tokens,
-                    },
-                }
+                        ],
+                        "usage": {
+                            "prompt_tokens": input_tokens,
+                            "completion_tokens": output_tokens,
+                            "total_tokens": total_tokens,
+                        },
+                    }
 
             response = await client.messages.create(
                 model=request.model,
