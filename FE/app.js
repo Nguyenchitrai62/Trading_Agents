@@ -2484,10 +2484,193 @@ function tryParseJsonString(value = "") {
     }
 }
 
+function extractEmbeddedJsonValues(value = "", limit = 8) {
+    const source = String(value || "").trim();
+    if (!source) {
+        return [];
+    }
+
+    const fragments = [];
+    for (let start = 0; start < source.length && fragments.length < limit; start += 1) {
+        const opener = source[start];
+        if (opener !== "{" && opener !== "[") {
+            continue;
+        }
+
+        let depth = 0;
+        let inString = false;
+        let isEscaping = false;
+
+        for (let end = start; end < source.length; end += 1) {
+            const char = source[end];
+            if (inString) {
+                if (isEscaping) {
+                    isEscaping = false;
+                    continue;
+                }
+                if (char === "\\") {
+                    isEscaping = true;
+                    continue;
+                }
+                if (char === '"') {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (char === '"') {
+                inString = true;
+                continue;
+            }
+
+            if (char === "{" || char === "[") {
+                depth += 1;
+                continue;
+            }
+
+            if (char === "}" || char === "]") {
+                depth -= 1;
+                if (depth === 0) {
+                    const parsed = tryParseJsonString(source.slice(start, end + 1));
+                    if (parsed != null) {
+                        fragments.push(parsed);
+                    }
+                    start = end;
+                    break;
+                }
+                if (depth < 0) {
+                    break;
+                }
+            }
+        }
+    }
+
+    return fragments;
+}
+
+function normalizeToolResultItems(items) {
+    if (!Array.isArray(items)) {
+        return [];
+    }
+
+    return items
+        .map((item) => {
+            let title = "";
+            let link = "";
+            let snippet = "";
+            let date = "";
+            if (item && typeof item === "object") {
+                title = String(item.title || item.name || item.query || item.link || item.url || "Untitled").trim();
+                link = String(item.link || item.url || "").trim();
+                snippet = String(item.snippet || item.description || item.summary || "").trim();
+                date = String(item.date || item.published || item.published_at || "").trim();
+            } else {
+                title = String(item || "").trim();
+            }
+
+            if (!title && !link && !snippet) {
+                return null;
+            }
+
+            let source = "";
+            if (link) {
+                try {
+                    source = new URL(link).hostname.replace(/^www\./i, "");
+                } catch {
+                    source = "";
+                }
+            }
+
+            return {
+                title: title || link || "Untitled",
+                link,
+                snippet,
+                date,
+                source,
+            };
+        })
+        .filter(Boolean);
+}
+
+function buildStructuredToolResultData(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        return null;
+    }
+
+    const answer = String(payload.answer || payload.summary || "").trim();
+    const sections = [];
+
+    const organic = normalizeToolResultItems(payload.organic || payload.results);
+    if (organic.length) {
+        sections.push({ key: "organic", title: "Search results", items: organic });
+    }
+
+    const news = normalizeToolResultItems(payload.news || payload.top_stories);
+    if (news.length) {
+        sections.push({ key: "news", title: "Related news", items: news });
+    }
+
+    const relatedSearches = Array.isArray(payload.related_searches)
+        ? payload.related_searches
+              .map((item) => (item && typeof item === "object" ? String(item.query || "").trim() : String(item || "").trim()))
+              .filter(Boolean)
+        : [];
+
+    if (!answer && !sections.length && !relatedSearches.length) {
+        return null;
+    }
+
+    return {
+        answer,
+        sections,
+        relatedSearches,
+    };
+}
+
+function getStructuredToolResultData(content) {
+    return buildStructuredToolResultData(unwrapToolResultPayload(content));
+}
+
+function renderStructuredToolResultToMarkdown(toolResult) {
+    if (!toolResult) {
+        return "";
+    }
+
+    const lines = [];
+    if (toolResult.answer) {
+        lines.push(toolResult.answer);
+    }
+
+    toolResult.sections.forEach((section) => {
+        if (lines.length) {
+            lines.push("");
+        }
+        lines.push(`${section.title}:`);
+        lines.push(...formatToolResultItems(section.items));
+    });
+
+    if (toolResult.relatedSearches.length) {
+        if (lines.length) {
+            lines.push("");
+        }
+        lines.push(`Related searches: ${toolResult.relatedSearches.join("; ")}`);
+    }
+
+    return lines.join("\n").trim();
+}
+
 function unwrapToolResultPayload(value) {
     if (typeof value === "string") {
-        const parsed = tryParseJsonString(value);
-        return parsed == null ? value.trim() : unwrapToolResultPayload(parsed);
+        const trimmed = value.trim();
+        const parsed = tryParseJsonString(trimmed);
+        if (parsed != null) {
+            return unwrapToolResultPayload(parsed);
+        }
+
+        const embeddedPayload = extractEmbeddedJsonValues(trimmed)
+            .map((item) => unwrapToolResultPayload(item))
+            .find((item) => buildStructuredToolResultData(item));
+        return embeddedPayload == null ? trimmed : embeddedPayload;
     }
     if (Array.isArray(value)) {
         if (value.length === 1) {
@@ -2509,81 +2692,30 @@ function unwrapToolResultPayload(value) {
 }
 
 function formatToolResultItems(items) {
-    if (!Array.isArray(items)) {
-        return [];
-    }
     const lines = [];
-    items.forEach((item) => {
-        let title = "";
-        let link = "";
-        let snippet = "";
-        let date = "";
-        if (item && typeof item === "object") {
-            title = String(item.title || item.name || item.query || item.link || item.url || "Untitled").trim();
-            link = String(item.link || item.url || "").trim();
-            snippet = String(item.snippet || item.description || item.summary || "").trim();
-            date = String(item.date || item.published || item.published_at || "").trim();
-        } else {
-            title = String(item || "").trim();
-        }
-        if (!title) {
+    normalizeToolResultItems(items).forEach((item) => {
+        if (!item.title) {
             return;
         }
-        lines.push(link ? `- [${title}](${link})` : `- ${title}`);
-        if (date) {
-            lines.push(`  Date: ${date}`);
+        lines.push(item.link ? `- [${item.title}](${item.link})` : `- ${item.title}`);
+        if (item.date) {
+            lines.push(`  Date: ${item.date}`);
         }
-        if (snippet) {
-            lines.push(`  ${snippet}`);
+        if (item.snippet) {
+            lines.push(`  ${item.snippet}`);
         }
     });
     return lines;
 }
 
 function formatToolResultMarkdown(content) {
+    const toolResult = getStructuredToolResultData(content);
+    if (toolResult) {
+        return renderStructuredToolResultToMarkdown(toolResult);
+    }
+
     const payload = unwrapToolResultPayload(content);
-
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
-        const lines = [];
-        const answer = String(payload.answer || payload.summary || "").trim();
-        if (answer) {
-            lines.push(answer);
-        }
-
-        const organic = payload.organic || payload.results;
-        if (Array.isArray(organic) && organic.length) {
-            if (lines.length) {
-                lines.push("");
-            }
-            lines.push("Search results:");
-            lines.push(...formatToolResultItems(organic));
-        }
-
-        const news = payload.news || payload.top_stories;
-        if (Array.isArray(news) && news.length) {
-            if (lines.length) {
-                lines.push("");
-            }
-            lines.push("Related news:");
-            lines.push(...formatToolResultItems(news));
-        }
-
-        const relatedSearches = Array.isArray(payload.related_searches)
-            ? payload.related_searches
-                  .map((item) => (item && typeof item === "object" ? String(item.query || "").trim() : String(item || "").trim()))
-                  .filter(Boolean)
-            : [];
-        if (relatedSearches.length) {
-            if (lines.length) {
-                lines.push("");
-            }
-            lines.push(`Related searches: ${relatedSearches.join("; ")}`);
-        }
-
-        if (lines.length) {
-            return lines.join("\n").trim();
-        }
-
         try {
             return `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``;
         } catch {
@@ -2760,6 +2892,7 @@ function pushAgentTrace(trace) {
     const agent = trace.agent || state.run.status?.current_agent || "Agent";
     const phase = trace.phase || "analysis";
     const content = formatTraceContentForDisplay(phase, trace.content || "");
+    const toolResultData = phase === "tool_result" ? getStructuredToolResultData(trace.content || "") : null;
     const fingerprint = buildContentFingerprint(agent, phase, trace.title || agent, content);
     if (!content || (fingerprint && state.run.seenTraceFingerprints.has(fingerprint))) {
         return;
@@ -2777,6 +2910,7 @@ function pushAgentTrace(trace) {
         tone: getFeedToneForPhase(phase),
         title: trace.title || agent,
         content,
+        toolResultData,
     };
 
     state.run.agentTrace[agent] = [...(state.run.agentTrace[agent] || []), entry].slice(-12);
@@ -3858,6 +3992,8 @@ function getDetailContent(detail) {
         return {
             content: formatTraceDetailMarkdown(entry),
             fallback: "This trace is no longer available in the live feed.",
+            toolResult: entry?.phase === "tool_result" ? entry.toolResultData || null : null,
+            traceEntry: entry || null,
         };
     }
 
@@ -3924,6 +4060,75 @@ function formatTraceDetailMarkdown(entry) {
         .join("\n\n");
 }
 
+function renderToolResultCardMarkup(item) {
+    const titleMarkup = item.link
+        ? `<a class="tool-result-card-title" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer noopener">${escapeHtml(item.title)}</a>`
+        : `<span class="tool-result-card-title">${escapeHtml(item.title)}</span>`;
+
+    return `
+        <article class="tool-result-card">
+            <div class="tool-result-card-topline">
+                ${titleMarkup}
+                ${item.date ? `<span class="tool-result-card-date">${escapeHtml(item.date)}</span>` : ""}
+            </div>
+            ${item.snippet ? `<p class="tool-result-card-snippet">${escapeHtml(item.snippet)}</p>` : ""}
+            <div class="tool-result-card-meta">
+                <span>${escapeHtml(item.source || "Search result")}</span>
+                ${item.link ? `<a class="tool-result-card-open" href="${escapeHtml(item.link)}" target="_blank" rel="noreferrer noopener">Open source</a>` : ""}
+            </div>
+        </article>
+    `;
+}
+
+function renderToolResultDetailMarkup(toolResult, entry) {
+    const metaItems = [
+        entry?.agent ? `Agent: ${entry.agent}` : "",
+        entry?.title ? `Tool: ${entry.title}` : "",
+        entry?.timestamp ? `Time: ${entry.timestamp}` : "",
+    ].filter(Boolean);
+
+    return `
+        ${metaItems.length ? `<div class="tool-result-meta-strip">${metaItems.map((item) => `<span class="tool-result-meta-pill">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+        ${toolResult.answer ? `<section class="tool-result-summary markdown-preview">${renderMarkdown(toolResult.answer, "")}</section>` : ""}
+        ${toolResult.sections
+            .map(
+                (section) => `
+                    <section class="tool-result-section">
+                        <div class="tool-result-section-head">
+                            <h3>${escapeHtml(section.title)}</h3>
+                            <span>${escapeHtml(String(section.items.length))} items</span>
+                        </div>
+                        <div class="tool-result-card-list">
+                            ${section.items.map((item) => renderToolResultCardMarkup(item)).join("")}
+                        </div>
+                    </section>
+                `,
+            )
+            .join("")}
+        ${toolResult.relatedSearches.length
+            ? `
+                <section class="tool-result-section">
+                    <div class="tool-result-section-head">
+                        <h3>Related searches</h3>
+                        <span>${escapeHtml(String(toolResult.relatedSearches.length))} items</span>
+                    </div>
+                    <div class="tool-result-related-list">
+                        ${toolResult.relatedSearches.map((item) => `<span class="tool-result-chip">${escapeHtml(item)}</span>`).join("")}
+                    </div>
+                </section>
+            `
+            : ""}
+    `;
+}
+
+function setToolResultPreview(element, toolResult, entry, fallback) {
+    const hasContent = Boolean(toolResult && (toolResult.answer || toolResult.sections.length || toolResult.relatedSearches.length));
+    element.innerHTML = hasContent
+        ? renderToolResultDetailMarkup(toolResult, entry)
+        : `<div class="tool-result-empty">${escapeHtml(fallback)}</div>`;
+    element.classList.toggle("is-empty", !hasContent);
+}
+
 function formatEventLogMarkdown(limit = 80) {
     const entries = state.run.logEntries.slice(-limit);
     if (!entries.length) {
@@ -3960,15 +4165,18 @@ function renderActiveDetail() {
     }
 
     const meta = detail.type === "report" || detail.type === "trace" || detail.type === "history-section" ? detail : DETAIL_PANEL_META[detail.key] || {};
-    const { content, fallback } = getDetailContent(detail);
-    const mode = detail.mode || meta.mode || "markdown";
+    const { content, fallback, toolResult, traceEntry } = getDetailContent(detail);
+    const mode = toolResult ? "tool-result" : detail.mode || meta.mode || "markdown";
     elements.detailTitle.textContent = meta.title || "Panel Detail";
     elements.detailSubtitle.textContent = meta.subtitle || "Analysis detail";
     elements.detailBody.classList.toggle("plain-log", mode === "text");
-    elements.detailBody.classList.toggle("markdown-preview", mode !== "text");
+    elements.detailBody.classList.toggle("markdown-preview", mode === "markdown");
+    elements.detailBody.classList.toggle("tool-result-preview", mode === "tool-result");
 
     if (mode === "text") {
         elements.detailBody.textContent = content || fallback;
+    } else if (mode === "tool-result") {
+        setToolResultPreview(elements.detailBody, toolResult, traceEntry, fallback);
     } else {
         setMarkdownPreview(elements.detailBody, content, fallback);
     }
