@@ -3783,12 +3783,12 @@ function renderLogEntries(element, entries, emptyText, options = {}) {
         if (!key) {
             return;
         }
-        child.classList.toggle("event-log-item-new", newKeys.has(key));
+        child.classList.toggle("event-log-item-new", wasNearBottom && newKeys.has(key));
     });
 
     if (wasNearBottom) {
         requestAnimationFrame(() => {
-            element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+            element.scrollTop = element.scrollHeight;
         });
     } else {
         element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight - distanceFromBottom);

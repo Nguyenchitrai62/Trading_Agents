@@ -114,12 +114,15 @@ class TradingAgentsGraph:
             max_debate_rounds=self.config["max_debate_rounds"],
             max_risk_discuss_rounds=self.config["max_risk_discuss_rounds"],
         )
+        mcp_round_budget = int(self.config.get("minimax_mcp_max_tool_rounds") or 0)
+        analyst_max_tool_iterations = max(24, mcp_round_budget * 6)
         self.graph_setup = GraphSetup(
             self.quick_thinking_llm,
             self.deep_thinking_llm,
             self.tool_nodes,
             self.conditional_logic,
             analyst_concurrency_limit=self.config.get("analyst_concurrency_limit", 1),
+            analyst_max_tool_iterations=analyst_max_tool_iterations,
             analyst_trace_callback=self.config.get("analysis_trace_callback"),
             cancel_check=self.config.get("analysis_cancel_check"),
         )

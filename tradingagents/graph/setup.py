@@ -22,6 +22,7 @@ class GraphSetup:
         tool_nodes: Dict[str, ToolNode],
         conditional_logic: ConditionalLogic,
         analyst_concurrency_limit: int = 1,
+        analyst_max_tool_iterations: int = 16,
         analyst_trace_callback=None,
         cancel_check=None,
     ):
@@ -31,6 +32,7 @@ class GraphSetup:
         self.tool_nodes = tool_nodes
         self.conditional_logic = conditional_logic
         self.analyst_concurrency_limit = analyst_concurrency_limit
+        self.analyst_max_tool_iterations = max(1, int(analyst_max_tool_iterations))
         self.analyst_trace_callback = analyst_trace_callback
         self.cancel_check = cancel_check
 
@@ -84,6 +86,7 @@ class GraphSetup:
                     plan,
                     analyst_factories,
                     self.tool_nodes,
+                    max_tool_iterations=self.analyst_max_tool_iterations,
                     trace_callback=self.analyst_trace_callback,
                     cancel_check=self.cancel_check,
                 ),

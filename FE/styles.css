@@ -4241,7 +4241,7 @@ body {
 }
 
 .event-log {
-    scroll-behavior: smooth;
+    scroll-behavior: auto;
     overflow-anchor: none;
 }
 
