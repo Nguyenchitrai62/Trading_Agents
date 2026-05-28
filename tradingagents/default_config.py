@@ -78,15 +78,18 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "minimax_mcp_enabled": True,
     "minimax_mcp_command": "uvx",
     "minimax_mcp_args": "minimax-coding-plan-mcp -y",
-    "minimax_mcp_tool_names": "web_search,understand_image",
+    # Analysis graph is text-first; keep the MCP tool list focused on live
+    # market retrieval so crypto runs spend tool budget on web evidence rather
+    # than image capabilities.
+    "minimax_mcp_tool_names": "web_search",
     # Max number of MCP tool_use -> tool_result cycles before the model must
     # stop calling tools and produce its best final answer.
-    "minimax_mcp_max_tool_rounds": 4,
+    "minimax_mcp_max_tool_rounds": 6,
     # Set to 0 to disable truncation. When positive, each MCP tool result is
     # truncated to this many characters before being sent back to the model.
     "minimax_mcp_tool_result_char_limit": 0,
-    "minimax_mcp_call_timeout_seconds": 90.0,
-    "minimax_mcp_list_timeout_seconds": 45.0,
+    "minimax_mcp_call_timeout_seconds": 120.0,
+    "minimax_mcp_list_timeout_seconds": 60.0,
     # Checkpoint/resume: when True, LangGraph saves state after each node
     # so a crashed run can resume from the last successful step.
     "checkpoint_enabled": False,
@@ -101,11 +104,11 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # News / data fetching parameters tuned for crypto-first analysis.
     # Article counts are left to the provider/tool defaults unless an agent
     # explicitly requests a limit through the tool interface.
-    "global_news_lookback_days": 7,       # macro news lookback window
+    "global_news_lookback_days": 14,      # macro + crypto policy/news lookback window
     # Crypto market-data policy: fetch the full active lookback window at the
     # timeframe requested by the agent/tool call, paginating provider requests
     # when needed.
-    "crypto_market_lookback_days": 7,
+    "crypto_market_lookback_days": 14,
     # High-trust reference sites. When MiniMax MCP web_search is enabled,
     # the model is instructed to retrieve or cross-check every configured URL
     # before writing market-facing conclusions, then optionally search beyond
@@ -117,25 +120,30 @@ DEFAULT_CONFIG = _apply_env_overrides({
             "focus": "Crypto derivatives positioning, liquidation data, funding, and market-structure dashboards.",
         },
         {
-            "name": "VNWallStreet",
-            "url": "https://vnwallstreet.com/",
-            "focus": "Real-time event flow and market-moving calendar context.",
+            "name": "CryptoQuant",
+            "url": "https://cryptoquant.com/",
+            "focus": "Exchange flows, reserves, whale behavior, miner activity, and on-chain pressure signals.",
+        },
+        {
+            "name": "SoSoValue",
+            "url": "https://www.sosovalue.com/",
+            "focus": "Spot ETF flows, sector rotation, and institutional allocation context for crypto assets.",
         },
         {
             "name": "TradingEconomics",
             "url": "https://tradingeconomics.com/",
-            "focus": "Macro releases, rates, liquidity, and cross-asset risk context that can spill directly into crypto.",
+            "focus": "Rates, liquidity, DXY, macro releases, and cross-asset risk context that spills directly into crypto.",
         },
     ],
     # Search queries used by get_global_news for crypto-relevant macro and
     # cross-asset headlines. Keep macro flow because liquidity, rates, and
     # regulation still move crypto even when no stock analysis is performed.
     "global_news_queries": [
-        "Bitcoin Ethereum crypto ETF flows market structure",
-        "Federal Reserve interest rates inflation dollar liquidity risk assets",
-        "stablecoin regulation SEC Congress crypto banking policy",
-        "crypto exchange flows liquidations funding open interest miners",
-        "Nasdaq Treasury yields geopolitics recession cross-asset volatility",
+        "Bitcoin Ethereum Solana crypto ETF flows open interest funding liquidations market structure",
+        "Federal Reserve inflation Treasury yields DXY liquidity crypto risk assets macro",
+        "stablecoin regulation SEC CFTC MiCA crypto banking policy exchange enforcement",
+        "bitcoin miners hashrate difficulty exchange reserves whale flows on-chain accumulation distribution",
+        "Binance Coinbase Bybit derivatives basis options skew perp funding crypto market sentiment",
     ],
     # Data vendor configuration
     # Category-level configuration (default for all tools in category)

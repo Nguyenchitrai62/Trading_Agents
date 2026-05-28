@@ -1,4 +1,4 @@
-"""Portfolio Manager: synthesises the risk-analyst debate into the final decision.
+"""Portfolio Manager: synthesises the risk-analyst debate into the final signal.
 
 Uses LangChain's ``with_structured_output`` so the LLM produces a typed
 ``PortfolioDecision`` directly, in a single call.  The result is rendered
@@ -39,18 +39,26 @@ def create_portfolio_manager(llm):
             else ""
         )
 
-        prompt = f"""As the Portfolio Manager, synthesize the risk analysts' debate and deliver the final trading decision.
+        prompt = f"""As the Portfolio Manager, synthesize the risk analysts' debate and deliver the final trading signal.
 
 {instrument_context}
 
 ---
 
-**Rating Scale** (use exactly one):
-- **Buy**: Strong conviction to enter or add to position
-- **Overweight**: Favorable outlook, gradually increase exposure
-- **Hold**: Maintain current position, no action needed
-- **Underweight**: Reduce exposure, take partial profits
-- **Sell**: Exit position or avoid entry
+    **Execution Signal** (use exactly one):
+    - **Market Buy**: Buy immediately at the current market price because the setup is already attractive enough now
+    - **Limit Buy**: Do not buy now; place one or more concrete buy limits below or around the trigger level instead
+    - **Hold**: Do not place any order yet because the edge is too unclear or the trigger levels are not reliable enough
+    - **Limit Sell**: Do not sell now; place one or more concrete sell limits at better exit levels instead
+    - **Market Sell**: Sell immediately at the current market price because downside risk or weak structure justifies acting now
+
+    **Hard rules:**
+    - Never output generic final signals like Buy / Sell / Overweight / Underweight.
+    - If you choose **Limit Buy** or **Limit Sell**, you must provide at least one exact limit price and explain why waiting is better than executing at market now.
+    - If you choose **Market Buy** or **Market Sell**, you must explain why the current price is good enough for immediate execution.
+    - If you choose **Hold**, explain what confirmation, catalyst, or price zone would be needed before placing an order.
+    - When the setup is actionable, include stop-loss, take-profit, and position sizing.
+    - If structured output is unavailable and you must answer in free text, still use these exact markdown headers: **Signal**, **Execution Summary**, **Market Context**, **Investment Thesis**, **Primary Limit Price**, **Secondary Limit Price**, **Stop Loss**, **Take Profit**, **Position Sizing**, **Time Horizon**.
 
 **Context:**
 - Research Manager's investment plan: **{research_plan}**

@@ -10,7 +10,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_preferred_reference_sources_instruction,
 )
 from tradingagents.dataflows.config import get_config
-from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel
+from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel, has_minimax_mcp_tool
 
 
 def create_fundamentals_analyst(llm):
@@ -18,7 +18,11 @@ def create_fundamentals_analyst(llm):
         current_date = state["trade_date"]
         asset_type = state.get("asset_type", "crypto")
         instrument_context = build_instrument_context(state["company_of_interest"], asset_type)
-        require_companion_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
+        require_companion_web_search = (
+            asset_type == "crypto"
+            and isinstance(llm, MiniMaxMCPChatModel)
+            and has_minimax_mcp_tool(llm.settings, "web_search")
+        )
 
         tools = [
             get_fundamentals,
@@ -51,8 +55,8 @@ def create_fundamentals_analyst(llm):
                     " Use the provided tools to progress towards answering the question."
                     " If you are unable to fully answer, that's OK; another assistant with different tools"
                     " will help where you left off. Execute what you can to make progress."
-                    " If you or any other assistant has the FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** or deliverable,"
-                    " prefix your response with FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** so the team knows to stop."
+                    " Build on earlier agent outputs when they already contain usable evidence or a completed section,"
+                    " but do not restate obsolete buy/sell stop markers from older flows."
                     " Core analysis tools include: {tool_names}. Additional MiniMax MCP tools may be available through the model runtime.\n{system_message}"
                     "For your reference, the current date is {current_date}. {instrument_context}",
                 ),

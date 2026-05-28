@@ -1,5 +1,6 @@
 """yfinance-based news data fetching functions."""
 
+from collections.abc import Iterable
 from typing import Optional
 
 import yfinance as yf
@@ -8,6 +9,101 @@ from dateutil.relativedelta import relativedelta
 
 from .config import get_config
 from .stockstats_utils import yf_retry
+
+
+def _candidate_yfinance_news_tickers(ticker: str) -> list[str]:
+    normalized = str(ticker or "").strip().upper().replace("/", "-")
+    if not normalized:
+        return []
+
+    candidates: list[str] = [normalized]
+    if "-" not in normalized:
+        return candidates
+
+    base, quote = normalized.split("-", 1)
+    if not base or not quote:
+        return candidates
+
+    quote_aliases = {
+        "USDT": "USD",
+        "USDC": "USD",
+        "BUSD": "USD",
+    }
+    alias_quote = quote_aliases.get(quote)
+    if alias_quote:
+        candidates.append(f"{base}-{alias_quote}")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate not in seen:
+            deduped.append(candidate)
+            seen.add(candidate)
+    return deduped
+
+
+def _fetch_symbol_news(symbol: str) -> Iterable[dict]:
+    stock = yf.Ticker(symbol)
+    return yf_retry(lambda: stock.get_news())
+
+
+def _article_text(article: dict) -> str:
+    data = _extract_article_data(article)
+    return " ".join(
+        part for part in (
+            data.get("title") or "",
+            data.get("summary") or "",
+            data.get("link") or "",
+        )
+        if part
+    ).lower()
+
+
+def _is_relevant_global_news_article(article: dict) -> bool:
+    text = _article_text(article)
+    if not text:
+        return False
+
+    relevant_keywords = (
+        "bitcoin",
+        "btc",
+        "ethereum",
+        "eth",
+        "solana",
+        "sol",
+        "xrp",
+        "crypto",
+        "stablecoin",
+        "etf",
+        "regulation",
+        "sec",
+        "cftc",
+        "mica",
+        "federal reserve",
+        "fed",
+        "treasury yield",
+        "treasury yields",
+        "dxy",
+        "dollar index",
+        "liquidity",
+        "risk asset",
+        "risk assets",
+        "binance",
+        "coinbase",
+        "bybit",
+        "open interest",
+        "funding",
+        "liquidation",
+        "options skew",
+        "exchange reserve",
+        "exchange reserves",
+        "whale",
+        "on-chain",
+        "miner",
+        "hashrate",
+        "macro",
+    )
+    return any(keyword in text for keyword in relevant_keywords)
 
 
 def _extract_article_data(article: dict) -> dict:
@@ -68,8 +164,14 @@ def get_news_yfinance(
         Formatted string containing news articles
     """
     try:
-        stock = yf.Ticker(ticker)
-        news = yf_retry(lambda: stock.get_news())
+        resolved_symbol = None
+        news = []
+        for candidate in _candidate_yfinance_news_tickers(ticker):
+            candidate_news = _fetch_symbol_news(candidate)
+            if candidate_news:
+                resolved_symbol = candidate
+                news = candidate_news
+                break
 
         if not news:
             return f"No news found for {ticker}"
@@ -101,7 +203,8 @@ def get_news_yfinance(
         if filtered_count == 0:
             return f"No news found for {ticker} between {start_date} and {end_date}"
 
-        return f"## {ticker} News, from {start_date} to {end_date}:\n\n{news_str}"
+        source_note = f" (yfinance symbol: {resolved_symbol})" if resolved_symbol and resolved_symbol != ticker else ""
+        return f"## {ticker} News{source_note}, from {start_date} to {end_date}:\n\n{news_str}"
 
     except Exception as e:
         return f"Error fetching news for {ticker}: {str(e)}"
@@ -157,7 +260,7 @@ def get_global_news_yfinance(
                         title = article.get("title", "")
 
                     # Deduplicate by title
-                    if title and title not in seen_titles:
+                    if title and title not in seen_titles and _is_relevant_global_news_article(article):
                         seen_titles.add(title)
                         all_news.append(article)
 

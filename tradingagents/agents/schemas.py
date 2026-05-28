@@ -21,7 +21,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 
 
 class PortfolioRating(str, Enum):
-    """5-tier rating used by the Research Manager and Portfolio Manager."""
+    """5-tier recommendation scale still used by the Research Manager."""
 
     BUY = "Buy"
     OVERWEIGHT = "Overweight"
@@ -44,13 +44,23 @@ class TraderAction(str, Enum):
 
     The Trader's job is to translate the Research Manager's investment plan
     into a concrete transaction proposal: should the desk execute a Buy, a
-    Sell, or sit on Hold this round.  Position sizing and the nuanced
-    Overweight / Underweight calls happen later at the Portfolio Manager.
+    Sell, or sit on Hold this round. Position sizing and the final executable
+    order plan happen later at the Portfolio Manager.
     """
 
     BUY = "Buy"
     HOLD = "Hold"
     SELL = "Sell"
+
+
+class ExecutionSignal(str, Enum):
+    """Actionable execution signal produced by the Portfolio Manager."""
+
+    MARKET_BUY = "Market Buy"
+    LIMIT_BUY = "Limit Buy"
+    HOLD = "Hold"
+    LIMIT_SELL = "Limit Sell"
+    MARKET_SELL = "Market Sell"
 
 
 # ---------------------------------------------------------------------------
@@ -139,12 +149,7 @@ class TraderProposal(BaseModel):
 
 
 def render_trader_proposal(proposal: TraderProposal) -> str:
-    """Render a TraderProposal to markdown.
-
-    The trailing ``FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**`` line is
-    preserved for backward compatibility with the analyst stop-signal text
-    and any external code that greps for it.
-    """
+    """Render a TraderProposal to markdown."""
     parts = [
         f"**Action**: {proposal.action.value}",
         "",
@@ -156,10 +161,6 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
         parts.extend(["", f"**Stop Loss**: {proposal.stop_loss}"])
     if proposal.position_sizing:
         parts.extend(["", f"**Position Sizing**: {proposal.position_sizing}"])
-    parts.extend([
-        "",
-        f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
-    ])
     return "\n".join(parts)
 
 
@@ -177,16 +178,27 @@ class PortfolioDecision(BaseModel):
     the rating-scale guidance.
     """
 
-    rating: PortfolioRating = Field(
+    signal: ExecutionSignal = Field(
         description=(
-            "The final position rating. Exactly one of Buy / Overweight / Hold / "
-            "Underweight / Sell, picked based on the analysts' debate."
+            "The final execution signal. Exactly one of Market Buy / Limit Buy / "
+            "Hold / Limit Sell / Market Sell. Choose Market Buy or Market Sell "
+            "only when the current market price is already attractive enough for "
+            "immediate execution. Choose Limit Buy or Limit Sell only when waiting "
+            "for specific price levels is clearly better than acting now. Use Hold "
+            "only when the edge is too unclear to place any order yet."
         ),
     )
-    executive_summary: str = Field(
+    execution_summary: str = Field(
         description=(
-            "A concise action plan covering entry strategy, position sizing, "
-            "key risk levels, and time horizon. Two to four sentences."
+            "A concise execution plan covering whether to act now or wait, which "
+            "order type to place, and the key risk controls. Two to four sentences."
+        ),
+    )
+    market_context: str = Field(
+        description=(
+            "Explain why the current price is good enough for a market order, why "
+            "specific limit levels are better, or why no order should be placed "
+            "yet. This must directly justify the chosen signal."
         ),
     )
     investment_thesis: str = Field(
@@ -196,33 +208,73 @@ class PortfolioDecision(BaseModel):
             "incorporate them; otherwise rely solely on the current analysis."
         ),
     )
-    price_target: Optional[float] = Field(
+    primary_limit_price: Optional[float] = Field(
         default=None,
-        description="Optional target price in the instrument's quote currency.",
+        description=(
+            "Primary limit order price in the instrument's quote currency. "
+            "Required when the signal is Limit Buy or Limit Sell. Leave empty "
+            "for Market Buy, Market Sell, or Hold."
+        ),
+    )
+    secondary_limit_price: Optional[float] = Field(
+        default=None,
+        description=(
+            "Optional second ladder price for scaling into or out of the position. "
+            "Use when the plan should stage two limit orders, such as buying at "
+            "70,000 and 69,000."
+        ),
+    )
+    stop_loss: Optional[float] = Field(
+        default=None,
+        description="Optional invalidation or stop-loss level in the instrument's quote currency.",
+    )
+    take_profit: Optional[float] = Field(
+        default=None,
+        description="Optional first take-profit or target price in the instrument's quote currency.",
+    )
+    position_sizing: Optional[str] = Field(
+        default=None,
+        description="Optional sizing guidance, e.g. '25% starter tranche' or 'no new position'.",
     )
     time_horizon: Optional[str] = Field(
         default=None,
         description="Optional recommended holding period, e.g. '3-6 months'.",
     )
 
+    @model_validator(mode="after")
+    def validate_limit_signal_prices(self) -> "PortfolioDecision":
+        if self.signal in {ExecutionSignal.LIMIT_BUY, ExecutionSignal.LIMIT_SELL} and self.primary_limit_price is None:
+            raise ValueError("Limit Buy and Limit Sell decisions must include primary_limit_price.")
+        return self
+
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
     """Render a PortfolioDecision back to the markdown shape the rest of the system expects.
 
     Memory log, CLI display, and saved report files all read this markdown,
-    so the rendered output preserves the exact section headers (``**Rating**``,
-    ``**Executive Summary**``, ``**Investment Thesis**``) that downstream
-    parsers and the report writers already handle.
+    so the rendered output preserves stable section headers (``**Signal**``,
+    ``**Execution Summary**``, ``**Market Context**``, ``**Investment Thesis**``)
+    that downstream parsers and report writers can rely on.
     """
     parts = [
-        f"**Rating**: {decision.rating.value}",
+        f"**Signal**: {decision.signal.value}",
         "",
-        f"**Executive Summary**: {decision.executive_summary}",
+        f"**Execution Summary**: {decision.execution_summary}",
+        "",
+        f"**Market Context**: {decision.market_context}",
         "",
         f"**Investment Thesis**: {decision.investment_thesis}",
     ]
-    if decision.price_target is not None:
-        parts.extend(["", f"**Price Target**: {decision.price_target}"])
+    if decision.primary_limit_price is not None:
+        parts.extend(["", f"**Primary Limit Price**: {decision.primary_limit_price}"])
+    if decision.secondary_limit_price is not None:
+        parts.extend(["", f"**Secondary Limit Price**: {decision.secondary_limit_price}"])
+    if decision.stop_loss is not None:
+        parts.extend(["", f"**Stop Loss**: {decision.stop_loss}"])
+    if decision.take_profit is not None:
+        parts.extend(["", f"**Take Profit**: {decision.take_profit}"])
+    if decision.position_sizing:
+        parts.extend(["", f"**Position Sizing**: {decision.position_sizing}"])
     if decision.time_horizon:
         parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
     return "\n".join(parts)

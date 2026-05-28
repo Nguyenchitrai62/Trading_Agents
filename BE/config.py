@@ -44,20 +44,20 @@ RESEARCH_DEPTH_OPTIONS = {
     "quick": {
         "label": "Quick",
         "rounds": 1,
-        "mcp_tool_rounds": 2,
-        "description": "Fast scan with minimal debate.",
+        "mcp_tool_rounds": 3,
+        "description": "Fast scan with minimal debate and one extra live web cross-check round.",
     },
     "medium": {
         "label": "Medium",
         "rounds": 3,
-        "mcp_tool_rounds": 4,
-        "description": "Balanced research depth for regular analysis.",
+        "mcp_tool_rounds": 5,
+        "description": "Balanced research depth with broader live web validation for regular analysis.",
     },
     "deep": {
         "label": "Deep",
         "rounds": 5,
-        "mcp_tool_rounds": 6,
-        "description": "More debate rounds before the final decision.",
+        "mcp_tool_rounds": 7,
+        "description": "More debate rounds and deeper live web validation before the final decision.",
     },
 }
 SECTION_META = {

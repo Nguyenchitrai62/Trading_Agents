@@ -674,7 +674,7 @@ def get_minimax_mcp_tool_specs(settings: MiniMaxMCPSettings) -> list[dict[str, A
         specs = _run_async_sync(_list_mcp_tool_specs(settings))
     except Exception as exc:  # pragma: no cover - external MCP failure path
         logger.warning("MiniMax MCP tools are unavailable: %s", exc)
-        specs = []
+        return []
 
     with _CACHE_LOCK:
         _TOOL_SPEC_CACHE[key] = list(specs)
@@ -692,7 +692,7 @@ async def get_minimax_mcp_tool_specs_async(settings: MiniMaxMCPSettings) -> list
         specs = await _list_mcp_tool_specs(settings)
     except Exception as exc:  # pragma: no cover - external MCP failure path
         logger.warning("MiniMax MCP tools are unavailable: %s", exc)
-        specs = []
+        return []
     with _CACHE_LOCK:
         _TOOL_SPEC_CACHE[key] = list(specs)
     return list(specs)
@@ -730,6 +730,16 @@ def get_minimax_mcp_langchain_tools(settings: MiniMaxMCPSettings) -> list[MiniMa
         )
         for spec in _expand_tool_specs_with_aliases(get_minimax_mcp_tool_specs(settings))
     ]
+
+
+def has_minimax_mcp_tool(settings: MiniMaxMCPSettings, tool_name: str) -> bool:
+    canonical_name = _resolve_canonical_tool_name(tool_name)
+    available = {
+        str(spec.get("name") or "").strip()
+        for spec in _expand_tool_specs_with_aliases(get_minimax_mcp_tool_specs(settings))
+        if str(spec.get("name") or "").strip()
+    }
+    return canonical_name in available or tool_name in available
 
 
 async def call_mcp_tool_async(

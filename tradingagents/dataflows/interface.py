@@ -164,6 +164,14 @@ def _is_vendor_failure_result(result) -> bool:
     return (
         normalized.startswith("error ")
         or normalized.startswith("error:")
+        or (
+            normalized.startswith("no ")
+            and (
+                " found" in normalized
+                or " available" in normalized
+                or " returned" in normalized
+            )
+        )
         or "rate limit" in normalized
         or "http 429" in normalized
         or "<unavailable" in normalized

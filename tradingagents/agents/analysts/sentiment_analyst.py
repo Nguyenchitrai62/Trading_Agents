@@ -34,7 +34,7 @@ from tradingagents.agents.utils.agent_utils import (
 )
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
-from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel
+from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel, has_minimax_mcp_tool
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,7 @@ def _source_should_be_skipped(content: str) -> bool:
     return (
         normalized.startswith("error ")
         or normalized.startswith("error:")
+        or "skipped: unavailable" in normalized
         or "rate limit" in normalized
         or "http 429" in normalized
         or "<unavailable" in normalized
@@ -88,6 +89,7 @@ def create_sentiment_analyst(llm):
         asset_type = state.get("asset_type", "crypto")
         instrument_context = build_instrument_context(ticker, asset_type)
         prefer_mcp_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
+        has_live_web_search = prefer_mcp_web_search and has_minimax_mcp_tool(llm.settings, "web_search")
 
         news_block = _prefetch_source_or_skip(
             "news",
@@ -102,7 +104,19 @@ def create_sentiment_analyst(llm):
             lambda: fetch_reddit_posts(ticker),
         )
 
-        if prefer_mcp_web_search:
+        if prefer_mcp_web_search and not has_live_web_search:
+            logger.warning(
+                "sentiment analyst: MiniMax MCP runtime is active for %s but web_search is unavailable; falling back to prefetched sources and get_news",
+                ticker,
+            )
+
+        if all(_source_should_be_skipped(block) for block in (news_block, stocktwits_block, reddit_block)) and not has_live_web_search:
+            logger.warning(
+                "sentiment analyst: all prefetched sources are unavailable for %s and web_search is unavailable; sentiment report may lack evidence",
+                ticker,
+            )
+
+        if has_live_web_search:
             system_message = _build_crypto_web_search_system_message(
                 ticker=ticker,
                 start_date=start_date,
@@ -126,8 +140,8 @@ def create_sentiment_analyst(llm):
                 (
                     "system",
                     "You are a helpful AI assistant, collaborating with other assistants."
-                    " If you or any other assistant has the FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** or deliverable,"
-                    " prefix your response with FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** so the team knows to stop."
+                    " Build on earlier agent outputs when they already contain usable evidence or a completed section,"
+                    " but do not restate obsolete buy/sell stop markers from older flows."
                     "\n{system_message}\n"
                     "For your reference, the current date is {current_date}. {instrument_context}",
                 ),
@@ -139,9 +153,10 @@ def create_sentiment_analyst(llm):
         prompt = prompt.partial(current_date=end_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        # When MiniMax MCP is available for crypto, bind an empty local tool set
-        # so the graph still exposes MCP web_search tool calls/results explicitly.
-        chain = prompt | (llm.bind_tools([]) if prefer_mcp_web_search else llm)
+        if isinstance(llm, MiniMaxMCPChatModel):
+            chain = prompt | llm.bind_tools([get_news])
+        else:
+            chain = prompt | llm
         result = chain.invoke(state["messages"])
 
         return {
