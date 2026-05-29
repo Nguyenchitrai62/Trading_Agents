@@ -69,7 +69,7 @@ const CUSTOM_LOOKBACK_VALUE = "__custom__";
 const TRACE_DISPLAY_LIMIT = Number(APP_SETTINGS.traceDisplayLimit || APP_SETTINGS.trace_display_limit || 14);
 const LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.logDisplayLimit || APP_SETTINGS.log_display_limit || 12);
 const EXECUTION_LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.executionLogDisplayLimit || APP_SETTINGS.execution_log_display_limit || 80);
-const LOG_AUTO_SCROLL_THRESHOLD = 16;
+const LOG_AUTO_SCROLL_THRESHOLD = 64;
 const MIN_ANALYSIS_STOP_DELAY_MS = Math.max(0, Number(APP_SETTINGS.minStopDelayMs || APP_SETTINGS.min_stop_delay_ms || 5000));
 const HISTORY_PAGE_SIZE = 20;
 const AUTH_STORAGE_KEY = AUTH_SETTINGS.storageKey || AUTH_SETTINGS.storage_key || "tradingagents.googleAuth";
@@ -2886,6 +2886,48 @@ function shouldAutoScrollLog(element) {
     return isScrolledNearBottom(element, LOG_AUTO_SCROLL_THRESHOLD);
 }
 
+function getLogScrollSnapshot(element, desiredKeys = null) {
+    if (!(element instanceof HTMLElement)) {
+        return null;
+    }
+    const items = Array.from(element.querySelectorAll(".event-log-item[data-log-key]"));
+    if (!items.length) {
+        return null;
+    }
+
+    const scrollTop = element.scrollTop;
+    const viewportBottom = scrollTop + element.clientHeight;
+    let anchorKey = "";
+    let anchorOffset = 0;
+    let removedAboveViewportHeight = 0;
+
+    for (const item of items) {
+        const top = item.offsetTop;
+        const bottom = top + item.offsetHeight;
+        const key = String(item.dataset.logKey || "");
+        if (!anchorKey && bottom > scrollTop) {
+            anchorKey = key;
+            anchorOffset = Math.max(0, scrollTop - top);
+        }
+        if (bottom <= scrollTop) {
+            if (!(desiredKeys instanceof Set) || !desiredKeys.has(key)) {
+            removedAboveViewportHeight += item.offsetHeight;
+            }
+            continue;
+        }
+        if (top >= viewportBottom) {
+            break;
+        }
+    }
+
+    return {
+        anchorKey,
+        anchorOffset,
+        removedAboveViewportHeight,
+        scrollTop,
+    };
+}
+
 function getFocusIdentity(focus) {
     if (focus.detail?.type === "report") {
         return `report:${focus.detail.section}`;
@@ -3811,9 +3853,10 @@ function renderLogEntries(element, entries, emptyText, options = {}) {
 
     const useDetail = Boolean(options.useDetail);
     const shouldStickToBottom = shouldAutoScrollLog(element);
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
     const existingNodes = new Map(
-        Array.from(element.querySelectorAll(".event-log-item[data-log-key]")).map((child) => [child.dataset.logKey, child]),
+        Array.from(element.querySelectorAll(".event-log-item[data-log-key]"))
+            .filter((child) => child instanceof HTMLElement)
+            .map((child) => [String(child.dataset.logKey || ""), child]),
     );
 
     if (!entries.length) {
@@ -3824,30 +3867,42 @@ function renderLogEntries(element, entries, emptyText, options = {}) {
         return;
     }
 
-    const fragment = document.createDocumentFragment();
     const newKeys = new Set();
+    const desiredNodes = [];
+    const desiredKeys = new Set();
     entries.forEach((item, index) => {
         const key = getLogEntryKey(item, index);
+        desiredKeys.add(key);
         let node = existingNodes.get(key);
         if (!(node instanceof HTMLElement)) {
             node = createLogEntryNode();
             newKeys.add(key);
         }
         updateLogEntryNode(node, item, key, useDetail);
-        fragment.appendChild(node);
+        desiredNodes.push(node);
     });
 
-    element.replaceChildren(fragment);
+    const viewportSnapshot = shouldStickToBottom ? null : getLogScrollSnapshot(element, desiredKeys);
 
     Array.from(element.children).forEach((child) => {
         if (!(child instanceof HTMLElement)) {
             return;
         }
-        const key = child.dataset.logKey;
-        if (!key) {
-            return;
+        const key = String(child.dataset.logKey || "");
+        if (child.classList.contains("event-log-item") && !desiredKeys.has(key)) {
+            child.remove();
         }
-        child.classList.toggle("event-log-item-new", shouldStickToBottom && newKeys.has(key));
+    });
+
+    const firstMissingIndex = desiredNodes.findIndex((node) => node.parentElement !== element);
+    if (firstMissingIndex >= 0) {
+        for (let index = firstMissingIndex; index < desiredNodes.length; index += 1) {
+            element.appendChild(desiredNodes[index]);
+        }
+    }
+
+    desiredNodes.forEach((node) => {
+        node.classList.toggle("event-log-item-new", shouldStickToBottom && newKeys.has(node.dataset.logKey || ""));
     });
 
     if (shouldStickToBottom) {
@@ -3857,8 +3912,16 @@ function renderLogEntries(element, entries, emptyText, options = {}) {
             }
             element.scrollTop = element.scrollHeight;
         });
-    } else {
-        element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight - distanceFromBottom);
+        return;
+    }
+
+    if (viewportSnapshot) {
+        const anchorNode = desiredNodes.find((node) => String(node.dataset.logKey || "") === viewportSnapshot.anchorKey) || null;
+        if (anchorNode instanceof HTMLElement) {
+            element.scrollTop = Math.max(0, anchorNode.offsetTop + viewportSnapshot.anchorOffset);
+            return;
+        }
+        element.scrollTop = Math.max(0, viewportSnapshot.scrollTop - viewportSnapshot.removedAboveViewportHeight);
     }
 }
 
