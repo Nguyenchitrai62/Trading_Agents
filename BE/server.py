@@ -157,11 +157,16 @@ def create_app() -> FastAPI:
         if not history_store.configured:
             raise HTTPException(status_code=503, detail="Turso history database is not configured.")
         safe_page = max(1, int(page or 1))
-        safe_limit = max(1, min(int(limit or SETTINGS.history_page_size), SETTINGS.history_page_size))
+        max_limit = max(SETTINGS.history_page_size, 20)
+        safe_limit = max(1, min(int(limit or SETTINGS.history_page_size), max_limit))
         offset = (safe_page - 1) * safe_limit
         user = await auth_service.require_authorized_user(http_request)
-        rows = await asyncio.to_thread(history_store.list_accessible_runs, user.get("history_access_days"), safe_limit + 1, offset)
+        rows, total_count = await asyncio.gather(
+            asyncio.to_thread(history_store.list_accessible_runs, user.get("history_access_days"), safe_limit + 1, offset),
+            asyncio.to_thread(history_store.count_accessible_runs, user.get("history_access_days")),
+        )
         items = rows[:safe_limit]
+        total_pages = max(1, (int(total_count) + safe_limit - 1) // safe_limit) if total_count else 1
         return {
             "items": items,
             "configured": True,
@@ -169,6 +174,8 @@ def create_app() -> FastAPI:
             "page": safe_page,
             "limit": safe_limit,
             "has_more": len(rows) > safe_limit,
+            "total_count": int(total_count),
+            "total_pages": total_pages,
             "history_access_days": user.get("history_access_days"),
             "history_access_unlimited": user.get("history_access_unlimited", False),
         }

@@ -488,14 +488,7 @@ class TursoHistoryStore:
             SELECT
                 id, symbol, asset_type, analysis_date, lookback_days,
                 output_language, research_depth, model, signal,
-                elapsed_seconds, created_at, section_count,
-                (
-                    SELECT s.markdown
-                    FROM analysis_sections s
-                    WHERE s.run_id = analysis_runs.id AND s.section_key = 'final_trade_decision'
-                    ORDER BY s.display_order DESC
-                    LIMIT 1
-                ) AS final_markdown
+                elapsed_seconds, created_at, section_count
             FROM analysis_runs
             ORDER BY created_at DESC
             LIMIT ?
@@ -516,14 +509,7 @@ class TursoHistoryStore:
             SELECT
                 r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
                 r.output_language, r.research_depth, r.model, r.signal,
-                r.elapsed_seconds, r.created_at, r.section_count, r.user_email,
-                (
-                    SELECT s.markdown
-                    FROM analysis_sections s
-                    WHERE s.run_id = r.id AND s.section_key = 'final_trade_decision'
-                    ORDER BY s.display_order DESC
-                    LIMIT 1
-                ) AS final_markdown
+                r.elapsed_seconds, r.created_at, r.section_count, r.user_email
             FROM analysis_runs r
             {where_clause}
             ORDER BY r.created_at DESC
@@ -532,6 +518,23 @@ class TursoHistoryStore:
             """,
             args,
         )
+
+    def count_accessible_runs(self, history_access_days: int | None) -> int:
+        self.ensure_schema()
+        cutoff = self._history_cutoff(history_access_days)
+        where_clause = "WHERE created_at >= ?" if cutoff else ""
+        args: list[object] = [cutoff] if cutoff else []
+        rows = self._query_rows(
+            f"""
+            SELECT COUNT(*) AS total_count
+            FROM analysis_runs
+            {where_clause}
+            """,
+            args,
+        )
+        if not rows:
+            return 0
+        return int(rows[0].get("total_count") or 0)
 
     def get_accessible_run_meta(self, run_id: str, history_access_days: int | None) -> dict | None:
         self.ensure_schema()

@@ -71,6 +71,8 @@ const LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.logDisplayLimit || APP_SETTINGS.lo
 const EXECUTION_LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.executionLogDisplayLimit || APP_SETTINGS.execution_log_display_limit || 80);
 const MIN_ANALYSIS_STOP_DELAY_MS = Math.max(0, Number(APP_SETTINGS.minStopDelayMs || APP_SETTINGS.min_stop_delay_ms || 5000));
 const HISTORY_PAGE_SIZE = Number(HISTORY_SETTINGS.pageSize || HISTORY_SETTINGS.page_size || 10);
+const HISTORY_PAGE_SIZE_OPTIONS = [...new Set([10, 20, HISTORY_PAGE_SIZE].map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0))]
+    .sort((left, right) => left - right);
 const AUTH_STORAGE_KEY = AUTH_SETTINGS.storageKey || AUTH_SETTINGS.storage_key || "tradingagents.googleAuth";
 const CHART_SYMBOLS_STORAGE_KEY = TRADING_VIEW_SETTINGS.symbolsStorageKey || TRADING_VIEW_SETTINGS.symbols_storage_key || "tradingagents.chartSymbols";
 const PAGES = Array.isArray(APP_SETTINGS.pages) && APP_SETTINGS.pages.length
@@ -385,6 +387,8 @@ function createEmptyHistoryState() {
         page: 1,
         limit: HISTORY_PAGE_SIZE,
         hasMore: false,
+        totalCount: 0,
+        totalPages: 1,
         activeId: "",
         active: null,
         detailLoading: false,
@@ -4190,21 +4194,15 @@ function formatHistoryTimestamp(value = "") {
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-function buildHistorySummaryDetail(item) {
-    return {
-        item,
-        summaryOnly: true,
-        sections: [
-            {
-                section_key: "final_trade_decision",
-                title: "Final Decision",
-                agent: "Portfolio Manager",
-                team: "Portfolio Management",
-                markdown: item.final_markdown || "",
-                created_at: item.created_at,
-            },
-        ],
-    };
+function formatHistoryElapsedSeconds(value) {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds)) {
+        return "-";
+    }
+    return seconds.toLocaleString(undefined, {
+        minimumFractionDigits: Number.isInteger(seconds) ? 0 : 2,
+        maximumFractionDigits: 2,
+    });
 }
 
 function getHistorySectionLabel(section = {}) {
@@ -4403,16 +4401,30 @@ function openHistorySectionDetail(sectionKey = "") {
     });
 }
 
-function selectHistorySummary(historyId) {
-    const item = state.history.items.find((entry) => entry.id === historyId);
-    if (!item) {
+function triggerHistoryListReload(message = "Could not load history.") {
+    loadHistoryList(true).catch((error) => {
+        state.history.error = error instanceof Error ? error.message : String(error || message);
+        renderHistoryPage();
+    });
+}
+
+function setHistoryPage(nextPage) {
+    const safePage = Math.max(1, Number(nextPage || 1));
+    if (safePage === state.history.page && state.history.loaded && !state.history.error) {
         return;
     }
-    state.history.activeId = historyId;
-    state.history.active = buildHistorySummaryDetail(item);
-    state.history.detailLoading = false;
-    state.history.error = "";
-    renderHistoryPage();
+    state.history.page = safePage;
+    triggerHistoryListReload("Could not change history page.");
+}
+
+function setHistoryLimit(nextLimit) {
+    const safeLimit = Math.max(1, Number(nextLimit || HISTORY_PAGE_SIZE));
+    if (safeLimit === state.history.limit && state.history.page === 1 && state.history.loaded && !state.history.error) {
+        return;
+    }
+    state.history.limit = safeLimit;
+    state.history.page = 1;
+    triggerHistoryListReload("Could not change history page size.");
 }
 
 function renderHistoryPage() {
@@ -4439,70 +4451,98 @@ function renderHistoryPage() {
         elements.historyStatusText.textContent = history.loaded ? "No saved analyses" : "Waiting";
         elements.historyList.innerHTML = '<div class="history-empty">No saved analyses yet.</div>';
     } else {
-        elements.historyStatusText.textContent = `${history.items.length} latest analyses`;
-        elements.historyList.innerHTML = history.items
+        const totalCount = Math.max(0, Number(history.totalCount || history.items.length || 0));
+        const totalPages = Math.max(1, Number(history.totalPages || 1));
+        const currentPage = Math.min(Math.max(1, Number(history.page || 1)), totalPages);
+        const currentLimit = Math.max(1, Number(history.limit || HISTORY_PAGE_SIZE));
+        const startIndex = totalCount ? (currentPage - 1) * currentLimit + 1 : 0;
+        const endIndex = totalCount ? Math.min(startIndex + history.items.length - 1, totalCount) : 0;
+        const pageSizeOptions = [...new Set([...HISTORY_PAGE_SIZE_OPTIONS, currentLimit])].sort((left, right) => left - right);
+        const pageOptions = Array.from({ length: totalPages }, (_, index) => index + 1)
             .map(
-                (item) => `
-                    <article class="history-item ${item.id === history.activeId ? "is-active" : ""}">
-                        <div class="history-summary-button" role="button" tabindex="0" data-history-summary-id="${escapeHtml(item.id)}">
-                            <span class="history-item-topline">
-                                <strong>${escapeHtml(item.symbol || "-")}</strong>
-                                <span>${escapeHtml(item.signal || "Completed")}</span>
-                            </span>
-                            <span class="history-item-meta">${escapeHtml(item.analysis_date || "-")} - ${escapeHtml(String(item.lookback_days || "-"))}d - ${escapeHtml(item.research_depth || "-")}</span>
-                            <span class="history-item-meta">${escapeHtml(formatHistoryTimestamp(item.created_at))} - ${escapeHtml(String(item.section_count || 0))} sections</span>
-                            <div class="history-item-summary markdown-preview">${renderMarkdown(item.final_markdown || "", "Final markdown is not available for this run.")}</div>
-                        </div>
-                        <button class="history-detail-button" type="button" data-history-detail-id="${escapeHtml(item.id)}">Detail</button>
-                    </article>
-                `,
+                (pageNumber) => `<option value="${pageNumber}" ${pageNumber === currentPage ? "selected" : ""}>Page ${pageNumber}</option>`,
             )
             .join("");
+        elements.historyList.innerHTML = `
+            <div class="history-table-shell">
+                <div class="history-table-toolbar">
+                    <div class="history-table-stats">
+                        <strong>${escapeHtml(String(totalCount))}</strong>
+                        <span>${totalCount ? `Showing ${escapeHtml(String(startIndex))}-${escapeHtml(String(endIndex))}` : "No records"}</span>
+                    </div>
+                    <div class="history-table-controls">
+                        <label class="history-table-control">
+                            <span>Rows</span>
+                            <select data-history-limit-select>
+                                ${pageSizeOptions
+                                    .map(
+                                        (pageSize) => `<option value="${pageSize}" ${pageSize === currentLimit ? "selected" : ""}>${pageSize}</option>`,
+                                    )
+                                    .join("")}
+                            </select>
+                        </label>
+                        <label class="history-table-control">
+                            <span>Page</span>
+                            <select data-history-page-select ${totalCount ? "" : "disabled"}>
+                                ${pageOptions}
+                            </select>
+                        </label>
+                        <div class="history-table-nav">
+                            <button class="history-page-button" type="button" data-history-page-nav="prev" ${currentPage <= 1 ? "disabled" : ""}>Prev</button>
+                            <button class="history-page-button" type="button" data-history-page-nav="next" ${currentPage >= totalPages ? "disabled" : ""}>Next</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="history-table-wrap">
+                    <table class="history-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Symbol</th>
+                                <th scope="col">Signals</th>
+                                <th scope="col">Created at</th>
+                                <th scope="col">Elapsed seconds</th>
+                                <th scope="col">Research depth</th>
+                                <th scope="col">Lookback day</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${history.items
+                                .map(
+                                    (item) => `
+                                        <tr class="history-table-row ${item.id === history.activeId ? "is-active" : ""}" role="button" tabindex="0" data-history-row-id="${escapeHtml(item.id)}" aria-label="Open saved analysis for ${escapeHtml(item.symbol || "analysis")}">
+                                            <td>${escapeHtml(item.symbol || "-")}</td>
+                                            <td>${escapeHtml(item.signal || "Completed")}</td>
+                                            <td>${escapeHtml(formatHistoryTimestamp(item.created_at))}</td>
+                                            <td>${escapeHtml(formatHistoryElapsedSeconds(item.elapsed_seconds))}</td>
+                                            <td>${escapeHtml(item.research_depth || "-")}</td>
+                                            <td>${escapeHtml(String(item.lookback_days || "-"))}</td>
+                                        </tr>
+                                    `,
+                                )
+                                .join("")}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
     }
 
     if (history.detailLoading) {
         elements.historyDetailTitle.textContent = "Analysis Detail";
+        elements.historyStatusText.textContent = "Loading detail";
         elements.historyDetail.innerHTML = '<div class="history-empty">Loading markdown sections...</div>';
         return;
     }
     if (!history.active) {
         elements.historyDetailTitle.textContent = "Analysis Detail";
+        elements.historyStatusText.textContent = history.loaded ? "No history selected" : "Waiting";
         elements.historyDetail.innerHTML = '<div class="history-empty">Select a saved analysis.</div>';
         return;
     }
 
     const item = history.active.item || {};
     const sections = history.active.sections || [];
-    elements.historyDetailTitle.textContent = `${history.active.summaryOnly ? "Final Summary" : "Analysis Detail"} - ${item.symbol || "Analysis"} - ${item.analysis_date || ""}`.trim();
-
-    if (history.active.summaryOnly) {
-        elements.historyStatusText.textContent = "Final markdown";
-        elements.historyDetail.innerHTML = `
-            <div class="history-detail-meta">
-                <span>${escapeHtml(item.signal || "Completed")}</span>
-                <span>${escapeHtml(item.research_depth || "-")}</span>
-                <span>${escapeHtml(String(item.lookback_days || "-"))}d</span>
-                <span>${escapeHtml(formatHistoryTimestamp(item.created_at))}</span>
-            </div>
-            ${sections
-                .map(
-                    (section) => `
-                        <article class="history-section">
-                            <div class="history-section-header">
-                                <div>
-                                    <p class="window-kicker">${escapeHtml(section.team || "Analysis")}</p>
-                                    <h3>${escapeHtml(section.title || section.section_key || "Section")}</h3>
-                                </div>
-                                <span class="window-status">${escapeHtml(section.agent || "Agent")}</span>
-                            </div>
-                            <div class="markdown-preview">${renderMarkdown(section.markdown || "", "No markdown saved for this section.")}</div>
-                        </article>
-                    `,
-                )
-                .join("")}
-        `;
-        return;
-    }
+    elements.historyDetailTitle.textContent = `Analysis Detail - ${item.symbol || "Analysis"} - ${item.analysis_date || ""}`.trim();
 
     const sectionMarkdown = history.active.sectionMarkdown || {};
     const activeSectionKey = history.active.activeSectionKey || "";
@@ -4609,6 +4649,8 @@ async function loadHistoryList(force = false) {
         state.history.page = Number(payload.page || 1);
         state.history.limit = Number(payload.limit || HISTORY_PAGE_SIZE);
         state.history.hasMore = Boolean(payload.has_more);
+        state.history.totalCount = Math.max(0, Number(payload.total_count || 0));
+        state.history.totalPages = Math.max(1, Number(payload.total_pages || 1));
         state.history.loaded = true;
     } catch (error) {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history.");
@@ -4645,7 +4687,6 @@ async function loadHistoryDetail(historyId) {
         const payload = await response.json();
         state.history.active = {
             ...payload,
-            summaryOnly: false,
             sectionMarkdown: {},
             activeSectionKey: "",
             sectionLoadingKey: "",
@@ -5862,27 +5903,42 @@ elements.refreshHistoryButton.addEventListener("click", () => {
         return;
     }
     state.history = { ...createEmptyHistoryState(), activeId: state.history.activeId };
-    loadHistoryList(true).catch((error) => {
-        state.history.error = error instanceof Error ? error.message : String(error || "Could not refresh history.");
-        renderHistoryPage();
-    });
+    triggerHistoryListReload("Could not refresh history.");
 });
 elements.historyList.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
         return;
     }
-    const detailButton = target.closest("[data-history-detail-id]");
-    if (detailButton instanceof HTMLElement) {
-        loadHistoryDetail(detailButton.dataset.historyDetailId).catch((error) => {
+    const pageNavButton = target.closest("[data-history-page-nav]");
+    if (pageNavButton instanceof HTMLElement) {
+        const direction = pageNavButton.dataset.historyPageNav;
+        if (direction === "prev") {
+            setHistoryPage(Math.max(1, state.history.page - 1));
+        } else if (direction === "next") {
+            setHistoryPage(Math.min(state.history.totalPages || state.history.page + 1, state.history.page + 1));
+        }
+        return;
+    }
+    const historyRow = target.closest("[data-history-row-id]");
+    if (historyRow instanceof HTMLElement) {
+        loadHistoryDetail(historyRow.dataset.historyRowId).catch((error) => {
             state.history.error = error instanceof Error ? error.message : String(error || "Could not load history detail.");
             renderHistoryPage();
         });
+    }
+});
+elements.historyList.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
         return;
     }
-    const summaryButton = target.closest("[data-history-summary-id]");
-    if (summaryButton instanceof HTMLElement) {
-        selectHistorySummary(summaryButton.dataset.historySummaryId);
+    if (target.matches("[data-history-limit-select]")) {
+        setHistoryLimit(target.value);
+        return;
+    }
+    if (target.matches("[data-history-page-select]")) {
+        setHistoryPage(target.value);
     }
 });
 elements.historyList.addEventListener("keydown", (event) => {
@@ -5893,10 +5949,13 @@ elements.historyList.addEventListener("keydown", (event) => {
     if (!(target instanceof HTMLElement)) {
         return;
     }
-    const summaryButton = target.closest("[data-history-summary-id]");
-    if (summaryButton instanceof HTMLElement) {
+    const historyRow = target.closest("[data-history-row-id]");
+    if (historyRow instanceof HTMLElement) {
         event.preventDefault();
-        selectHistorySummary(summaryButton.dataset.historySummaryId);
+        loadHistoryDetail(historyRow.dataset.historyRowId).catch((error) => {
+            state.history.error = error instanceof Error ? error.message : String(error || "Could not load history detail.");
+            renderHistoryPage();
+        });
     }
 });
 elements.historyDetail.addEventListener("click", (event) => {
