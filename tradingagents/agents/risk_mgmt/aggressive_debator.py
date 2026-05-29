@@ -1,5 +1,5 @@
 from tradingagents.agents.schemas import DebateTurn, render_debate_turn
-from tradingagents.agents.utils.agent_utils import get_language_instruction
+from tradingagents.agents.utils.agent_utils import get_coinglass_context_instruction, get_language_instruction
 from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext
 
@@ -20,6 +20,15 @@ def create_aggressive_debator(llm):
         news_report = state["news_report"]
         flow_report = state["flow_report"]
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=14)
+        coinglass_context = get_coinglass_context_instruction(
+            state,
+            packages=(
+                "derivatives_positioning",
+                "funding_pressure",
+                "liquidation_risk",
+                "options_context",
+            ),
+        )
 
         trader_decision = state["trader_investment_plan"]
 
@@ -34,6 +43,7 @@ Social Report: {sentiment_report}
 Latest World Affairs Report: {news_report}
 Asset Flow Report: {flow_report}
 Structured Evidence Ledger: {evidence_ledger}
+{coinglass_context}
 Here is the current conversation history: {history} Here are the last arguments from the conservative analyst: {current_conservative_response} Here are the last arguments from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
 Engage actively by addressing specific concerns, refuting weak logic, and asserting the benefits of calculated risk-taking. Make every field concrete and decision-useful.""" + get_language_instruction()

@@ -21,6 +21,12 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, Tool
 from .config import RESEARCH_DEPTH_OPTIONS, SECTION_META, BackendSettings, logger, resolve_minimax_settings
 from .history import TursoHistoryStore, build_history_sections
 from .models import AnalysisRequest, ChatRequest
+from tradingagents.dataflows.coinglass_client import (
+    build_coinglass_evidence_items,
+    build_coinglass_package_contexts,
+    build_coinglass_prompt_context,
+    fetch_high_value_snapshot,
+)
 
 try:
     from tradingagents.default_config import DEFAULT_CONFIG as TRADINGAGENTS_DEFAULT_CONFIG
@@ -851,6 +857,112 @@ class AnalysisService:
         )
         return config
 
+    def fetch_coinglass_context(
+        self,
+        *,
+        symbol: str,
+        analysis_date: str,
+        emit: Callable[[str, dict], None],
+        emit_analysis_log: Callable[..., None],
+        ensure_not_cancelled: Callable[[], None],
+    ) -> tuple[str, dict[str, str], list[dict]]:
+        if not self.settings.coinglass_enabled:
+            emit_analysis_log("CoinGlass prefetch is disabled by configuration.", "coinglass", "warning")
+            return "", {}, []
+
+        if not self.settings.coinglass_api_key:
+            message = (
+                "CoinGlass API key is not configured. Set COINGLASS_API_KEY, COINGLASS-API-KEY, "
+                "CG_API_KEY, or CG-API-KEY in .env to enable high-value realtime market context."
+            )
+            emit_analysis_log(message, "coinglass", "warning")
+            emit("warning", {"message": message})
+            return "", {}, []
+
+        emit_analysis_log(
+            "Prefetching CoinGlass high-value market context.",
+            "coinglass",
+            base_url=self.settings.coinglass_base_url,
+        )
+
+        def on_endpoint_result(result: dict) -> None:
+            if result.get("status") == "ok":
+                summary = result.get("summary") or {}
+                emit_analysis_log(
+                    "CoinGlass endpoint fetched.",
+                    "coinglass",
+                    endpoint=result.get("key"),
+                    package=result.get("package"),
+                    http_status=result.get("http_status"),
+                    elapsed_ms=result.get("elapsed_ms"),
+                    item_count=summary.get("item_count"),
+                    rate_limit=result.get("rate_limit") or {},
+                )
+                return
+
+            title = result.get("title") or result.get("key") or "CoinGlass endpoint"
+            error = result.get("error") or "unknown error"
+            emit_analysis_log(
+                "CoinGlass endpoint failed; continuing analysis without this slice.",
+                "coinglass",
+                "warning",
+                endpoint=result.get("key"),
+                package=result.get("package"),
+                http_status=result.get("http_status"),
+                elapsed_ms=result.get("elapsed_ms"),
+                error=error,
+                rate_limit=result.get("rate_limit") or {},
+            )
+            emit("warning", {"message": f"{title} unavailable from CoinGlass: {error}"})
+
+        snapshot = fetch_high_value_snapshot(
+            api_key=self.settings.coinglass_api_key,
+            symbol=symbol,
+            base_url=self.settings.coinglass_base_url,
+            timeout_seconds=self.settings.coinglass_timeout_seconds,
+            request_interval_seconds=self.settings.coinglass_request_interval_seconds,
+            on_endpoint_result=on_endpoint_result,
+            cancel_check=ensure_not_cancelled,
+        )
+        prompt_context = build_coinglass_prompt_context(
+            snapshot,
+            char_limit=self.settings.coinglass_context_char_limit,
+        )
+        package_contexts = build_coinglass_package_contexts(
+            snapshot,
+            char_limit=self.settings.coinglass_package_context_char_limit,
+        )
+        evidence_items = build_coinglass_evidence_items(snapshot, analysis_date)
+
+        emit_analysis_log(
+            "CoinGlass high-value context ready.",
+            "coinglass",
+            endpoint_count=snapshot.get("endpoint_count"),
+            successful_endpoint_count=snapshot.get("successful_endpoint_count"),
+            failed_endpoint_count=snapshot.get("failed_endpoint_count"),
+            evidence_count=len(evidence_items),
+            context_chars=len(prompt_context),
+        )
+        if prompt_context:
+            emit(
+                "agent_trace",
+                {
+                    "agent": "CoinGlass Data Orchestrator",
+                    "phase": "tool_result",
+                    "title": "CoinGlass high-value snapshot",
+                    "content": self._trim_text(prompt_context, self.settings.analysis_trace_char_limit),
+                },
+            )
+        if evidence_items:
+            emit(
+                "evidence_update",
+                {
+                    "items": evidence_items,
+                    "count": len(evidence_items),
+                },
+            )
+        return prompt_context, package_contexts, evidence_items
+
     @staticmethod
     def extract_runtime_snapshot(state: dict) -> dict:
         investment_state = state.get("investment_debate_state") or {}
@@ -1384,6 +1496,14 @@ class AnalysisService:
             )
 
         ensure_not_cancelled()
+        coinglass_context, coinglass_package_contexts, coinglass_evidence_items = self.fetch_coinglass_context(
+            symbol=symbol,
+            analysis_date=request.analysis_date,
+            emit=emit,
+            emit_analysis_log=emit_analysis_log,
+            ensure_not_cancelled=ensure_not_cancelled,
+        )
+        ensure_not_cancelled()
 
         config = self.build_analysis_config(request, minimax_settings, runtime_profile)
 
@@ -1449,6 +1569,12 @@ class AnalysisService:
                 "analyst_concurrency_limit": int(config.get("analyst_concurrency_limit") or 1),
                 "provider": minimax_settings["provider"],
                 "base_url": minimax_settings["base_url"],
+                "coinglass": {
+                    "enabled": self.settings.coinglass_enabled,
+                    "configured": bool(self.settings.coinglass_api_key),
+                    "context_available": bool(coinglass_context),
+                    "evidence_count": len(coinglass_evidence_items),
+                },
                 "initial_status": initial_status,
             },
         )
@@ -1515,6 +1641,9 @@ class AnalysisService:
                 request.analysis_date,
                 asset_type=asset_type,
                 past_context=past_context,
+                coinglass_context=coinglass_context,
+                coinglass_package_contexts=coinglass_package_contexts,
+                coinglass_evidence_items=coinglass_evidence_items,
             )
             args = graph.propagator.get_graph_args()
             args["stream_mode"] = "updates"

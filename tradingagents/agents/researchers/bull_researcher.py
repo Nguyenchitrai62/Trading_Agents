@@ -1,5 +1,5 @@
 from tradingagents.agents.schemas import DebateTurn, render_debate_turn
-from tradingagents.agents.utils.agent_utils import get_language_instruction
+from tradingagents.agents.utils.agent_utils import get_coinglass_context_instruction, get_language_instruction
 from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext
 
@@ -18,6 +18,16 @@ def create_bull_researcher(llm):
         news_report = state["news_report"]
         flow_report = state["flow_report"]
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=14)
+        coinglass_context = get_coinglass_context_instruction(
+            state,
+            packages=(
+                "derivatives_positioning",
+                "funding_pressure",
+                "exchange_reserves",
+                "institutional_flow",
+                "macro_cycle_context",
+            ),
+        )
         target_label = "asset"
         flow_label = "Asset flow context report"
 
@@ -37,6 +47,7 @@ Latest world affairs news: {news_report}
 {flow_label}: {flow_report}
 Structured evidence ledger:
 {evidence_ledger}
+{coinglass_context}
 Conversation history of the debate: {history}
 Last bear argument: {current_response}
 Use this information to deliver a compelling bull argument, refute the bear's concerns, and engage in a dynamic debate that demonstrates the strengths of the bull position.

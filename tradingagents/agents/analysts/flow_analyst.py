@@ -3,6 +3,7 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_balance_sheet,
     get_cashflow,
+    get_coinglass_context_instruction,
     get_fundamentals,
     get_income_statement,
     get_global_news,
@@ -22,6 +23,16 @@ def create_flow_analyst(llm):
         current_date = state["trade_date"]
         asset_type = state.get("asset_type", "crypto")
         instrument_context = build_instrument_context(state["company_of_interest"], asset_type)
+        coinglass_context = get_coinglass_context_instruction(
+            state,
+            packages=(
+                "exchange_reserves",
+                "institutional_flow",
+                "funding_pressure",
+                "liquidation_risk",
+                "macro_cycle_context",
+            ),
+        )
         require_companion_web_search = (
             asset_type == "crypto"
             and isinstance(llm, MiniMaxMCPChatModel)
@@ -43,6 +54,7 @@ def create_flow_analyst(llm):
                     " If one source is unavailable, briefly note the gap and continue with the remaining evidence instead of inventing facts."
                     " Explain what the current flow regime implies for positioning, conviction, and risk."
                     " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
+                    + coinglass_context
                     + get_preferred_reference_sources_instruction()
                     + get_language_instruction()
                     + get_structured_evidence_instruction("flow")
@@ -54,6 +66,7 @@ def create_flow_analyst(llm):
                     " Be explicit about what is known versus what remains uncertain when direct live browsing is unavailable."
                     " Explain what the current flow regime implies for positioning, conviction, and risk."
                     " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
+                    + coinglass_context
                     + get_preferred_reference_sources_instruction()
                     + get_language_instruction()
                     + get_structured_evidence_instruction("flow")

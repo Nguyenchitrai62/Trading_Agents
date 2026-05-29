@@ -30,7 +30,9 @@ DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
 DEFAULT_RESEARCH_DEPTH = "medium"
 DEFAULT_CHECKPOINT_ENABLED = False
 DEFAULT_HISTORY_PAGE_SIZE = 10
+DEFAULT_HISTORY_PUBLIC_READ = True
 DEFAULT_HISTORY_ACCESS_DAYS = 7
+DEFAULT_ANALYSIS_LLM_MAX_TOKENS = 16384
 DEFAULT_ADMIN_EMAILS = ("trainguyenchi30@gmail.com",)
 DEFAULT_TRADING_VIEW_SYMBOL = "BINANCE:BTCUSDT"
 DEFAULT_TRADING_VIEW_INTERVAL = "60"
@@ -40,6 +42,11 @@ DEFAULT_TRADING_VIEW_SYMBOLS = (
     "BINANCE:SOLUSDT",
     "BINANCE:XRPUSDT",
 )
+DEFAULT_COINGLASS_BASE_URL = "https://open-api-v4.coinglass.com"
+DEFAULT_COINGLASS_TIMEOUT_SECONDS = 10.0
+DEFAULT_COINGLASS_CONTEXT_CHAR_LIMIT = 0
+DEFAULT_COINGLASS_PACKAGE_CONTEXT_CHAR_LIMIT = 0
+DEFAULT_COINGLASS_REQUEST_INTERVAL_SECONDS = 0.05
 RESEARCH_DEPTH_OPTIONS = {
     "quick": {
         "label": "Quick",
@@ -141,6 +148,30 @@ def _env_csv(name: str, default: str = "") -> list[str]:
     if not raw:
         return []
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _coinglass_api_key() -> str:
+    names = ("COINGLASS_API_KEY", "COINGLASS-API-KEY", "CG_API_KEY", "CG-API-KEY")
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    for env_file in (ENV_FILE, ENTERPRISE_ENV_FILE):
+        try:
+            lines = env_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, raw_value = stripped.split("=", 1)
+            if key.strip() not in names:
+                continue
+            value = raw_value.strip().strip("\"'")
+            if value:
+                return value
+    return ""
 
 
 def _normalize_origin(value: str) -> str:
@@ -292,6 +323,13 @@ class BackendSettings:
     minimax_base_url: str
     minimax_api_key: str
     minimax_cn_api_key: str
+    coinglass_enabled: bool
+    coinglass_api_key: str
+    coinglass_base_url: str
+    coinglass_timeout_seconds: float
+    coinglass_context_char_limit: int
+    coinglass_package_context_char_limit: int
+    coinglass_request_interval_seconds: float
     trading_view_symbol: str
     trading_view_interval: str
     trading_view_symbols: tuple[str, ...]
@@ -356,14 +394,14 @@ class BackendSettings:
             ),
             analysis_llm_max_tokens=max(
                 512,
-                _env_int("ANALYSIS_LLM_MAX_TOKENS", 8000),
+                DEFAULT_ANALYSIS_LLM_MAX_TOKENS,
             ),
             analysis_trace_char_limit=max(0, _env_int("ANALYSIS_TRACE_CHAR_LIMIT", 0)),
             auth_cache_max_entries=max(8, _env_int("AUTH_CACHE_MAX_ENTRIES", 256)),
             auth_session_secret=auth_session_secret,
             auth_session_persistent=auth_session_persistent,
             auth_session_ttl_seconds=max(3600, _env_int("AUTH_SESSION_TTL_SECONDS", 60 * 60 * 24 * 7)),
-            history_public_read=False,
+            history_public_read=DEFAULT_HISTORY_PUBLIC_READ,
             history_page_size=max(1, _env_int("HISTORY_PAGE_SIZE", DEFAULT_HISTORY_PAGE_SIZE)),
             droppable_sse_events=frozenset({"analysis_log", "agent_trace"}),
             cors_allow_origins=cors_allow_origins,
@@ -371,6 +409,26 @@ class BackendSettings:
             minimax_base_url=os.getenv("MINIMAX_BASE_URL", "").strip(),
             minimax_api_key=os.getenv("MINIMAX_API_KEY", "").strip(),
             minimax_cn_api_key=os.getenv("MINIMAX_CN_API_KEY", "").strip(),
+            coinglass_enabled=_env_bool("COINGLASS_ENABLED", True),
+            coinglass_api_key=_coinglass_api_key(),
+            coinglass_base_url=os.getenv("COINGLASS_BASE_URL", DEFAULT_COINGLASS_BASE_URL).strip()
+            or DEFAULT_COINGLASS_BASE_URL,
+            coinglass_timeout_seconds=max(
+                1.0,
+                _env_float("COINGLASS_TIMEOUT_SECONDS", DEFAULT_COINGLASS_TIMEOUT_SECONDS),
+            ),
+            coinglass_context_char_limit=max(
+                0,
+                _env_int("COINGLASS_CONTEXT_CHAR_LIMIT", DEFAULT_COINGLASS_CONTEXT_CHAR_LIMIT),
+            ),
+            coinglass_package_context_char_limit=max(
+                0,
+                _env_int("COINGLASS_PACKAGE_CONTEXT_CHAR_LIMIT", DEFAULT_COINGLASS_PACKAGE_CONTEXT_CHAR_LIMIT),
+            ),
+            coinglass_request_interval_seconds=max(
+                0.0,
+                _env_float("COINGLASS_REQUEST_INTERVAL_SECONDS", DEFAULT_COINGLASS_REQUEST_INTERVAL_SECONDS),
+            ),
             trading_view_symbol=os.getenv("TRADING_VIEW_SYMBOL", DEFAULT_TRADING_VIEW_SYMBOL),
             trading_view_interval=os.getenv("TRADING_VIEW_INTERVAL", DEFAULT_TRADING_VIEW_INTERVAL),
             trading_view_symbols=trading_view_symbols,
@@ -426,6 +484,7 @@ __all__ = [
     "CPU_THREAD_ENV_VARS",
     "DEFAULT_ADMIN_EMAILS",
     "DEFAULT_ANALYSTS",
+    "DEFAULT_COINGLASS_BASE_URL",
     "DEFAULT_HISTORY_ACCESS_DAYS",
     "RESEARCH_DEPTH_OPTIONS",
     "ROOT_DIR",

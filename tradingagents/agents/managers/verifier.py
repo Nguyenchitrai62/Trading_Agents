@@ -17,6 +17,7 @@ from tradingagents.agents.schemas import (
 )
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
+    get_coinglass_context_instruction,
     get_language_instruction,
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
@@ -217,6 +218,18 @@ def create_verifier(llm):
             ],
         )
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=24)
+        coinglass_context = get_coinglass_context_instruction(
+            state,
+            packages=(
+                "derivatives_positioning",
+                "funding_pressure",
+                "liquidation_risk",
+                "exchange_reserves",
+                "institutional_flow",
+                "options_context",
+                "macro_cycle_context",
+            ),
+        )
 
         blocker_rule = (
             "Hard rule: deterministic blockers are present, so the verdict must be Revise."
@@ -255,6 +268,8 @@ Flow report:
 
 Structured evidence ledger:
 {evidence_ledger}
+
+{coinglass_context}
 
 Research Manager handoff:
 {research_plan or '<missing>'}

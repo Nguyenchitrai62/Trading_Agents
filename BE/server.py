@@ -94,6 +94,13 @@ def create_app() -> FastAPI:
                 "max_concurrent_runs": SETTINGS.analysis_max_concurrent_runs,
                 "llm_max_tokens": SETTINGS.analysis_llm_max_tokens,
             },
+            "data_sources": {
+                "coinglass": {
+                    "enabled": SETTINGS.coinglass_enabled,
+                    "configured": bool(SETTINGS.coinglass_api_key),
+                    "base_url": SETTINGS.coinglass_base_url,
+                },
+            },
             "modes": ["analysis"],
         }
 
@@ -121,6 +128,12 @@ def create_app() -> FastAPI:
                 "symbol": SETTINGS.trading_view_symbol,
                 "interval": SETTINGS.trading_view_interval,
                 "symbols": list(SETTINGS.trading_view_symbols),
+            },
+            "data_sources": {
+                "coinglass": {
+                    "enabled": SETTINGS.coinglass_enabled,
+                    "configured": bool(SETTINGS.coinglass_api_key),
+                },
             },
             "analysis_defaults": {
                 "symbol": SETTINGS.trading_view_symbol.split(":")[-1].replace("USDT", "-USDT"),

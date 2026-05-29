@@ -13,6 +13,7 @@ from __future__ import annotations
 from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
+    get_coinglass_context_instruction,
     get_language_instruction,
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
@@ -53,6 +54,18 @@ def create_portfolio_manager(llm):
         research_plan_payload = state.get("investment_plan_structured") or {}
         trader_plan_payload = state.get("trader_investment_plan_structured") or {}
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=18)
+        coinglass_context = get_coinglass_context_instruction(
+            state,
+            packages=(
+                "derivatives_positioning",
+                "funding_pressure",
+                "liquidation_risk",
+                "exchange_reserves",
+                "institutional_flow",
+                "options_context",
+                "macro_cycle_context",
+            ),
+        )
         research_plan_context = _format_structured_context(
             research_plan_payload,
             research_plan,
@@ -112,6 +125,7 @@ def create_portfolio_manager(llm):
 - Research Manager's investment plan:\n{research_plan_context}
 - Trader's transaction proposal:\n{trader_plan_context}
 - Structured evidence ledger:\n{evidence_ledger}
+{coinglass_context}
 {lessons_line}
 **Risk Analysts Debate History:**
 {history}

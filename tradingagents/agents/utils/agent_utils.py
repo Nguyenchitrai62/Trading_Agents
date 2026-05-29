@@ -92,6 +92,39 @@ def build_instrument_context(ticker: str, asset_type: str = "crypto") -> str:
         + extra_hint
     )
 
+
+def get_coinglass_context_instruction(
+    state: dict,
+    packages: list[str] | tuple[str, ...] | None = None,
+    char_limit: int = 0,
+) -> str:
+    """Return backend-prefetched CoinGlass context for prompts."""
+    package_contexts = state.get("coinglass_package_contexts") or {}
+    context_parts: list[str] = []
+    if packages and isinstance(package_contexts, dict):
+        for package in packages:
+            context = str(package_contexts.get(package) or "").strip()
+            if context:
+                context_parts.append(context)
+
+    context = "\n\n".join(context_parts).strip()
+    if not context:
+        context = str(state.get("coinglass_context") or "").strip()
+    if not context:
+        return (
+            "\n\nCoinGlass high-value context: unavailable for this run. "
+            "Do not invent CoinGlass metrics; rely on other available evidence."
+        )
+
+    if char_limit > 0 and len(context) > char_limit:
+        context = context[: max(0, char_limit - 14)].rstrip() + "\n[truncated]"
+
+    return (
+        "\n\nCoinGlass high-value context prefetched by the backend for this same analysis run. "
+        "Use it as source-backed market evidence, mention gaps when an endpoint failed, and do not call CoinGlass again:\n"
+        f"{context}"
+    )
+
 def create_msg_delete():
     def delete_messages(state):
         """Clear messages and add placeholder for Anthropic compatibility"""

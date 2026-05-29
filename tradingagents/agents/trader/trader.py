@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage
 from tradingagents.agents.schemas import TraderProposal, render_trader_proposal
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
+    get_coinglass_context_instruction,
     get_language_instruction,
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
@@ -51,6 +52,15 @@ def create_trader(llm):
             investment_plan,
         )
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=14)
+        coinglass_context = get_coinglass_context_instruction(
+            state,
+            packages=(
+                "derivatives_positioning",
+                "funding_pressure",
+                "liquidation_risk",
+                "options_context",
+            ),
+        )
 
         messages = [
             {
@@ -71,6 +81,7 @@ def create_trader(llm):
                     f"social media sentiment. Use this structured handoff as a foundation for evaluating your next "
                     f"trading decision.\n\nResearch Manager Handoff:\n{investment_plan_context}\n\n"
                     f"Structured Evidence Ledger:\n{evidence_ledger}\n\n"
+                    f"{coinglass_context}\n\n"
                     f"Leverage these insights to make an informed and strategic decision."
                 ),
             },

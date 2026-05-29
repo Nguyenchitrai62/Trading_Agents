@@ -87,3 +87,7 @@ class AgentState(MessagesState):
         dict[str, Any], "Structured verification report"
     ]
     past_context: Annotated[str, "Memory log context injected at run start (same-ticker decisions + cross-ticker lessons)"]
+    coinglass_context: Annotated[str, "Backend-prefetched CoinGlass market context for this analysis run"]
+    coinglass_package_contexts: Annotated[
+        dict[str, str], "Backend-prefetched CoinGlass context split by internal package"
+    ]
