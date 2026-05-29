@@ -69,6 +69,7 @@ const CUSTOM_LOOKBACK_VALUE = "__custom__";
 const TRACE_DISPLAY_LIMIT = Number(APP_SETTINGS.traceDisplayLimit || APP_SETTINGS.trace_display_limit || 14);
 const LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.logDisplayLimit || APP_SETTINGS.log_display_limit || 12);
 const EXECUTION_LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.executionLogDisplayLimit || APP_SETTINGS.execution_log_display_limit || 80);
+const LOG_AUTO_SCROLL_THRESHOLD = 16;
 const MIN_ANALYSIS_STOP_DELAY_MS = Math.max(0, Number(APP_SETTINGS.minStopDelayMs || APP_SETTINGS.min_stop_delay_ms || 5000));
 const HISTORY_PAGE_SIZE = 20;
 const AUTH_STORAGE_KEY = AUTH_SETTINGS.storageKey || AUTH_SETTINGS.storage_key || "tradingagents.googleAuth";
@@ -2865,6 +2866,26 @@ function isScrolledNearBottom(element, threshold = 36) {
     return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
+const logAutoScrollPreferences = new WeakMap();
+
+function syncLogAutoScrollPreference(element) {
+    if (!(element instanceof HTMLElement)) {
+        return;
+    }
+    logAutoScrollPreferences.set(element, isScrolledNearBottom(element, LOG_AUTO_SCROLL_THRESHOLD));
+}
+
+function shouldAutoScrollLog(element) {
+    if (!(element instanceof HTMLElement)) {
+        return true;
+    }
+    const cachedPreference = logAutoScrollPreferences.get(element);
+    if (typeof cachedPreference === "boolean") {
+        return cachedPreference;
+    }
+    return isScrolledNearBottom(element, LOG_AUTO_SCROLL_THRESHOLD);
+}
+
 function getFocusIdentity(focus) {
     if (focus.detail?.type === "report") {
         return `report:${focus.detail.section}`;
@@ -3789,7 +3810,7 @@ function renderLogEntries(element, entries, emptyText, options = {}) {
     }
 
     const useDetail = Boolean(options.useDetail);
-    const wasNearBottom = isScrolledNearBottom(element, 48);
+    const shouldStickToBottom = shouldAutoScrollLog(element);
     const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
     const existingNodes = new Map(
         Array.from(element.querySelectorAll(".event-log-item[data-log-key]")).map((child) => [child.dataset.logKey, child]),
@@ -3826,11 +3847,14 @@ function renderLogEntries(element, entries, emptyText, options = {}) {
         if (!key) {
             return;
         }
-        child.classList.toggle("event-log-item-new", wasNearBottom && newKeys.has(key));
+        child.classList.toggle("event-log-item-new", shouldStickToBottom && newKeys.has(key));
     });
 
-    if (wasNearBottom) {
+    if (shouldStickToBottom) {
         requestAnimationFrame(() => {
+            if (!shouldAutoScrollLog(element)) {
+                return;
+            }
             element.scrollTop = element.scrollHeight;
         });
     } else {
@@ -4246,6 +4270,23 @@ function formatHistoryTimestamp(value = "") {
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+function formatHistoryDateTime(value = "") {
+    if (!value) {
+        return "-";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return value;
+    }
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = String(date.getFullYear()).slice(-2);
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    const seconds = String(date.getSeconds()).padStart(2, "0");
+    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+}
+
 function formatHistoryElapsedSeconds(value) {
     const seconds = Number(value);
     if (!Number.isFinite(seconds)) {
@@ -4254,7 +4295,7 @@ function formatHistoryElapsedSeconds(value) {
     const roundedSeconds = Math.max(0, Math.round(seconds));
     const minutes = Math.floor(roundedSeconds / 60);
     const remainingSeconds = roundedSeconds % 60;
-    return `${minutes}m ${remainingSeconds}s`;
+    return `${minutes}m ${String(remainingSeconds).padStart(2, "0")}s`;
 }
 
 function getHistoryArchiveEntry(historyId = "") {
@@ -4751,7 +4792,7 @@ function renderHistoryPage() {
                                             <td>${escapeHtml(String(startIndex + index))}</td>
                                             <td>${escapeHtml(item.symbol || "-")}</td>
                                             <td>${escapeHtml(item.signal || "Completed")}</td>
-                                            <td>${escapeHtml(formatHistoryTimestamp(item.created_at))}</td>
+                                            <td>${escapeHtml(formatHistoryDateTime(item.created_at))}</td>
                                             <td>${escapeHtml(item.research_depth || "-")}</td>
                                             <td>${escapeHtml(String(item.lookback_days || "-"))}</td>
                                             <td>${escapeHtml(formatHistoryElapsedSeconds(item.elapsed_seconds))}</td>
@@ -4855,7 +4896,7 @@ function renderHistoryPage() {
             <span>${escapeHtml(item.signal || "Completed")}</span>
             <span>${escapeHtml(item.research_depth || "-")}</span>
             <span>${escapeHtml(String(item.lookback_days || "-"))}d</span>
-            <span>${escapeHtml(formatHistoryTimestamp(item.created_at))}</span>
+            <span>${escapeHtml(formatHistoryDateTime(item.created_at))}</span>
         </div>
         <div class="history-flow-note">
             Flow appears immediately. Click any block to load only that saved markdown.
@@ -6394,6 +6435,15 @@ elements.chatMessages?.addEventListener("scroll", () => {
     }
     const remaining = elements.chatMessages.scrollHeight - elements.chatMessages.scrollTop - elements.chatMessages.clientHeight;
     state.chat.shouldAutoScroll = remaining < 100;
+});
+[elements.eventLog, elements.executionLog].forEach((logElement) => {
+    if (!(logElement instanceof HTMLElement)) {
+        return;
+    }
+    logElement.addEventListener("scroll", () => {
+        syncLogAutoScrollPreference(logElement);
+    });
+    syncLogAutoScrollPreference(logElement);
 });
 elements.chatScrollToBottom?.addEventListener("click", () => {
     state.chat.shouldAutoScroll = true;
