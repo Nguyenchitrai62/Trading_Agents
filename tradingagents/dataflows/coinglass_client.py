@@ -667,6 +667,9 @@ def _format_coinglass_prompt_result_line(result: dict[str, Any]) -> str:
         data_brief = _format_coinglass_data_brief(summary.get("data"))
         if data_brief:
             parts.append(data_brief)
+    sample_brief = _format_coinglass_sample_brief(summary)
+    if sample_brief:
+        parts.append(sample_brief)
 
     detail = _trim_text("; ".join(part for part in parts if part), 260)
     return f"- {title}: {detail}" if detail else f"- {title}: available from `{source}`"
@@ -704,6 +707,24 @@ def _format_coinglass_data_brief(value: object) -> str:
     except TypeError:
         text = str(compact)
     return f"data={_trim_text(text, 180)}" if text else ""
+
+
+def _format_coinglass_sample_brief(summary: dict[str, Any]) -> str:
+    if not isinstance(summary, dict) or not summary:
+        return ""
+    label = "recent"
+    value = summary.get("latest_items")
+    if value in (None, "", [], {}):
+        label = "sample"
+        value = summary.get("sample_items")
+    if value in (None, "", [], {}):
+        return ""
+    compact = _compact_json_value(value, max_depth=2, max_items=2)
+    try:
+        text = json.dumps(compact, ensure_ascii=False, sort_keys=True, default=str)
+    except TypeError:
+        text = str(compact)
+    return f"{label}={_trim_text(text, 120)}" if text else ""
 
 
 def _format_compact_number(value: object) -> str:

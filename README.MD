@@ -34,7 +34,7 @@ Key files:
 
 - `app.py`: uvicorn entrypoint that imports `BE.server:app`.
 - `BE/`: FastAPI backend, auth, analysis streaming, history, and admin APIs.
-- `index.html`, `FE/app.js`, `FE/styles.css`, `FE/config.js`: frontend dashboard.
+- `index.html`, `FE/scripts/*.js`, `FE/styles.css`, `FE/styles/*.css`, `FE/config.js`: frontend dashboard shell, runtime modules, and stylesheet partials.
 - `tradingagents/`: multi-agent orchestration, agents, graph logic, dataflows, and LLM clients.
 - `requirements.txt`: the only dependency installation source.
 

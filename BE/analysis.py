@@ -887,12 +887,14 @@ class AnalysisService:
 
         def on_endpoint_result(result: dict) -> None:
             endpoint_title = str(result.get("title") or result.get("key") or "CoinGlass endpoint")
+            trace_id = f"coinglass:{result.get('key') or endpoint_title}"
             emit(
                 "agent_trace",
                 {
                     "agent": "CoinGlass Data Orchestrator",
                     "phase": "tool_call",
                     "title": endpoint_title,
+                    "trace_id": trace_id,
                     "content": self._trim_text(
                         self._format_coinglass_endpoint_call(result),
                         self.settings.analysis_trace_char_limit,
@@ -918,6 +920,7 @@ class AnalysisService:
                         "agent": "CoinGlass Data Orchestrator",
                         "phase": "tool_result",
                         "title": endpoint_title,
+                        "trace_id": trace_id,
                         "content": self._trim_text(
                             self._format_coinglass_endpoint_result(result),
                             self.settings.analysis_trace_char_limit,
@@ -945,6 +948,7 @@ class AnalysisService:
                     "agent": "CoinGlass Data Orchestrator",
                     "phase": "tool_result",
                     "title": endpoint_title,
+                    "trace_id": trace_id,
                     "content": self._trim_text(
                         self._format_coinglass_endpoint_result(result),
                         self.settings.analysis_trace_char_limit,
@@ -986,8 +990,9 @@ class AnalysisService:
                 "agent_trace",
                 {
                     "agent": "CoinGlass Data Orchestrator",
-                    "phase": "tool_result",
+                    "phase": "analysis",
                     "title": "CoinGlass high-value snapshot",
+                    "trace_id": "coinglass:snapshot",
                     "content": self._trim_text(prompt_context, self.settings.analysis_trace_char_limit),
                 },
             )
@@ -1075,27 +1080,73 @@ class AnalysisService:
     @classmethod
     def _format_coinglass_endpoint_result(cls, result: dict) -> str:
         source = str(result.get("source") or result.get("path") or "CoinGlass endpoint")
+        package_label = str(result.get("package_label") or result.get("package") or "CoinGlass")
         status = str(result.get("status") or "unknown")
         http_status = result.get("http_status")
         elapsed_ms = result.get("elapsed_ms")
         summary = result.get("summary") or {}
         rate_limit = result.get("rate_limit") or {}
 
-        lines = [f"Source: {source}", f"Status: {status}"]
+        lines = [f"Source: {source}", f"Package: {package_label}", f"Status: {status}"]
         if http_status is not None:
             lines.append(f"HTTP status: {http_status}")
         if elapsed_ms is not None:
             lines.append(f"Elapsed: {elapsed_ms}ms")
         if isinstance(summary, dict) and summary:
+            api_code = summary.get("api_code")
+            if api_code not in (None, ""):
+                lines.append(f"API code: {api_code}")
+            api_message = str(summary.get("api_message") or "").strip()
+            if api_message:
+                lines.append(f"API message: {api_message}")
             item_count = summary.get("item_count")
             if item_count is not None:
                 lines.append(f"Rows: {item_count}")
-            lines.append(f"Summary: {json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}")
+            primary_list_key = str(summary.get("primary_list_key") or "").strip()
+            if primary_list_key:
+                lines.append(f"Primary list: {primary_list_key}")
+            fields = summary.get("fields") or summary.get("keys") or []
+            if isinstance(fields, list) and fields:
+                field_labels = ", ".join(str(field) for field in fields[:8])
+                if len(fields) > 8:
+                    field_labels += ", ..."
+                lines.append(f"Fields: {field_labels}")
+            numeric_summary = summary.get("numeric_summary") or {}
+            if isinstance(numeric_summary, dict) and numeric_summary:
+                metric_parts: list[str] = []
+                for key, values in list(numeric_summary.items())[:4]:
+                    if not isinstance(values, dict):
+                        continue
+                    latest = values.get("latest")
+                    if latest in (None, ""):
+                        continue
+                    metric_parts.append(f"{key}={latest}")
+                if metric_parts:
+                    lines.append(f"Latest metrics: {', '.join(metric_parts)}")
+            sample_items = summary.get("sample_items")
+            if sample_items not in (None, "", [], {}):
+                lines.append(
+                    "Sample rows: "
+                    + cls._trim_text(json.dumps(sample_items, ensure_ascii=False, sort_keys=True, default=str), 420)
+                )
+            latest_items = summary.get("latest_items")
+            if latest_items not in (None, "", [], {}):
+                lines.append(
+                    "Recent rows: "
+                    + cls._trim_text(json.dumps(latest_items, ensure_ascii=False, sort_keys=True, default=str), 420)
+                )
+            elif summary.get("data") not in (None, "", [], {}):
+                lines.append(
+                    "Data: "
+                    + cls._trim_text(json.dumps(summary.get("data"), ensure_ascii=False, sort_keys=True, default=str), 320)
+                )
         error = str(result.get("error") or "").strip()
         if error:
             lines.append(f"Error: {error}")
         if isinstance(rate_limit, dict) and rate_limit:
-            lines.append(f"Rate limit: {json.dumps(rate_limit, ensure_ascii=False, sort_keys=True, default=str)}")
+            rate_limit_text = ", ".join(f"{key}={value}" for key, value in sorted(rate_limit.items()))
+            if rate_limit_text:
+                lines.append(f"Rate limit: {rate_limit_text}")
         return "\n".join(lines)
 
     @classmethod
@@ -1141,6 +1192,7 @@ class AnalysisService:
 
             if isinstance(message, ToolMessage):
                 tool_name = getattr(message, "name", None) or getattr(message, "tool_call_id", None) or "tool"
+                trace_id = str(getattr(message, "tool_call_id", None) or tool_name)
                 content = self._trim_text(
                     self.format_tool_result_for_display(getattr(message, "content", "")),
                     self.settings.analysis_trace_char_limit,
@@ -1153,6 +1205,7 @@ class AnalysisService:
                         "agent": message_agent or "Tool Runner",
                         "phase": "tool_result",
                         "title": str(tool_name),
+                        "trace_id": trace_id,
                         "content": content,
                     },
                 )
@@ -1163,12 +1216,14 @@ class AnalysisService:
                 if tool_calls:
                     for tool_call in tool_calls:
                         tool_name = str(tool_call.get("name") or "tool")
+                        trace_id = str(tool_call.get("id") or tool_name)
                         emit(
                             "agent_trace",
                             {
                                 "agent": message_agent or "Analyst",
                                 "phase": "tool_call",
                                 "title": tool_name,
+                                "trace_id": trace_id,
                                 "content": self._tool_call_summary(tool_call),
                             },
                         )
@@ -1605,6 +1660,7 @@ class AnalysisService:
                     "agent": trace.get("agent") or "Analyst",
                     "phase": phase,
                     "title": trace.get("title") or trace.get("agent") or "Analysis",
+                    "trace_id": trace.get("trace_id") or trace.get("tool_call_id") or "",
                     "content": content,
                 },
             )

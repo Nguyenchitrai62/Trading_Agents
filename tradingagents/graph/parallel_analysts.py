@@ -139,6 +139,7 @@ def _emit_trace_messages(
                     "agent": agent_name,
                     "phase": "tool_result",
                     "title": str(getattr(message, "name", None) or getattr(message, "tool_call_id", None) or "tool"),
+                    "trace_id": str(getattr(message, "tool_call_id", None) or getattr(message, "name", None) or "tool"),
                     "content": _message_content_from_message(message),
                 },
             )
@@ -147,15 +148,19 @@ def _emit_trace_messages(
         if isinstance(message, AIMessage):
             tool_calls = getattr(message, "tool_calls", []) or []
             if tool_calls:
-                _emit_trace(
-                    trace_callback,
-                    {
-                        "agent": agent_name,
-                        "phase": "tool_call",
-                        "title": agent_name,
-                        "content": "\n".join(_tool_call_summary(tool_call) for tool_call in tool_calls),
-                    },
-                )
+                for tool_call in tool_calls:
+                    tool_name = str(tool_call.get("name") or "tool")
+                    tool_trace_id = str(tool_call.get("id") or tool_name)
+                    _emit_trace(
+                        trace_callback,
+                        {
+                            "agent": agent_name,
+                            "phase": "tool_call",
+                            "title": tool_name,
+                            "trace_id": tool_trace_id,
+                            "content": _tool_call_summary(tool_call),
+                        },
+                    )
 
             content = _message_content_from_message(message)
             if content:

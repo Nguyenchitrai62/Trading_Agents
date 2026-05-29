@@ -22,7 +22,7 @@ Mục tiêu sản phẩm không phải là giữ nguyên CLI cũ. Mục tiêu l�
 ## Current Implementation
 
 - Backend entrypoint hiện tại là `app.py`.
-- Frontend hiện tại là `index.html`, `FE/app.js`, `FE/styles.css`.
+- Frontend hiện tại là `index.html`, `FE/scripts/*.js`, `FE/styles.css`, `FE/styles/*.css`.
 - FE hiện đã là dashboard nhiều window theo tinh thần TradingAgents CLI:
   - Execution Board
   - Report Windows
@@ -30,7 +30,6 @@ Mục tiêu sản phẩm không phải là giữ nguyên CLI cũ. Mục tiêu l�
   - Trader Desk
   - Risk Room
   - Final Decision
-  - Event Log
 - Popup config hiện hỗ trợ:
   - symbol
   - analysis date
@@ -88,8 +87,13 @@ Mục tiêu sản phẩm không phải là giữ nguyên CLI cũ. Mục tiêu l�
 
 - `app.py`: FastAPI app, config bootstrap, SSE endpoints, MiniMax integration.
 - `index.html`: shell của dashboard FE và bootstrap backend base URL.
-- `FE/app.js`: logic FE, config modal, gọi API, parse SSE, render panels.
-- `FE/styles.css`: giao diện dashboard.
+- `FE/scripts/01-core-chat.js`: constants, markdown/chat helpers, state factory helpers.
+- `FE/scripts/02-config-auth-trace.js`: config bootstrap, auth/session helpers, trace merge logic.
+- `FE/scripts/03-dashboard-history.js`: dashboard rendering, operations/detail modal helpers, page shell rendering.
+- `FE/scripts/03b-history-archive.js`: history archive rendering, pagination, detail loading, section markdown flow.
+- `FE/scripts/04-chart-admin.js`: chart workspace, admin page, page switching.
+- `FE/scripts/05-runtime-bootstrap.js`: state/elements bootstrap, SSE consumption, DOM listeners.
+- `FE/styles.css` và `FE/styles/*.css`: stylesheet manifest và các partial theo domain.
 - `tradingagents/graph/trading_graph.py`: core orchestration của TradingAgentsGraph.
 - `tradingagents/graph/analyst_execution.py`: analyst node mapping và report mapping.
 - `tradingagents/default_config.py`: default runtime config của graph.
