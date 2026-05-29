@@ -63,16 +63,13 @@ const STATUS_LABELS = {
 const FRONTEND_BOOTSTRAP = window.TRADINGAGENTS_CONFIG || {};
 const APP_SETTINGS = FRONTEND_BOOTSTRAP.app || {};
 const AUTH_SETTINGS = FRONTEND_BOOTSTRAP.auth || {};
-const HISTORY_SETTINGS = FRONTEND_BOOTSTRAP.history || {};
 const TRADING_VIEW_SETTINGS = FRONTEND_BOOTSTRAP.tradingView || FRONTEND_BOOTSTRAP.trading_view || {};
 const CUSTOM_LOOKBACK_VALUE = "__custom__";
 const TRACE_DISPLAY_LIMIT = Number(APP_SETTINGS.traceDisplayLimit || APP_SETTINGS.trace_display_limit || 14);
 const LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.logDisplayLimit || APP_SETTINGS.log_display_limit || 12);
 const EXECUTION_LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.executionLogDisplayLimit || APP_SETTINGS.execution_log_display_limit || 80);
 const MIN_ANALYSIS_STOP_DELAY_MS = Math.max(0, Number(APP_SETTINGS.minStopDelayMs || APP_SETTINGS.min_stop_delay_ms || 5000));
-const HISTORY_PAGE_SIZE = Number(HISTORY_SETTINGS.pageSize || HISTORY_SETTINGS.page_size || 10);
-const HISTORY_PAGE_SIZE_OPTIONS = [...new Set([10, 20, HISTORY_PAGE_SIZE].map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0))]
-    .sort((left, right) => left - right);
+const HISTORY_PAGE_SIZE = 20;
 const AUTH_STORAGE_KEY = AUTH_SETTINGS.storageKey || AUTH_SETTINGS.storage_key || "tradingagents.googleAuth";
 const CHART_SYMBOLS_STORAGE_KEY = TRADING_VIEW_SETTINGS.symbolsStorageKey || TRADING_VIEW_SETTINGS.symbols_storage_key || "tradingagents.chartSymbols";
 const PAGES = Array.isArray(APP_SETTINGS.pages) && APP_SETTINGS.pages.length
@@ -4439,16 +4436,6 @@ function setHistoryPage(nextPage) {
     triggerHistoryListReload("Could not change history page.");
 }
 
-function setHistoryLimit(nextLimit) {
-    const safeLimit = Math.max(1, Number(nextLimit || HISTORY_PAGE_SIZE));
-    if (safeLimit === state.history.limit && state.history.page === 1 && state.history.loaded && !state.history.error) {
-        return;
-    }
-    state.history.limit = safeLimit;
-    state.history.page = 1;
-    triggerHistoryListReload("Could not change history page size.");
-}
-
 function renderHistoryPage() {
     if (!(elements.historyList instanceof HTMLElement) || !(elements.historyDetail instanceof HTMLElement)) {
         return;
@@ -4479,7 +4466,6 @@ function renderHistoryPage() {
         const currentLimit = Math.max(1, Number(history.limit || HISTORY_PAGE_SIZE));
         const startIndex = totalCount ? (currentPage - 1) * currentLimit + 1 : 0;
         const endIndex = totalCount ? Math.min(startIndex + history.items.length - 1, totalCount) : 0;
-        const pageSizeOptions = [...new Set([...HISTORY_PAGE_SIZE_OPTIONS, currentLimit])].sort((left, right) => left - right);
         const paginationItems = buildHistoryPaginationItems(totalPages, currentPage)
             .map((item) => {
                 if (item.type === "ellipsis") {
@@ -4539,24 +4525,6 @@ function renderHistoryPage() {
                 </div>
                 <div class="history-table-footer">
                     <div class="history-table-footer-meta">
-                        <div class="history-table-limit-control" role="group" aria-label="Rows per page">
-                            <span class="history-table-limit-label">Rows per page</span>
-                            <div class="history-table-limit-track">
-                                ${pageSizeOptions
-                                    .map(
-                                        (pageSize) => `
-                                            <button class="history-table-limit-chip ${pageSize === currentLimit ? "is-active" : ""}"
-                                                type="button"
-                                                data-history-limit-target="${pageSize}"
-                                                aria-label="Show ${pageSize} rows per page"
-                                                ${pageSize === currentLimit ? 'aria-pressed="true"' : 'aria-pressed="false"'}>
-                                                ${pageSize}
-                                            </button>
-                                        `,
-                                    )
-                                    .join("")}
-                            </div>
-                        </div>
                         <span class="history-table-footer-copy">Page ${escapeHtml(String(currentPage))} of ${escapeHtml(String(totalPages))}</span>
                     </div>
                     <nav class="history-page-nav" aria-label="History pages">
@@ -5969,11 +5937,6 @@ elements.historyList.addEventListener("click", (event) => {
     const pageTargetButton = target.closest("[data-history-page-target]");
     if (pageTargetButton instanceof HTMLElement) {
         setHistoryPage(Number(pageTargetButton.dataset.historyPageTarget || state.history.page));
-        return;
-    }
-    const limitTargetButton = target.closest("[data-history-limit-target]");
-    if (limitTargetButton instanceof HTMLElement) {
-        setHistoryLimit(Number(limitTargetButton.dataset.historyLimitTarget || state.history.limit));
         return;
     }
     const historyRow = target.closest("[data-history-row-id]");

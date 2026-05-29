@@ -18,7 +18,7 @@
         requireLoginForHistory: true,
     },
     history: {
-        pageSize: 10,
+        pageSize: 20,
         requireLogin: true,
     },
     tradingView: {
