@@ -38,6 +38,10 @@ def _merge_state_update(state: dict, update: dict) -> None:
             state[key] = merged
             continue
 
+        if key == "evidence_items":
+            state[key] = list(state.get(key) or []) + list(value or [])
+            continue
+
         state[key] = value
 
 
@@ -242,7 +246,7 @@ def create_parallel_analyst_team(
     max_workers = min(max(1, plan.concurrency_limit), len(specs))
     analyst_nodes = {spec.key: analyst_factories[spec.key]() for spec in specs}
 
-    def run_analyst(spec: AnalystNodeSpec, state: dict) -> tuple[str, str, list[object]]:
+    def run_analyst(spec: AnalystNodeSpec, state: dict) -> tuple[str, str, list[dict], list[object]]:
         local_state = _build_local_state(state)
         initial_message_count = len(local_state.get("messages") or [])
         analyst_node = analyst_nodes[spec.key]
@@ -272,7 +276,12 @@ def create_parallel_analyst_team(
                     _tag_trace_message(message, spec.agent_node)
                     for message in (local_state.get("messages") or [])[initial_message_count:]
                 ]
-                return spec.report_key, report, [] if trace_callback else trace_messages
+                return (
+                    spec.report_key,
+                    report,
+                    list(local_state.get("evidence_items") or []),
+                    [] if trace_callback else trace_messages,
+                )
 
             logger.info(
                 "%s requested %s tool call(s) on analyst iteration %s.",
@@ -320,8 +329,11 @@ def create_parallel_analyst_team(
                 for future in done:
                     _check_cancel(cancel_check)
                     spec = futures[future]
-                    report_key, report, analyst_trace_messages = future.result()
+                    report_key, report, evidence_items, analyst_trace_messages = future.result()
                     results[report_key] = report
+                    if evidence_items:
+                        results.setdefault("evidence_items", [])
+                        results["evidence_items"].extend(evidence_items)
                     trace_messages.extend(analyst_trace_messages)
                     logger.info("%s joined parallel analyst pool.", spec.agent_node)
         except BaseException:

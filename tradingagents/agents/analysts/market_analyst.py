@@ -6,6 +6,10 @@ from tradingagents.agents.utils.agent_utils import (
     get_language_instruction,
     get_preferred_reference_sources_instruction,
 )
+from tradingagents.agents.utils.evidence import (
+    get_structured_evidence_instruction,
+    split_report_and_evidence,
+)
 from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel, has_minimax_mcp_tool
 
 
@@ -71,6 +75,7 @@ Volume-Based Indicators:
             + crypto_tool_instruction
             + get_preferred_reference_sources_instruction()
             + get_language_instruction()
+            + get_structured_evidence_instruction("market")
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -104,12 +109,20 @@ Volume-Based Indicators:
 
         report = ""
 
+        evidence_items = []
         if len(result.tool_calls) == 0:
-            report = result.content
+            report, evidence_items = split_report_and_evidence(
+                result.content,
+                agent_key="market",
+                agent_label="Market Analyst",
+                report_section="market_report",
+                analysis_date=current_date,
+            )
 
         return {
             "messages": [result],
             "market_report": report,
+            "evidence_items": evidence_items,
         }
 
     return market_analyst_node

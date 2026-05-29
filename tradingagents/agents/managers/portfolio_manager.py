@@ -15,6 +15,7 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
 )
+from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext_result,
@@ -51,6 +52,7 @@ def create_portfolio_manager(llm):
         trader_plan = state["trader_investment_plan"]
         research_plan_payload = state.get("investment_plan_structured") or {}
         trader_plan_payload = state.get("trader_investment_plan_structured") or {}
+        evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=18)
         research_plan_context = _format_structured_context(
             research_plan_payload,
             research_plan,
@@ -109,6 +111,7 @@ def create_portfolio_manager(llm):
 **Context:**
 - Research Manager's investment plan:\n{research_plan_context}
 - Trader's transaction proposal:\n{trader_plan_context}
+- Structured evidence ledger:\n{evidence_ledger}
 {lessons_line}
 **Risk Analysts Debate History:**
 {history}

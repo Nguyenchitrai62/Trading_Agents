@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import math
 from typing import Annotated
@@ -191,6 +191,30 @@ def _resolve_active_crypto_window(
     return _select_crypto_window(lookback_days, available_timeframes, requested_timeframe)
 
 
+def _resolve_analysis_end_ms() -> tuple[int, str]:
+    """Resolve the OHLCV cutoff for the active analysis run.
+
+    Historical runs must not leak current candles. If ``analysis_date`` is a
+    past date, the window ends at 23:59:59.999 UTC for that date. Today/future
+    dates are capped at now because future candles do not exist.
+    """
+    now = datetime.now(timezone.utc)
+    config = get_config()
+    analysis_date = str(config.get("analysis_date") or "").strip()
+    if not analysis_date:
+        return int(now.timestamp() * 1000), "realtime now"
+
+    try:
+        cutoff = datetime.strptime(analysis_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return int(now.timestamp() * 1000), f"invalid analysis_date {analysis_date}; capped at now"
+
+    cutoff = cutoff + timedelta(days=1) - timedelta(milliseconds=1)
+    if cutoff > now:
+        return int(now.timestamp() * 1000), f"{analysis_date} capped at current UTC time"
+    return int(cutoff.timestamp() * 1000), f"{analysis_date} 23:59:59 UTC"
+
+
 def _resolve_indicator_fetch_plan(
     requested: list[str],
     output_limit: int,
@@ -243,7 +267,14 @@ def _fetch_ohlcv_frame(
         analysis_limit = int(policy["limit"])
         effective_limit = max(analysis_limit, _coerce_positive_int(fetch_limit, analysis_limit))
 
-        candles = exchange.fetch_ohlcv(market_symbol, timeframe=effective_timeframe, limit=effective_limit)
+        analysis_end_ms, analysis_end_label = _resolve_analysis_end_ms()
+        since_ms = max(0, analysis_end_ms - (effective_limit * int(policy["minutes"]) * 60 * 1000))
+        candles = exchange.fetch_ohlcv(
+            market_symbol,
+            timeframe=effective_timeframe,
+            since=since_ms,
+            limit=effective_limit,
+        )
         if not candles:
             raise ValueError(
                 f"No OHLCV data returned for {market_symbol} on {exchange_name} ({effective_timeframe})."
@@ -258,10 +289,18 @@ def _fetch_ohlcv_frame(
         for column in ["open", "high", "low", "close", "volume"]:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
 
+        frame = frame[frame["timestamp_ms"] <= analysis_end_ms].tail(effective_limit)
+        if frame.empty:
+            raise ValueError(
+                f"No OHLCV candles remained before analysis cutoff {analysis_end_label} for {market_symbol}."
+            )
+
         policy["analysis_limit"] = analysis_limit
         policy["fetch_limit"] = effective_limit
         policy["requested_timeframe"] = timeframe
         policy["requested_limit"] = limit
+        policy["analysis_end_ms"] = analysis_end_ms
+        policy["analysis_end_label"] = analysis_end_label
         return exchange, market_symbol, frame, policy
     except Exception:
         close_method = getattr(exchange, "close", None)
@@ -284,7 +323,8 @@ def _fetch_binance_ohlcv_frame(
     effective_timeframe = str(policy["timeframe"])
     analysis_limit = int(policy["limit"])
     effective_limit = max(analysis_limit, _coerce_positive_int(fetch_limit, analysis_limit))
-    candles = _fetch_binance_klines(api_symbol, effective_timeframe, effective_limit)
+    analysis_end_ms, analysis_end_label = _resolve_analysis_end_ms()
+    candles = _fetch_binance_klines(api_symbol, effective_timeframe, effective_limit, analysis_end_ms)
 
     if not isinstance(candles, list) or not candles:
         raise ValueError(f"No OHLCV data returned for {market_symbol} on binance ({effective_timeframe}).")
@@ -318,6 +358,8 @@ def _fetch_binance_ohlcv_frame(
     policy["fetch_limit"] = effective_limit
     policy["requested_timeframe"] = timeframe
     policy["requested_limit"] = limit
+    policy["analysis_end_ms"] = analysis_end_ms
+    policy["analysis_end_label"] = analysis_end_label
     return None, market_symbol, frame, policy
 
 
@@ -325,9 +367,10 @@ def _fetch_binance_klines(
     api_symbol: str,
     timeframe: str,
     candle_count: int,
+    end_ms: int | None = None,
 ) -> list[list]:
     interval_ms = _CRYPTO_TIMEFRAME_MINUTES[timeframe] * 60 * 1000
-    end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    end_ms = end_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
     next_start_ms = end_ms - (max(1, candle_count) * interval_ms)
     candles: list[list] = []
 
@@ -533,6 +576,7 @@ def get_crypto_ohlcv(
             f"# Total candles: {len(frame)}",
             f"# Window start: {frame.iloc[0]['timestamp']}",
             f"# Window end: {frame.iloc[-1]['timestamp']}",
+            f"# Analysis cutoff: {policy.get('analysis_end_label', 'realtime now')}",
             f"# Data retrieved on: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
             "",
             "## Summary",
@@ -612,6 +656,7 @@ def get_crypto_indicators(
                         f"Indicator computation fetch depth: {policy['fetch_limit']} candles",
                         f"Indicator output window: {plan['output_limit']} candles",
                         f"Requested window hint: {timeframe} x {limit}",
+                        f"Analysis cutoff: {policy.get('analysis_end_label', 'realtime now')}",
                         f"Latest candle: {latest_timestamp}",
                         f"Latest value: {latest_value}",
                         f"Description: {_CRYPTO_INDICATOR_DESCRIPTIONS[item]}",

@@ -10,6 +10,10 @@ from tradingagents.agents.utils.agent_utils import (
     get_news,
     get_preferred_reference_sources_instruction,
 )
+from tradingagents.agents.utils.evidence import (
+    get_structured_evidence_instruction,
+    split_report_and_evidence,
+)
 from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel, has_minimax_mcp_tool
 
 
@@ -41,6 +45,7 @@ def create_flow_analyst(llm):
                     " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
                     + get_preferred_reference_sources_instruction()
                     + get_language_instruction()
+                    + get_structured_evidence_instruction("flow")
                 )
             else:
                 system_message = (
@@ -51,6 +56,7 @@ def create_flow_analyst(llm):
                     " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
                     + get_preferred_reference_sources_instruction()
                     + get_language_instruction()
+                    + get_structured_evidence_instruction("flow")
                 )
         else:
             tools = [
@@ -65,6 +71,7 @@ def create_flow_analyst(llm):
                 + " Use the available tools: `get_fundamentals` for comprehensive company analysis, `get_balance_sheet`, `get_cashflow`, and `get_income_statement` for specific financial statements."
                 + get_preferred_reference_sources_instruction()
                 + get_language_instruction()
+                + get_structured_evidence_instruction("flow")
             )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -98,12 +105,20 @@ def create_flow_analyst(llm):
 
         report = ""
 
+        evidence_items = []
         if len(result.tool_calls) == 0:
-            report = result.content
+            report, evidence_items = split_report_and_evidence(
+                result.content,
+                agent_key="flow",
+                agent_label="Flow Analyst",
+                report_section="flow_report",
+                analysis_date=current_date,
+            )
 
         return {
             "messages": [result],
             "flow_report": report,
+            "evidence_items": evidence_items,
         }
 
     return flow_analyst_node

@@ -96,6 +96,10 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # Output language for analyst reports and final decision
     # Internal agent debate stays in English for reasoning quality
     "output_language": "English",
+    # Optional YYYY-MM-DD cutoff used by market-data tools. When set to a
+    # past date, crypto OHLCV/indicator tools end their window at that date
+    # instead of leaking current candles into historical analysis.
+    "analysis_date": None,
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,

@@ -1,3 +1,4 @@
+import operator
 from typing import Any, Annotated
 from typing_extensions import TypedDict
 from langgraph.graph import MessagesState
@@ -57,6 +58,7 @@ class AgentState(MessagesState):
         str, "Report from the News Researcher of current world affairs"
     ]
     flow_report: Annotated[str, "Report from the Flow Analyst"]
+    evidence_items: Annotated[list[dict[str, Any]], operator.add]
 
     # researcher team discussion step
     investment_debate_state: Annotated[

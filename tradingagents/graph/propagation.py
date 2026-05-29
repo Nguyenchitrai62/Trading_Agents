@@ -57,6 +57,7 @@ class Propagator:
             "flow_report": "",
             "sentiment_report": "",
             "news_report": "",
+            "evidence_items": [],
             "verification_report": "",
             "investment_plan_structured": {},
             "trader_investment_plan_structured": {},

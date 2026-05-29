@@ -119,10 +119,15 @@ STATE_UPDATE_KEYS = {
     "flow_report",
     "sentiment_report",
     "news_report",
+    "evidence_items",
     "investment_plan",
+    "investment_plan_structured",
     "trader_investment_plan",
+    "trader_investment_plan_structured",
     "final_trade_decision",
+    "final_trade_decision_structured",
     "verification_report",
+    "verification_report_structured",
 }
 
 CHAT_WEB_SEARCH_HINT_TERMS = (
@@ -832,6 +837,7 @@ class AnalysisService:
                 "deep_think_llm": request.model,
                 "backend_url": minimax_settings["base_url"],
                 "output_language": request.output_language,
+                "analysis_date": request.analysis_date,
                 "max_debate_rounds": runtime_profile["effective_rounds"],
                 "max_risk_discuss_rounds": runtime_profile["effective_rounds"],
                 "global_news_lookback_days": request.lookback_days,
@@ -851,6 +857,7 @@ class AnalysisService:
         risk_state = state.get("risk_debate_state") or {}
         return {
             "sections": {key: (state.get(key) or "") for key in SECTION_META},
+            "evidence_items": list(state.get("evidence_items") or []),
             "investment": {
                 "history": investment_state.get("history", "") or "",
                 "bull_history": investment_state.get("bull_history", "") or "",
@@ -1047,6 +1054,8 @@ class AnalysisService:
                 state["messages"] = [
                     message for message in (value or []) if not isinstance(message, RemoveMessage)
                 ]
+            elif key == "evidence_items":
+                state[key] = list(state.get(key) or []) + list(value or [])
             elif isinstance(value, dict) and isinstance(state.get(key), dict):
                 merged = dict(state[key])
                 merged.update(value)
@@ -1232,6 +1241,17 @@ class AnalysisService:
                         "content": content,
                     },
                 )
+
+        previous_evidence = previous.get("evidence_items", [])
+        current_evidence = current.get("evidence_items", [])
+        if len(current_evidence) > len(previous_evidence):
+            emit(
+                "evidence_update",
+                {
+                    "items": current_evidence[len(previous_evidence):],
+                    "count": len(current_evidence),
+                },
+            )
 
         previous_investment = previous.get("investment", {})
         current_investment = current.get("investment", {})
@@ -1621,6 +1641,7 @@ class AnalysisService:
                     "verification_verdict": verification_verdict,
                     "verification_action": verification_action,
                     "history_id": history_id,
+                    "evidence_count": len(final_state.get("evidence_items") or []),
                     "sections_patch": completed_sections_patch,
                     "research_patch": completed_research_patch,
                     "risk_patch": completed_risk_patch,

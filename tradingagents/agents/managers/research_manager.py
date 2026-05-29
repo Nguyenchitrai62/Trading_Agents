@@ -7,6 +7,7 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
 )
+from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext_result,
@@ -19,6 +20,7 @@ def create_research_manager(llm):
     def research_manager_node(state) -> dict:
         instrument_context = build_instrument_context(state["company_of_interest"])
         history = state["investment_debate_state"].get("history", "")
+        evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=18)
 
         investment_debate_state = state["investment_debate_state"]
 
@@ -40,7 +42,10 @@ Commit to a clear stance whenever the debate's strongest arguments warrant one; 
 ---
 
 **Debate History:**
-{history}""" + get_language_instruction()
+{history}
+
+**Structured Evidence Ledger:**
+{evidence_ledger}""" + get_language_instruction()
 
         investment_plan, parsed_plan = invoke_structured_or_freetext_result(
             structured_llm,

@@ -11,6 +11,7 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
 )
+from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext_result,
@@ -49,6 +50,7 @@ def create_trader(llm):
             investment_plan_structured,
             investment_plan,
         )
+        evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=14)
 
         messages = [
             {
@@ -68,6 +70,7 @@ def create_trader(llm):
                     f"insights from current technical market trends, macroeconomic indicators, and "
                     f"social media sentiment. Use this structured handoff as a foundation for evaluating your next "
                     f"trading decision.\n\nResearch Manager Handoff:\n{investment_plan_context}\n\n"
+                    f"Structured Evidence Ledger:\n{evidence_ledger}\n\n"
                     f"Leverage these insights to make an informed and strategic decision."
                 ),
             },

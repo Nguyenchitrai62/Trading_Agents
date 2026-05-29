@@ -19,6 +19,7 @@ from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
 )
+from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext_result,
@@ -215,6 +216,7 @@ def create_verifier(llm):
                 ("Time Horizon", "time_horizon"),
             ],
         )
+        evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=24)
 
         blocker_rule = (
             "Hard rule: deterministic blockers are present, so the verdict must be Revise."
@@ -250,6 +252,9 @@ News report:
 
 Flow report:
 {state.get('flow_report') or '<missing>'}
+
+Structured evidence ledger:
+{evidence_ledger}
 
 Research Manager handoff:
 {research_plan or '<missing>'}

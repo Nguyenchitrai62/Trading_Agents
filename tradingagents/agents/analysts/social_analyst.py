@@ -32,6 +32,10 @@ from tradingagents.agents.utils.agent_utils import (
     get_news,
     get_preferred_reference_sources_instruction,
 )
+from tradingagents.agents.utils.evidence import (
+    get_structured_evidence_instruction,
+    split_report_and_evidence,
+)
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
 from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel, has_minimax_mcp_tool
@@ -159,9 +163,21 @@ def create_sentiment_analyst(llm):
             chain = prompt | llm
         result = chain.invoke(state["messages"])
 
+        evidence_items = []
+        report = result.content
+        if not (getattr(result, "tool_calls", None) or []):
+            report, evidence_items = split_report_and_evidence(
+                result.content,
+                agent_key="social",
+                agent_label="Social Analyst",
+                report_section="sentiment_report",
+                analysis_date=end_date,
+            )
+
         return {
             "messages": [result],
-            "sentiment_report": result.content,
+            "sentiment_report": report,
+            "evidence_items": evidence_items,
         }
 
     return sentiment_analyst_node
@@ -230,7 +246,7 @@ Produce a sentiment report covering, in order:
 4. **Catalysts and risks** surfaced by the data.
 5. **Markdown table** at the end summarizing key sentiment signals, their direction, source, and supporting evidence.
 
-{get_language_instruction()}"""
+{get_language_instruction()}{get_structured_evidence_instruction("social")}"""
 
 
 def _build_crypto_web_search_system_message(
@@ -289,7 +305,7 @@ Output:
 4. Catalysts and risks.
 5. A Markdown table summarizing key sentiment signals, their direction, source, and supporting evidence.
 
-{get_preferred_reference_sources_instruction()}{get_language_instruction()}"""
+{get_preferred_reference_sources_instruction()}{get_language_instruction()}{get_structured_evidence_instruction("social")}"""
 
 
 # ---------------------------------------------------------------------------

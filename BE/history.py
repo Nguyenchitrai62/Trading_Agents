@@ -9,6 +9,7 @@ import requests
 
 from .config import SECTION_META, SETTINGS
 from .models import AnalysisRequest
+from tradingagents.agents.utils.evidence import evidence_items_to_markdown
 
 
 class TursoHistoryStore:
@@ -717,4 +718,15 @@ def build_history_sections(final_state: dict) -> list[dict]:
                     "markdown": markdown,
                 }
             )
+    evidence_markdown = evidence_items_to_markdown(final_state.get("evidence_items") or [])
+    if evidence_markdown:
+        sections.append(
+            {
+                "section_key": "structured_evidence",
+                "title": "Structured Evidence",
+                "agent": "Evidence Extractor",
+                "team": "Verification",
+                "markdown": evidence_markdown,
+            }
+        )
     return sections
