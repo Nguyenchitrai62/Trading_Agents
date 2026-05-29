@@ -96,7 +96,7 @@ def build_instrument_context(ticker: str, asset_type: str = "crypto") -> str:
 def get_coinglass_context_instruction(
     state: dict,
     packages: list[str] | tuple[str, ...] | None = None,
-    char_limit: int = 0,
+    char_limit: int = 4800,
 ) -> str:
     """Return backend-prefetched CoinGlass context for prompts."""
     package_contexts = state.get("coinglass_package_contexts") or {}

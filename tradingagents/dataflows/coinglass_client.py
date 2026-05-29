@@ -458,26 +458,11 @@ def build_coinglass_prompt_context(
     ]
 
     for package in selected_packages:
-        package_payload = (snapshot.get("packages") or {}).get(package) or {}
-        label = package_payload.get("label") or PACKAGE_LABELS.get(package, package)
-        results = package_payload.get("results") or []
-        ok_count = sum(1 for result in results if result.get("status") == "ok")
+        section = _build_coinglass_package_section(snapshot, package)
+        if not section:
+            continue
         lines.append("")
-        lines.append(f"## {label}")
-        lines.append(
-            f"Package health: {ok_count}/{len(results)} endpoints. Agent use: {PACKAGE_AGENT_HINTS.get(package, 'general analysis')}."
-        )
-        for result in results:
-            status = result.get("status")
-            source = result.get("source")
-            title = result.get("title")
-            elapsed_ms = result.get("elapsed_ms")
-            if status != "ok":
-                lines.append(f"- {title}: unavailable from `{source}`; error={result.get('error') or 'unknown'}")
-                continue
-            summary = result.get("summary") or {}
-            summary_json = json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)
-            lines.append(f"- {title}: `{source}`; elapsed_ms={elapsed_ms}; summary={summary_json}")
+        lines.append(section)
 
     return _trim_text("\n".join(lines), char_limit)
 
@@ -485,11 +470,7 @@ def build_coinglass_prompt_context(
 def build_coinglass_package_contexts(snapshot: dict[str, Any], *, char_limit: int = 0) -> dict[str, str]:
     contexts: dict[str, str] = {}
     for package in PACKAGE_ORDER:
-        contexts[package] = build_coinglass_prompt_context(
-            snapshot,
-            focus_packages=(package,),
-            char_limit=char_limit,
-        )
+        contexts[package] = _trim_text(_build_coinglass_package_section(snapshot, package), char_limit)
     return contexts
 
 
@@ -638,6 +619,107 @@ def _coinglass_api_error(payload: object) -> str:
         return ""
     message = payload.get("msg") or payload.get("message") or payload.get("error") or "API returned non-success code"
     return f"code={code}; message={message}"
+
+
+def _build_coinglass_package_section(snapshot: dict[str, Any], package: str) -> str:
+    package_payload = (snapshot.get("packages") or {}).get(package) or {}
+    label = package_payload.get("label") or PACKAGE_LABELS.get(package, package)
+    results = package_payload.get("results") or []
+    if not results:
+        return ""
+
+    ok_count = sum(1 for result in results if result.get("status") == "ok")
+    lines = [
+        f"## {label}",
+        f"Package health: {ok_count}/{len(results)} endpoints. Agent use: {PACKAGE_AGENT_HINTS.get(package, 'general analysis')}.",
+    ]
+    for result in results:
+        lines.append(_format_coinglass_prompt_result_line(result))
+    return "\n".join(line for line in lines if line).strip()
+
+
+def _format_coinglass_prompt_result_line(result: dict[str, Any]) -> str:
+    title = str(result.get("title") or result.get("key") or "CoinGlass endpoint")
+    status = str(result.get("status") or "error")
+    source = str(result.get("source") or result.get("path") or "")
+    if status != "ok":
+        error = _safe_scalar(result.get("error") or "unknown error")
+        return f"- {title}: unavailable from `{source}`; error={error}"
+
+    summary = result.get("summary") or {}
+    parts: list[str] = []
+    freshness = str(result.get("freshness") or "").strip()
+    if freshness:
+        parts.append(f"freshness={freshness}")
+    item_count = summary.get("item_count")
+    if item_count not in (None, ""):
+        parts.append(f"rows={item_count}")
+    primary_list_key = str(summary.get("primary_list_key") or "").strip()
+    if primary_list_key:
+        parts.append(f"list={primary_list_key}")
+    field_brief = _format_coinglass_field_brief(summary)
+    if field_brief:
+        parts.append(field_brief)
+    numeric_brief = _format_coinglass_numeric_brief(summary.get("numeric_summary") or {})
+    if numeric_brief:
+        parts.append(numeric_brief)
+    elif summary.get("data") not in (None, ""):
+        data_brief = _format_coinglass_data_brief(summary.get("data"))
+        if data_brief:
+            parts.append(data_brief)
+
+    detail = _trim_text("; ".join(part for part in parts if part), 260)
+    return f"- {title}: {detail}" if detail else f"- {title}: available from `{source}`"
+
+
+def _format_coinglass_field_brief(summary: dict[str, Any]) -> str:
+    fields = summary.get("fields") or summary.get("keys") or []
+    if not isinstance(fields, list) or not fields:
+        return ""
+    labels = [str(field) for field in fields[:4] if str(field).strip()]
+    if not labels:
+        return ""
+    suffix = "..." if len(fields) > len(labels) else ""
+    return f"fields={', '.join(labels)}{suffix}"
+
+
+def _format_coinglass_numeric_brief(numeric_summary: dict[str, Any]) -> str:
+    if not isinstance(numeric_summary, dict) or not numeric_summary:
+        return ""
+    metrics: list[str] = []
+    for key, values in list(numeric_summary.items())[:3]:
+        if not isinstance(values, dict):
+            continue
+        latest = values.get("latest")
+        if latest in (None, ""):
+            continue
+        metrics.append(f"{key}={_format_compact_number(latest)}")
+    return f"latest={', '.join(metrics)}" if metrics else ""
+
+
+def _format_coinglass_data_brief(value: object) -> str:
+    compact = _compact_json_value(value, max_depth=2, max_items=3)
+    try:
+        text = json.dumps(compact, ensure_ascii=False, sort_keys=True, default=str)
+    except TypeError:
+        text = str(compact)
+    return f"data={_trim_text(text, 180)}" if text else ""
+
+
+def _format_compact_number(value: object) -> str:
+    number = _coerce_number(value)
+    if number is None:
+        return str(value)
+    magnitude = abs(number)
+    if magnitude >= 1_000_000_000:
+        return f"{number / 1_000_000_000:.2f}B"
+    if magnitude >= 1_000_000:
+        return f"{number / 1_000_000:.2f}M"
+    if magnitude >= 1_000:
+        return f"{number / 1_000:.2f}K"
+    if magnitude >= 1:
+        return f"{number:.2f}"
+    return f"{number:.4f}"
 
 
 def _unwrap_coinglass_data(payload: object) -> object:

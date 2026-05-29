@@ -2100,6 +2100,8 @@ body {
     display: grid;
     grid-template-rows: minmax(0, 1fr);
     gap: 12px;
+    min-height: 0;
+    height: 100%;
 }
 
 .auxiliary-column .window {
@@ -2124,6 +2126,7 @@ body {
     display: flex;
     flex-direction: column;
     min-height: 0;
+    height: 100%;
 }
 
 .ops-overview {
@@ -2158,6 +2161,9 @@ body {
 .tool-trace-list {
     display: grid;
     gap: 10px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
     flex: 1 1 auto;
     min-height: 140px;
     overflow: auto;
@@ -2834,8 +2840,10 @@ body {
 }
 
 .operations-column {
-    grid-template-rows: minmax(320px, 1.36fr) minmax(210px, 0.74fr);
+    grid-template-rows: minmax(0, 1fr);
     gap: 10px;
+    min-height: 0;
+    height: 100%;
 }
 
 .auxiliary-column .window {
@@ -2869,7 +2877,9 @@ body {
 
 .tool-trace-list {
     gap: 8px;
+    flex: 1 1 auto;
     min-height: 0;
+    overflow: auto;
 }
 
 .tool-trace-item,
