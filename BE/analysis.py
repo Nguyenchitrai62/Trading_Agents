@@ -1459,6 +1459,10 @@ class AnalysisService:
 
     def build_status_snapshot(self, snapshot: dict, selected_analysts: list[str], current_agent: str | None) -> dict:
         selected_specs = [ANALYST_NODE_SPECS[key] for key in selected_analysts]
+        sections = snapshot["sections"]
+        analysts = []
+        first_incomplete = True
+        parallel_analysts_active = current_agent in {"Analyst Team", "Parallel Analyst Team"}
         for spec in selected_specs:
             has_report = bool(sections.get(spec.report_key))
             if has_report:
