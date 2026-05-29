@@ -4205,6 +4205,28 @@ function formatHistoryElapsedSeconds(value) {
     });
 }
 
+function buildHistoryPaginationItems(totalPages = 1, currentPage = 1) {
+    const safeTotalPages = Math.max(1, Number(totalPages || 1));
+    const safeCurrentPage = Math.min(Math.max(1, Number(currentPage || 1)), safeTotalPages);
+    if (safeTotalPages <= 7) {
+        return Array.from({ length: safeTotalPages }, (_, index) => ({ type: "page", page: index + 1 }));
+    }
+    const items = [{ type: "page", page: 1 }];
+    const middleStart = Math.max(2, safeCurrentPage - 1);
+    const middleEnd = Math.min(safeTotalPages - 1, safeCurrentPage + 1);
+    if (middleStart > 2) {
+        items.push({ type: "ellipsis", key: `ellipsis-start-${safeCurrentPage}` });
+    }
+    for (let pageNumber = middleStart; pageNumber <= middleEnd; pageNumber += 1) {
+        items.push({ type: "page", page: pageNumber });
+    }
+    if (middleEnd < safeTotalPages - 1) {
+        items.push({ type: "ellipsis", key: `ellipsis-end-${safeCurrentPage}` });
+    }
+    items.push({ type: "page", page: safeTotalPages });
+    return items;
+}
+
 function getHistorySectionLabel(section = {}) {
     const agentLabel = getCompactAgentLabel(section.agent || "");
     if (agentLabel) {
@@ -4458,40 +4480,30 @@ function renderHistoryPage() {
         const startIndex = totalCount ? (currentPage - 1) * currentLimit + 1 : 0;
         const endIndex = totalCount ? Math.min(startIndex + history.items.length - 1, totalCount) : 0;
         const pageSizeOptions = [...new Set([...HISTORY_PAGE_SIZE_OPTIONS, currentLimit])].sort((left, right) => left - right);
-        const pageOptions = Array.from({ length: totalPages }, (_, index) => index + 1)
-            .map(
-                (pageNumber) => `<option value="${pageNumber}" ${pageNumber === currentPage ? "selected" : ""}>Page ${pageNumber}</option>`,
-            )
+        const paginationItems = buildHistoryPaginationItems(totalPages, currentPage)
+            .map((item) => {
+                if (item.type === "ellipsis") {
+                    return '<span class="history-page-ellipsis" aria-hidden="true">...</span>';
+                }
+                return `
+                    <button class="history-page-chip ${item.page === currentPage ? "is-active" : ""}"
+                        type="button"
+                        data-history-page-target="${item.page}"
+                        aria-label="Go to page ${item.page}"
+                        ${item.page === currentPage ? 'aria-current="page"' : ""}>
+                        ${item.page}
+                    </button>
+                `;
+            })
             .join("");
         elements.historyList.innerHTML = `
             <div class="history-table-shell">
                 <div class="history-table-toolbar">
                     <div class="history-table-stats">
-                        <strong>${escapeHtml(String(totalCount))}</strong>
+                        <strong>${escapeHtml(String(totalCount))} archived runs</strong>
                         <span>${totalCount ? `Showing ${escapeHtml(String(startIndex))}-${escapeHtml(String(endIndex))}` : "No records"}</span>
                     </div>
-                    <div class="history-table-controls">
-                        <label class="history-table-control">
-                            <span>Rows</span>
-                            <select data-history-limit-select>
-                                ${pageSizeOptions
-                                    .map(
-                                        (pageSize) => `<option value="${pageSize}" ${pageSize === currentLimit ? "selected" : ""}>${pageSize}</option>`,
-                                    )
-                                    .join("")}
-                            </select>
-                        </label>
-                        <label class="history-table-control">
-                            <span>Page</span>
-                            <select data-history-page-select ${totalCount ? "" : "disabled"}>
-                                ${pageOptions}
-                            </select>
-                        </label>
-                        <div class="history-table-nav">
-                            <button class="history-page-button" type="button" data-history-page-nav="prev" ${currentPage <= 1 ? "disabled" : ""}>Prev</button>
-                            <button class="history-page-button" type="button" data-history-page-nav="next" ${currentPage >= totalPages ? "disabled" : ""}>Next</button>
-                        </div>
-                    </div>
+                    <span class="history-table-hint">Select a row to open the archived flow.</span>
                 </div>
                 <div class="history-table-wrap">
                     <table class="history-table">
@@ -4522,6 +4534,30 @@ function renderHistoryPage() {
                                 .join("")}
                         </tbody>
                     </table>
+                </div>
+                <div class="history-table-footer">
+                    <div class="history-table-footer-meta">
+                        <label class="history-table-control">
+                            <span>Rows per page</span>
+                            <select data-history-limit-select>
+                                ${pageSizeOptions
+                                    .map(
+                                        (pageSize) => `<option value="${pageSize}" ${pageSize === currentLimit ? "selected" : ""}>${pageSize}</option>`,
+                                    )
+                                    .join("")}
+                            </select>
+                        </label>
+                        <span class="history-table-footer-copy">Page ${escapeHtml(String(currentPage))} of ${escapeHtml(String(totalPages))}</span>
+                    </div>
+                    <nav class="history-page-nav" aria-label="History pages">
+                        <button class="history-page-button history-page-button--icon" type="button" data-history-page-target="1" aria-label="Go to first page" ${currentPage <= 1 ? "disabled" : ""}>&laquo;</button>
+                        <button class="history-page-button history-page-button--icon" type="button" data-history-page-nav="prev" aria-label="Go to previous page" ${currentPage <= 1 ? "disabled" : ""}>&lsaquo;</button>
+                        <div class="history-page-track">
+                            ${paginationItems}
+                        </div>
+                        <button class="history-page-button history-page-button--icon" type="button" data-history-page-nav="next" aria-label="Go to next page" ${currentPage >= totalPages ? "disabled" : ""}>&rsaquo;</button>
+                        <button class="history-page-button history-page-button--icon" type="button" data-history-page-target="${totalPages}" aria-label="Go to last page" ${currentPage >= totalPages ? "disabled" : ""}>&raquo;</button>
+                    </nav>
                 </div>
             </div>
         `;
@@ -5920,6 +5956,11 @@ elements.historyList.addEventListener("click", (event) => {
         }
         return;
     }
+    const pageTargetButton = target.closest("[data-history-page-target]");
+    if (pageTargetButton instanceof HTMLElement) {
+        setHistoryPage(Number(pageTargetButton.dataset.historyPageTarget || state.history.page));
+        return;
+    }
     const historyRow = target.closest("[data-history-row-id]");
     if (historyRow instanceof HTMLElement) {
         loadHistoryDetail(historyRow.dataset.historyRowId).catch((error) => {
@@ -5936,9 +5977,6 @@ elements.historyList.addEventListener("change", (event) => {
     if (target.matches("[data-history-limit-select]")) {
         setHistoryLimit(target.value);
         return;
-    }
-    if (target.matches("[data-history-page-select]")) {
-        setHistoryPage(target.value);
     }
 });
 elements.historyList.addEventListener("keydown", (event) => {
