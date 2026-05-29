@@ -4333,20 +4333,20 @@ async function prefetchHistorySections(historyId) {
     }
     state.history.prefetchToken += 1;
     const token = state.history.prefetchToken;
-    for (const section of entry.sections) {
-        if (token !== state.history.prefetchToken || state.history.activeId !== historyId) {
-            return;
-        }
-        const sectionKey = section?.section_key || "";
-        if (!sectionKey || Object.prototype.hasOwnProperty.call(entry.sectionMarkdown || {}, sectionKey)) {
-            continue;
-        }
-        try {
-            await ensureHistorySectionMarkdown(historyId, sectionKey, { silent: true });
-        } catch {
-            // Keep prefetch best-effort so one failed section does not block the rest.
-        }
+    if (token !== state.history.prefetchToken || state.history.activeId !== historyId) {
+        return;
     }
+
+    const pendingLoads = entry.sections
+        .map((section) => section?.section_key || "")
+        .filter((sectionKey) => sectionKey && !Object.prototype.hasOwnProperty.call(entry.sectionMarkdown || {}, sectionKey))
+        .map((sectionKey) => ensureHistorySectionMarkdown(historyId, sectionKey, { silent: true }));
+
+    if (!pendingLoads.length) {
+        return;
+    }
+
+    await Promise.allSettled(pendingLoads);
 }
 
 function buildHistoryPaginationItems(totalPages = 1, currentPage = 1) {
