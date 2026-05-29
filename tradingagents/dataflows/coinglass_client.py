@@ -558,6 +558,7 @@ def summarize_payload(payload: object) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "data_kind": type(data).__name__,
     }
+    sample_row_limit, recent_row_limit = _get_preview_row_limits()
 
     if isinstance(payload, dict):
         api_code = payload.get("code") if "code" in payload else payload.get("status")
@@ -570,8 +571,8 @@ def summarize_payload(payload: object) -> dict[str, Any]:
     if isinstance(data, list):
         summary["item_count"] = len(data)
         summary["fields"] = _collect_fields(data)
-        summary["sample_items"] = _compact_json_value(data[:2])
-        summary["latest_items"] = _compact_json_value(data[-3:])
+        summary["sample_items"] = _compact_json_value(data[:sample_row_limit])
+        summary["latest_items"] = _compact_json_value(data[-recent_row_limit:])
         numeric = _numeric_summary(data)
         if numeric:
             summary["numeric_summary"] = numeric
@@ -579,13 +580,21 @@ def summarize_payload(payload: object) -> dict[str, Any]:
 
     if isinstance(data, dict):
         summary["keys"] = sorted(str(key) for key in list(data.keys())[:40])
+        parallel_list_summary = _summarize_parallel_scalar_lists(
+            data,
+            sample_row_limit=sample_row_limit,
+            recent_row_limit=recent_row_limit,
+        )
+        if parallel_list_summary is not None:
+            summary.update(parallel_list_summary)
+            return summary
         nested_list_key, nested_items = _largest_nested_list(data)
         if nested_list_key and nested_items is not None:
             summary["primary_list_key"] = nested_list_key
             summary["item_count"] = len(nested_items)
             summary["fields"] = _collect_fields(nested_items)
-            summary["sample_items"] = _compact_json_value(nested_items[:2])
-            summary["latest_items"] = _compact_json_value(nested_items[-3:])
+            summary["sample_items"] = _compact_json_value(nested_items[:sample_row_limit])
+            summary["latest_items"] = _compact_json_value(nested_items[-recent_row_limit:])
             numeric = _numeric_summary(nested_items)
             if numeric:
                 summary["numeric_summary"] = numeric
@@ -858,6 +867,150 @@ def _safe_scalar(value: object) -> object:
         return value
     text = re.sub(r"\s+", " ", str(value)).strip()
     return _trim_text(text, 240)
+
+
+def _get_preview_row_limits() -> tuple[int, int]:
+    sample_limit = 3
+    recent_limit = 8
+    try:
+        from tradingagents.dataflows.config import get_config
+
+        config = get_config()
+        sample_limit = max(1, int(config.get("coinglass_preview_sample_rows") or sample_limit))
+        recent_limit = max(1, int(config.get("coinglass_preview_recent_rows") or recent_limit))
+    except Exception:
+        pass
+    return sample_limit, recent_limit
+
+
+def _summarize_parallel_scalar_lists(
+    data: dict[str, object],
+    *,
+    sample_row_limit: int,
+    recent_row_limit: int,
+) -> dict[str, Any] | None:
+    grouped_lists: dict[int, list[tuple[str, list[object]]]] = {}
+    for key, value in data.items():
+        if not isinstance(value, list) or not value:
+            continue
+        if any(isinstance(item, (dict, list, tuple, set)) for item in value[: min(len(value), 24)]):
+            continue
+        grouped_lists.setdefault(len(value), []).append((str(key), value))
+
+    best_group: list[tuple[str, list[object]]] | None = None
+    for _length, items in grouped_lists.items():
+        if len(items) < 2:
+            continue
+        if best_group is None or len(items) > len(best_group) or (
+            len(items) == len(best_group) and len(items[0][1]) > len(best_group[0][1])
+        ):
+            best_group = items
+
+    if not best_group:
+        return None
+
+    row_count = len(best_group[0][1])
+    raw_columns = [key for key, _values in best_group]
+    display_columns = _build_display_column_labels(raw_columns)
+    series_rows = [
+        {
+            display_columns[key]: _format_parallel_series_value(key, values[index])
+            for key, values in best_group
+        }
+        for index in range(row_count)
+    ]
+
+    numeric_summary: dict[str, dict[str, float]] = {}
+    for key, values in best_group:
+        if _looks_like_time_field(key):
+            continue
+        numeric_values = [number for number in (_coerce_number(value) for value in values) if number is not None]
+        if not numeric_values:
+            continue
+        display_key = display_columns[key]
+        numeric_summary[display_key] = {
+            "latest": round(numeric_values[-1], 8),
+            "min": round(min(numeric_values), 8),
+            "max": round(max(numeric_values), 8),
+        }
+
+    sample_items = series_rows[:sample_row_limit] if row_count > recent_row_limit else []
+    latest_items = series_rows[-recent_row_limit:]
+
+    summary: dict[str, Any] = {
+        "primary_list_key": raw_columns[0],
+        "item_count": row_count,
+        "fields": list(display_columns.values()),
+        "sample_items": sample_items,
+        "latest_items": latest_items,
+        "sample_title": "Earliest rows",
+        "latest_title": "Most recent rows",
+    }
+    if numeric_summary:
+        summary["numeric_summary"] = numeric_summary
+    return summary
+
+
+def _looks_like_time_field(field_name: str) -> bool:
+    normalized = str(field_name or "").strip().lower()
+    return any(token in normalized for token in ("time", "date", "timestamp"))
+
+
+def _build_display_column_labels(field_names: list[str]) -> dict[str, str]:
+    used_labels: set[str] = set()
+    labels: dict[str, str] = {}
+    for field_name in field_names:
+        base_label = _format_parallel_series_field_label(field_name)
+        candidate = base_label
+        suffix = 2
+        while candidate in used_labels:
+            candidate = f"{base_label} {suffix}"
+            suffix += 1
+        labels[field_name] = candidate
+        used_labels.add(candidate)
+    return labels
+
+
+def _format_parallel_series_field_label(field_name: str) -> str:
+    normalized = str(field_name or "").strip().lower().replace("-", "_")
+    normalized = re.sub(r"_list$", "", normalized)
+    if normalized in {"time", "date", "timestamp"}:
+        return "Date"
+    if normalized == "data":
+        return "Value"
+    if normalized == "price":
+        return "Price"
+    return str(normalized).replace("_", " ").title() or "Value"
+
+
+def _format_parallel_series_value(field_name: str, value: object) -> object:
+    if _looks_like_time_field(field_name):
+        formatted = _format_timestamp_value(value)
+        if formatted:
+            return formatted
+    return value
+
+
+def _format_timestamp_value(value: object) -> str | None:
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+
+    if isinstance(value, bool) or value is None:
+        return None
+
+    timestamp = _coerce_number(value)
+    if timestamp is None:
+        return None
+
+    try:
+        normalized = float(timestamp)
+        if normalized > 1_000_000_000_000:
+            normalized /= 1000.0
+        dt = datetime.fromtimestamp(normalized, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return str(value)
+    return dt.strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _collect_fields(items: list[object]) -> list[str]:

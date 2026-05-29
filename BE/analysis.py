@@ -1200,11 +1200,13 @@ class AnalysisService:
                         f"| {cls._format_coinglass_markdown_cell(key)} | {cls._format_coinglass_markdown_cell(latest)} |"
                     )
 
-            sample_table = cls._build_coinglass_markdown_table("Sample rows", summary.get("sample_items"))
+            sample_title = str(summary.get("sample_title") or "Sample rows").strip() or "Sample rows"
+            sample_table = cls._build_coinglass_markdown_table(sample_title, summary.get("sample_items"))
             if sample_table:
                 lines.extend(["", sample_table])
 
-            recent_table = cls._build_coinglass_markdown_table("Recent rows", summary.get("latest_items"))
+            latest_title = str(summary.get("latest_title") or "Recent rows").strip() or "Recent rows"
+            recent_table = cls._build_coinglass_markdown_table(latest_title, summary.get("latest_items"))
             if recent_table:
                 lines.extend(["", recent_table])
             elif summary.get("data") not in (None, "", [], {}):
