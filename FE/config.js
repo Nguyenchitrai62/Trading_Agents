@@ -68,7 +68,7 @@
             { value: "market", label: "Market Analyst" },
             { value: "social", label: "Social Analyst" },
             { value: "news", label: "News Analyst" },
-            { value: "fundamentals", label: "Fundamentals Analyst" },
+            { value: "fundamentals", label: "Flow Analyst" },
         ],
         researchDepths: [
             { value: "quick", label: "Quick", rounds: 1, description: "Fast scan with minimal debate." },

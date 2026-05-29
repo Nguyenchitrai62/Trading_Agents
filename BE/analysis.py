@@ -1352,14 +1352,14 @@ class AnalysisService:
 
         if filtered_analysts != request.selected_analysts:
             emit_analysis_log(
-                "Fundamentals Analyst disabled for crypto analysis.",
+                "Selected analyst list was adjusted for crypto analysis.",
                 "prepare",
                 "warning",
             )
             emit(
                 "warning",
                 {
-                    "message": "Fundamentals Analyst was disabled automatically for crypto analysis.",
+                    "message": "Selected analyst list was adjusted automatically for crypto analysis.",
                 },
             )
 

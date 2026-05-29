@@ -10,7 +10,7 @@ const REPORT_BY_ANALYST = {
     market: { section: "market_report", title: "Market Analysis" },
     social: { section: "sentiment_report", title: "Social Analysis" },
     news: { section: "news_report", title: "News Analysis" },
-    fundamentals: { section: "flow_report", title: "Fundamentals Analysis" },
+    fundamentals: { section: "flow_report", title: "Flow Analysis" },
 };
 
 const REPORT_DETAIL_BY_AGENT = {
@@ -32,17 +32,11 @@ const REPORT_DETAIL_BY_AGENT = {
         title: REPORT_BY_ANALYST.news.title,
         subtitle: "News Analyst",
     },
-    "Fundamentals Analyst": {
-        type: "report",
-        section: REPORT_BY_ANALYST.fundamentals.section,
-        title: REPORT_BY_ANALYST.fundamentals.title,
-        subtitle: "Fundamentals Analyst",
-    },
     "Flow Analyst": {
         type: "report",
         section: REPORT_BY_ANALYST.fundamentals.section,
         title: REPORT_BY_ANALYST.fundamentals.title,
-        subtitle: "Fundamentals Analyst",
+        subtitle: "Flow Analyst",
     },
 };
 
@@ -52,8 +46,7 @@ const COMPACT_AGENT_LABELS = {
     "Market Analyst": "Market",
     "Social Analyst": "Social",
     "News Analyst": "News",
-    "Fundamentals Analyst": "Fund",
-    "Flow Analyst": "Fund",
+    "Flow Analyst": "Flow",
     "Research Manager": "Lead",
     "Portfolio Manager": "Manager",
     "Verifier": "Verify",
@@ -131,10 +124,10 @@ const HISTORY_FLOW_SECTION_META = {
         description: "Catalysts, headlines, and event pressure gathered into one report.",
     },
     flow_report: {
-        shortTitle: "Fundamentals",
+        shortTitle: "Flow",
         tone: "signal",
         icon: "fund",
-        description: "Crypto flow context presented in the familiar fundamentals slot on the FE.",
+        description: "On-chain, derivatives, ETF, liquidity, and positioning context.",
     },
     bull_research: {
         shortTitle: "Bullish",
@@ -1893,7 +1886,7 @@ function normalizeFrontendConfig() {
                 { value: "market", label: "Market Analyst" },
                 { value: "social", label: "Social Analyst" },
                 { value: "news", label: "News Analyst" },
-                { value: "fundamentals", label: "Fundamentals Analyst" },
+                { value: "fundamentals", label: "Flow Analyst" },
             ],
             asset_types: [{ value: "crypto", label: "Crypto" }],
             lookback_presets: options.lookbackPresets || options.lookback_presets || [
