@@ -483,9 +483,26 @@ def _build_indicator_summary(window: pd.DataFrame, indicator_name: str) -> list[
     ]
 
 
+def _format_markdown_table_cell(value: object) -> str:
+    if pd.isna(value):
+        return "N/A"
+    return str(value).replace("\r\n", " ").replace("\n", " ").replace("|", "\\|")
+
+
 def _format_compact_table(frame: pd.DataFrame, columns: list[str], preview_rows: int) -> str:
     preview = frame[columns].tail(min(preview_rows, len(frame))).copy()
-    return preview.to_csv(index=False)
+    if preview.empty:
+        return "No rows available."
+
+    preview.rename(columns={"timestamp_label": "timestamp"}, inplace=True)
+    header_cells = [str(column) for column in preview.columns]
+    header = "| " + " | ".join(header_cells) + " |"
+    separator = "| " + " | ".join(["---"] * len(header_cells)) + " |"
+    rows = [
+        "| " + " | ".join(_format_markdown_table_cell(value) for value in row) + " |"
+        for row in preview.itertuples(index=False, name=None)
+    ]
+    return "\n".join([header, separator, *rows])
 
 
 def get_crypto_ohlcv(
