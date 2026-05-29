@@ -122,6 +122,7 @@ STATE_UPDATE_KEYS = {
     "investment_plan",
     "trader_investment_plan",
     "final_trade_decision",
+    "verification_report",
 }
 
 CHAT_WEB_SEARCH_HINT_TERMS = (
@@ -1159,6 +1160,15 @@ class AnalysisService:
                 else "in_progress"
                 if risk["history"]
                 else "pending",
+            },
+            {
+                "key": "verifier",
+                "label": "Verifier",
+                "status": "completed"
+                if sections.get("verification_report")
+                else "in_progress"
+                if sections.get("final_trade_decision")
+                else "pending",
             }
         ]
 
@@ -1167,14 +1177,17 @@ class AnalysisService:
                 if current_agent and item["label"] == current_agent and item["status"] == "pending":
                     item["status"] = "in_progress"
 
-        total_sections = len(selected_specs) + 3
+        total_sections = len(selected_specs) + 4
         completed_sections = sum(bool(sections.get(spec.report_key)) for spec in selected_specs)
         completed_sections += int(bool(sections.get("investment_plan")))
         completed_sections += int(bool(sections.get("trader_investment_plan")))
         completed_sections += int(bool(sections.get("final_trade_decision")))
+        completed_sections += int(bool(sections.get("verification_report")))
 
-        if sections.get("final_trade_decision"):
-            phase = "portfolio"
+        if sections.get("verification_report"):
+            phase = "complete"
+        elif sections.get("final_trade_decision"):
+            phase = "verification"
         elif risk["history"] or sections.get("trader_investment_plan"):
             phase = "risk"
         elif sections.get("investment_plan"):
@@ -1528,6 +1541,8 @@ class AnalysisService:
 
             if not final_state.get("final_trade_decision"):
                 raise RuntimeError("Analysis finished without a final_trade_decision.")
+            if not final_state.get("verification_report"):
+                raise RuntimeError("Analysis finished without a verification_report.")
 
             graph.curr_state = final_state
             if config.get("persist_analysis_artifacts"):
@@ -1541,11 +1556,14 @@ class AnalysisService:
                 clear_checkpoint(config["data_cache_dir"], symbol, request.analysis_date)
 
             completed_snapshot = self.extract_runtime_snapshot(final_state)
-            completed_status = self.build_status_snapshot(completed_snapshot, filtered_analysts, "Portfolio Manager")
+            completed_status = self.build_status_snapshot(completed_snapshot, filtered_analysts, "Verifier")
             completed_sections_patch = self.build_changed_sections(previous_snapshot.get("sections", {}), completed_snapshot["sections"])
             completed_research_patch = self.build_changed_fields(previous_snapshot.get("investment", {}), completed_snapshot["investment"])
             completed_risk_patch = self.build_changed_fields(previous_snapshot.get("risk", {}), completed_snapshot["risk"])
             signal = graph.process_signal(final_state["final_trade_decision"])
+            verification_payload = final_state.get("verification_report_structured") or {}
+            verification_verdict = str(verification_payload.get("verdict") or "").strip()
+            verification_action = str(verification_payload.get("recommended_action") or "").strip()
             elapsed_seconds = round(time.time() - started_at, 2)
             history_id = None
             history_sections = build_history_sections(final_state)
@@ -1582,13 +1600,26 @@ class AnalysisService:
                 "Analysis completed.",
                 "complete",
                 signal=signal,
+                verification_verdict=verification_verdict,
                 elapsed_seconds=elapsed_seconds,
             )
+            if verification_verdict and verification_verdict.lower() != "approved":
+                emit(
+                    "warning",
+                    {
+                        "message": (
+                            f"Verifier marked the decision as {verification_verdict}."
+                            + (f" Recommended action: {verification_action}" if verification_action else "")
+                        )
+                    },
+                )
             emit(
                 "complete",
                 {
                     "elapsed_seconds": elapsed_seconds,
                     "signal": signal,
+                    "verification_verdict": verification_verdict,
+                    "verification_action": verification_action,
                     "history_id": history_id,
                     "sections_patch": completed_sections_patch,
                     "research_patch": completed_research_patch,

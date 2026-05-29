@@ -134,7 +134,10 @@ def create_app() -> FastAPI:
             },
             "analysis_options": {
                 "analysts": [
-                    {"value": value, "label": f"{value.title()} Analyst"}
+                    {
+                        "value": value,
+                        "label": "Flow Analyst" if value == "fundamentals" else f"{value.title()} Analyst",
+                    }
                     for value in DEFAULT_ANALYSTS
                 ],
                 "research_depths": [

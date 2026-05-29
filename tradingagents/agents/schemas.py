@@ -100,6 +100,129 @@ class ResearchPlan(BaseModel):
     )
 
 
+class DebateTurn(BaseModel):
+    """Structured debate handoff used by non-tool debate and risk nodes."""
+
+    thesis: str = Field(
+        description=(
+            "Core position this debater is advancing. Two to four sentences, "
+            "anchored in the supplied reports and context."
+        ),
+    )
+    supporting_evidence: str = Field(
+        description=(
+            "Specific evidence and signals from the supplied reports that "
+            "support the thesis. Mention concrete facts, not generic claims."
+        ),
+    )
+    rebuttal: str = Field(
+        description=(
+            "Direct response to the strongest opposing point so far. If no "
+            "opposing view exists yet, say what objection is most likely and "
+            "how this stance answers it."
+        ),
+    )
+    caveats: str = Field(
+        description=(
+            "Main weaknesses, uncertainties, or invalidation conditions for "
+            "this stance."
+        ),
+    )
+    action_bias: str = Field(
+        description=(
+            "What this stance implies for the next decision step, such as add "
+            "risk, reduce size, wait for confirmation, or avoid action."
+        ),
+    )
+
+
+def render_debate_turn(turn: DebateTurn) -> str:
+    """Render a DebateTurn to stable markdown for debate history and FE traces."""
+    return "\n".join([
+        f"**Thesis**: {turn.thesis}",
+        "",
+        f"**Supporting Evidence**: {turn.supporting_evidence}",
+        "",
+        f"**Rebuttal**: {turn.rebuttal}",
+        "",
+        f"**Caveats**: {turn.caveats}",
+        "",
+        f"**Action Bias**: {turn.action_bias}",
+    ])
+
+
+class VerificationVerdict(str, Enum):
+    """Verifier outcome for the final portfolio decision."""
+
+    APPROVED = "Approved"
+    CAUTION = "Caution"
+    REVISE = "Revise"
+
+
+class VerificationReport(BaseModel):
+    """Structured verification handoff after the Portfolio Manager."""
+
+    verdict: VerificationVerdict = Field(
+        description=(
+            "Verification outcome. Use Approved when the decision is internally"
+            " coherent and supported by evidence. Use Caution when the setup is"
+            " mostly coherent but still has material caveats or thin evidence. Use"
+            " Revise when deterministic blockers or unsupported claims make the"
+            " current decision unsafe to trust as written."
+        ),
+    )
+    deterministic_checks: str = Field(
+        description=(
+            "Summarize the deterministic order-logic checks, including current"
+            " price context when available, any blockers, and any softer warnings."
+        ),
+    )
+    evidence_support: str = Field(
+        description=(
+            "Explain whether the final signal is actually supported by the market,"
+            " social, news, and flow evidence plus the intermediate structured"
+            " handoffs from Research Manager and Trader."
+        ),
+    )
+    unsupported_claims: str = Field(
+        description=(
+            "List any claims in the final decision that are not grounded in the"
+            " available evidence or do not point to a source-supported rationale."
+            " If none are found, say so explicitly."
+        ),
+    )
+    confidence_note: str = Field(
+        description=(
+            "Short confidence note explaining the main reason this verification is"
+            " strong, mixed, or weak."
+        ),
+    )
+    recommended_action: str = Field(
+        description=(
+            "Precise next action after verification. For example: proceed as is,"
+            " proceed with caution, revise price levels, or re-run after stronger"
+            " evidence is collected."
+        ),
+    )
+
+
+def render_verification_report(report: VerificationReport) -> str:
+    """Render a VerificationReport to stable markdown for FE/history."""
+    return "\n".join([
+        f"**Verdict**: {report.verdict.value}",
+        "",
+        f"**Deterministic Checks**: {report.deterministic_checks}",
+        "",
+        f"**Evidence Support**: {report.evidence_support}",
+        "",
+        f"**Unsupported Claims**: {report.unsupported_claims}",
+        "",
+        f"**Confidence Note**: {report.confidence_note}",
+        "",
+        f"**Recommended Action**: {report.recommended_action}",
+    ])
+
+
 def render_research_plan(plan: ResearchPlan) -> str:
     """Render a ResearchPlan to markdown for storage and the trader's prompt context."""
     return "\n".join([

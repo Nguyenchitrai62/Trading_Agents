@@ -10,7 +10,7 @@ const REPORT_BY_ANALYST = {
     market: { section: "market_report", title: "Market Analysis" },
     social: { section: "sentiment_report", title: "Social Analysis" },
     news: { section: "news_report", title: "News Analysis" },
-    fundamentals: { section: "fundamentals_report", title: "Fundamentals Analysis" },
+    fundamentals: { section: "fundamentals_report", title: "Flow Analysis" },
 };
 
 const REPORT_DETAIL_BY_AGENT = {
@@ -38,6 +38,12 @@ const REPORT_DETAIL_BY_AGENT = {
         title: REPORT_BY_ANALYST.fundamentals.title,
         subtitle: "Fundamentals Analyst",
     },
+    "Flow Analyst": {
+        type: "report",
+        section: REPORT_BY_ANALYST.fundamentals.section,
+        title: REPORT_BY_ANALYST.fundamentals.title,
+        subtitle: "Flow Analyst",
+    },
 };
 
 const COMPACT_AGENT_LABELS = {
@@ -47,8 +53,10 @@ const COMPACT_AGENT_LABELS = {
     "Social Analyst": "Social",
     "News Analyst": "News",
     "Fundamentals Analyst": "Fund",
+    "Flow Analyst": "Flow",
     "Research Manager": "Lead",
     "Portfolio Manager": "Manager",
+    "Verifier": "Verify",
     "Aggressive Analyst": "Aggressive",
     "Conservative Analyst": "Conservative",
     "Neutral Analyst": "Neutral",
@@ -90,6 +98,7 @@ const DETAIL_PANEL_META = {
     conservativeRisk: { title: "Conservative Analyst", subtitle: "Risk Room" },
     neutralRisk: { title: "Neutral Analyst", subtitle: "Risk Room" },
     portfolioDecision: { title: "Final Decision", subtitle: "Portfolio Management" },
+    verifierReport: { title: "Verifier", subtitle: "Portfolio Management" },
     eventLog: { title: "Event Log", subtitle: "SSE Timeline", mode: "markdown" },
     backendLog: { title: "Backend Log", subtitle: "Runtime stream", mode: "markdown" },
 };
@@ -99,7 +108,7 @@ const HISTORY_FLOW_SECTION_ORDER = {
     research: ["bull_research", "research_debate", "bear_research", "investment_plan"],
     trading: ["trader_investment_plan"],
     risk: ["aggressive_risk", "neutral_risk", "conservative_risk", "risk_debate"],
-    portfolio: ["final_trade_decision"],
+    portfolio: ["final_trade_decision", "verification_report"],
 };
 
 const HISTORY_FLOW_SECTION_META = {
@@ -122,10 +131,10 @@ const HISTORY_FLOW_SECTION_META = {
         description: "Catalysts, headlines, and event pressure gathered into one report.",
     },
     fundamentals_report: {
-        shortTitle: "Fundamentals",
+        shortTitle: "Flow",
         tone: "signal",
         icon: "fund",
-        description: "Company profile, financial condition, and insider activity context.",
+        description: "On-chain, derivatives, ETF, liquidity, and positioning context for crypto.",
     },
     bull_research: {
         shortTitle: "Bullish",
@@ -187,6 +196,12 @@ const HISTORY_FLOW_SECTION_META = {
         icon: "decision",
         description: "Authorize, reject, or revise the transaction proposal.",
     },
+    verification_report: {
+        shortTitle: "Verify",
+        tone: "review",
+        icon: "verify",
+        description: "Deterministic and evidence-based verification after the final order plan.",
+    },
 };
 
 const HISTORY_DIAGRAM_ICONS = {
@@ -204,6 +219,7 @@ const HISTORY_DIAGRAM_ICONS = {
     conservative: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l6 2v5c0 4-2.5 7.5-6 9-3.5-1.5-6-5-6-9V6l6-2z"></path><path d="M10 12l2 2 3-4"></path></svg>',
     review: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6h10"></path><path d="M7 12h10"></path><path d="M7 18h6"></path><path d="M5 6h.01"></path><path d="M5 12h.01"></path><path d="M5 18h.01"></path></svg>',
     decision: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M9 12l2 2 4-4"></path></svg>',
+    verify: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l4 4 12-12"></path><path d="M5 5h5"></path><path d="M5 19h14"></path></svg>',
     default: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="3"></rect></svg>',
 };
 
@@ -1877,7 +1893,7 @@ function normalizeFrontendConfig() {
                 { value: "market", label: "Market Analyst" },
                 { value: "social", label: "Social Analyst" },
                 { value: "news", label: "News Analyst" },
-                { value: "fundamentals", label: "Fundamentals Analyst" },
+                { value: "fundamentals", label: "Flow Analyst" },
             ],
             asset_types: [{ value: "crypto", label: "Crypto" }],
             lookback_presets: options.lookbackPresets || options.lookback_presets || [
@@ -2978,7 +2994,10 @@ function getFallbackStatusGroups() {
             { key: "conservative", label: "Conservative Analyst", status: "pending" },
             { key: "neutral", label: "Neutral Analyst", status: "pending" },
         ],
-        portfolio: [{ key: "portfolio_manager", label: "Portfolio Manager", status: "pending" }],
+        portfolio: [
+            { key: "portfolio_manager", label: "Portfolio Manager", status: "pending" },
+            { key: "verifier", label: "Verifier", status: "pending" },
+        ],
     };
 }
 
@@ -3067,6 +3086,7 @@ function getTaskDetailDescriptor(groupKey, item) {
         portfolio: {
             portfolio_manager: { key: "portfolioDecision" },
             portfolio: { key: "portfolioDecision" },
+            verifier: { key: "verifierReport" },
         },
     };
 
@@ -3096,15 +3116,31 @@ function getRecentStreamMarkdown(limit = 6) {
         .join("\n");
 }
 
+function buildFinalDecisionMarkdown() {
+    const decision = state.run.sections.final_trade_decision || "";
+    const verification = state.run.sections.verification_report || "";
+
+    if (decision && verification) {
+        return `${decision}\n\n---\n\n## Verification\n\n${verification}`;
+    }
+
+    return decision || verification || "";
+}
+
+function getVerificationVerdictText() {
+    return String(state.run.complete?.verification_verdict || "").trim();
+}
+
 function getCurrentLivePanel() {
     if (state.run.complete?.signal && state.run.sections.final_trade_decision) {
+        const verificationVerdict = getVerificationVerdictText();
         return {
             title: "Final Decision",
-            subtitle: state.run.complete.signal,
-            content: state.run.sections.final_trade_decision,
+            subtitle: verificationVerdict ? `${state.run.complete.signal} - ${verificationVerdict}` : state.run.complete.signal,
+            content: buildFinalDecisionMarkdown(),
             fallback: "The Portfolio Manager has not finalized a decision yet.",
             detail: { key: "portfolioDecision" },
-            tone: "completed",
+            tone: verificationVerdict === "Revise" ? "warning" : verificationVerdict === "Caution" ? "progress" : "completed",
             badge: "Complete",
         };
     }
@@ -3232,6 +3268,18 @@ function getCurrentLivePanel() {
             detail: { key: "portfolioDecision" },
             tone: "progress",
             badge: "Live",
+        };
+    }
+
+    if (currentAgent === "Verifier") {
+        return {
+            title: currentAgent,
+            subtitle: "Running post-decision verification",
+            content: state.run.sections.verification_report || currentAgentNarrative || "",
+            fallback: "The Verifier is checking deterministic rules and evidence support.",
+            detail: { key: "verifierReport" },
+            tone: "progress",
+            badge: "Verify",
         };
     }
 
@@ -3911,9 +3959,14 @@ function renderRiskRoom() {
 }
 
 function renderFinalDecision() {
-    const decision = state.run.sections.final_trade_decision || "The Portfolio Manager has not finalized a decision yet.";
-    setCompactPreview(elements.portfolioDecisionPanel, state.run.sections.final_trade_decision, decision, 200);
-    elements.signalBadge.textContent = state.run.complete?.signal || "No signal";
+    const combinedDecision = buildFinalDecisionMarkdown();
+    const fallback = state.run.sections.verification_report
+        ? "Verification completed. Open the panel for the full report."
+        : "The Portfolio Manager has not finalized a decision yet.";
+    setCompactPreview(elements.portfolioDecisionPanel, combinedDecision, fallback, 220);
+    const signal = state.run.complete?.signal || "No signal";
+    const verificationVerdict = getVerificationVerdictText();
+    elements.signalBadge.textContent = verificationVerdict ? `${signal} / ${verificationVerdict}` : signal;
 }
 
 function renderSmartNotes() {
@@ -3995,8 +4048,16 @@ function getDetailContent(detail) {
             return { content: risk.conservative_history || "", fallback: "The Conservative Analyst has not responded yet." };
         case "neutralRisk":
             return { content: risk.neutral_history || "", fallback: "The Neutral Analyst has not responded yet." };
+        case "verifierReport":
+            return {
+                content: state.run.sections.verification_report || "",
+                fallback: "The Verifier has not completed the post-decision audit yet.",
+            };
         case "portfolioDecision":
-            return { content: state.run.sections.final_trade_decision || "", fallback: "The Portfolio Manager has not finalized a decision yet." };
+            return {
+                content: buildFinalDecisionMarkdown(),
+                fallback: "The Portfolio Manager has not finalized a decision yet.",
+            };
         case "eventLog":
             return { content: formatEventLogMarkdown(), fallback: "No SSE events yet." };
         case "backendLog":
@@ -5790,7 +5851,7 @@ function handleServerEvent(event, data) {
         state.run.status = data.status || state.run.status;
         pushStreamFeed({
             title: "Final Decision",
-            content: compactText(`${data.signal || "Completed"} - ${data.elapsed_seconds || 0}s`),
+            content: compactText(`${data.signal || "Completed"}${data.verification_verdict ? ` - ${data.verification_verdict}` : ""} - ${data.elapsed_seconds || 0}s`),
             tone: "completed",
         });
         renderAll();

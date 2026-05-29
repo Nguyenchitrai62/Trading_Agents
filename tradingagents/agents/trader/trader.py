@@ -13,8 +13,27 @@ from tradingagents.agents.utils.agent_utils import (
 )
 from tradingagents.agents.utils.structured import (
     bind_structured,
-    invoke_structured_or_freetext,
+    invoke_structured_or_freetext_result,
 )
+
+
+def _format_research_plan_context(structured_plan: dict, fallback_markdown: str) -> str:
+    if not structured_plan:
+        return fallback_markdown
+
+    parts = []
+    recommendation = structured_plan.get("recommendation")
+    rationale = structured_plan.get("rationale")
+    strategic_actions = structured_plan.get("strategic_actions")
+
+    if recommendation:
+        parts.append(f"- Recommendation: {recommendation}")
+    if rationale:
+        parts.append(f"- Rationale: {rationale}")
+    if strategic_actions:
+        parts.append(f"- Strategic Actions: {strategic_actions}")
+
+    return "\n".join(parts) if parts else fallback_markdown
 
 
 def create_trader(llm):
@@ -25,6 +44,11 @@ def create_trader(llm):
         asset_type = state.get("asset_type", "crypto")
         instrument_context = build_instrument_context(company_name, asset_type)
         investment_plan = state["investment_plan"]
+        investment_plan_structured = state.get("investment_plan_structured") or {}
+        investment_plan_context = _format_research_plan_context(
+            investment_plan_structured,
+            investment_plan,
+        )
 
         messages = [
             {
@@ -42,24 +66,26 @@ def create_trader(llm):
                     f"Based on a comprehensive analysis by a team of analysts, here is an investment "
                     f"plan tailored for {company_name}. {instrument_context} This plan incorporates "
                     f"insights from current technical market trends, macroeconomic indicators, and "
-                    f"social media sentiment. Use this plan as a foundation for evaluating your next "
-                    f"trading decision.\n\nProposed Investment Plan: {investment_plan}\n\n"
+                    f"social media sentiment. Use this structured handoff as a foundation for evaluating your next "
+                    f"trading decision.\n\nResearch Manager Handoff:\n{investment_plan_context}\n\n"
                     f"Leverage these insights to make an informed and strategic decision."
                 ),
             },
         ]
 
-        trader_plan = invoke_structured_or_freetext(
+        trader_plan, parsed_proposal = invoke_structured_or_freetext_result(
             structured_llm,
             llm,
             messages,
             render_trader_proposal,
             "Trader",
         )
+        structured_payload = parsed_proposal.model_dump(mode="json") if parsed_proposal is not None else {}
 
         return {
             "messages": [AIMessage(content=trader_plan)],
             "trader_investment_plan": trader_plan,
+            "trader_investment_plan_structured": structured_payload,
             "sender": name,
         }
 

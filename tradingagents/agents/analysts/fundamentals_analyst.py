@@ -5,11 +5,11 @@ from tradingagents.agents.utils.agent_utils import (
     get_cashflow,
     get_fundamentals,
     get_income_statement,
-    get_insider_transactions,
+    get_global_news,
     get_language_instruction,
+    get_news,
     get_preferred_reference_sources_instruction,
 )
-from tradingagents.dataflows.config import get_config
 from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel, has_minimax_mcp_tool
 
 
@@ -24,21 +24,41 @@ def create_fundamentals_analyst(llm):
             and has_minimax_mcp_tool(llm.settings, "web_search")
         )
 
-        tools = [
-            get_fundamentals,
-            get_balance_sheet,
-            get_cashflow,
-            get_income_statement,
-        ]
+        if asset_type == "crypto":
+            tools = [
+                get_news,
+                get_global_news,
+            ]
 
-        if require_companion_web_search:
-            system_message = (
-                "You are a researcher tasked with analyzing crypto fundamentals over the past week. Use the internal fundamental tools when they provide usable structured data, but do not rely on equity-style financial statement assumptions for crypto assets. Always call the exact MiniMax MCP tool `web_search` at least once in the same analysis for tokenomics, protocol upgrades, ecosystem traction, treasury or issuer developments, institutional and ETF flow commentary, staking or validator dynamics, supply unlocks, governance decisions, and other project-specific fundamental drivers. If an internal tool returns an error, rate-limit notice, or unavailable placeholder, briefly note that limitation and continue with `web_search` plus any successful tool outputs instead of stopping. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
-                + " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
-                + get_preferred_reference_sources_instruction()
-                + get_language_instruction()
-            )
+            if require_companion_web_search:
+                system_message = (
+                    "You are a crypto flow analyst focused on on-chain, derivatives, and liquidity context over the past week."
+                    " Always call the exact MiniMax MCP tool `web_search` at least once in the same analysis."
+                    " Use it to check live evidence around open interest, funding, liquidations, basis, ETF flows, exchange reserves, stablecoin liquidity, TVL, unlock schedules, staking or validator dynamics, treasury changes, and major ecosystem flow shifts."
+                    " Use `get_news` and `get_global_news` as supporting structured inputs for macro, regulatory, exchange, and ETF developments."
+                    " If one source is unavailable, briefly note the gap and continue with the remaining evidence instead of inventing facts."
+                    " Explain what the current flow regime implies for positioning, conviction, and risk."
+                    " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
+                    + get_preferred_reference_sources_instruction()
+                    + get_language_instruction()
+                )
+            else:
+                system_message = (
+                    "You are a crypto flow analyst focused on on-chain, derivatives, and liquidity context over the past week."
+                    " Use `get_news` and `get_global_news` to cover ETF flows, regulatory developments, exchange issues, stablecoin and liquidity themes, and macro conditions affecting crypto."
+                    " Be explicit about what is known versus what remains uncertain when direct live browsing is unavailable."
+                    " Explain what the current flow regime implies for positioning, conviction, and risk."
+                    " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
+                    + get_preferred_reference_sources_instruction()
+                    + get_language_instruction()
+                )
         else:
+            tools = [
+                get_fundamentals,
+                get_balance_sheet,
+                get_cashflow,
+                get_income_statement,
+            ]
             system_message = (
                 "You are a researcher tasked with analyzing fundamental information over the past week about a company. Please write a comprehensive report of the company's fundamental information such as financial documents, company profile, basic company financials, and company financial history to gain a full view of the company's fundamental information to inform traders. Make sure to include as much detail as possible. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
                 + " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."

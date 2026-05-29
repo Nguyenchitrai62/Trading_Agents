@@ -1,7 +1,11 @@
+from tradingagents.agents.schemas import DebateTurn, render_debate_turn
 from tradingagents.agents.utils.agent_utils import get_language_instruction
+from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext
 
 
 def create_neutral_debator(llm):
+    structured_llm = bind_structured(llm, DebateTurn, "Neutral Analyst")
+
     def neutral_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
@@ -17,7 +21,7 @@ def create_neutral_debator(llm):
 
         trader_decision = state["trader_investment_plan"]
 
-        prompt = f"""As the Neutral Risk Analyst, your role is to provide a balanced perspective, weighing both the potential benefits and risks of the trader's decision or plan. You prioritize a well-rounded approach, evaluating the upsides and downsides while factoring in broader market trends, potential economic shifts, and diversification strategies.Here is the trader's decision:
+        prompt = f"""As the Neutral Risk Analyst, provide a balanced perspective that weighs upside against downside and identifies what would shift conviction either way. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Use only the provided evidence and keep the output decision-useful. Here is the trader's decision:
 
 {trader_decision}
 
@@ -29,11 +33,17 @@ Latest World Affairs Report: {news_report}
 Asset Fundamentals/Context Report: {fundamentals_report}
 Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_aggressive_response} Here is the last response from the conservative analyst: {current_conservative_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
-Engage actively by analyzing both sides critically, addressing weaknesses in the aggressive and conservative arguments to advocate for a more balanced approach. Challenge each of their points to illustrate why a moderate risk strategy might offer the best of both worlds, providing growth potential while safeguarding against extreme volatility. Focus on debating rather than simply presenting data, aiming to show that a balanced view can lead to the most reliable outcomes. Output conversationally as if you are speaking without any special formatting.""" + get_language_instruction()
+Analyze both sides critically, identify the strongest evidence on each side, and explain what balanced positioning or confirmation threshold best fits the current setup.""" + get_language_instruction()
 
-        response = llm.invoke(prompt)
+        response = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_debate_turn,
+            "Neutral Analyst",
+        )
 
-        argument = f"Neutral Analyst: {response.content}"
+        argument = f"Neutral Analyst: {response}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

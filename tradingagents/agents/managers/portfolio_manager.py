@@ -17,23 +17,30 @@ from tradingagents.agents.utils.agent_utils import (
 )
 from tradingagents.agents.utils.structured import (
     bind_structured,
-    invoke_structured_or_freetext,
+    invoke_structured_or_freetext_result,
 )
-from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel
 
 
-def _resolve_portfolio_manager_structured_llm(llm):
-    if isinstance(llm, MiniMaxMCPChatModel):
-        return llm.llm
-    return llm
+def _format_structured_context(
+    payload: dict,
+    fallback_markdown: str,
+    fields: list[tuple[str, str]],
+) -> str:
+    if not payload:
+        return fallback_markdown
+
+    parts = []
+    for label, key in fields:
+        value = payload.get(key)
+        if value in (None, "", []):
+            continue
+        parts.append(f"- {label}: {value}")
+
+    return "\n".join(parts) if parts else fallback_markdown
 
 
 def create_portfolio_manager(llm):
-    structured_llm = bind_structured(
-        _resolve_portfolio_manager_structured_llm(llm),
-        PortfolioDecision,
-        "Portfolio Manager",
-    )
+    structured_llm = bind_structured(llm, PortfolioDecision, "Portfolio Manager")
 
     def portfolio_manager_node(state) -> dict:
         instrument_context = build_instrument_context(state["company_of_interest"])
@@ -42,6 +49,28 @@ def create_portfolio_manager(llm):
         risk_debate_state = state["risk_debate_state"]
         research_plan = state["investment_plan"]
         trader_plan = state["trader_investment_plan"]
+        research_plan_payload = state.get("investment_plan_structured") or {}
+        trader_plan_payload = state.get("trader_investment_plan_structured") or {}
+        research_plan_context = _format_structured_context(
+            research_plan_payload,
+            research_plan,
+            [
+                ("Recommendation", "recommendation"),
+                ("Rationale", "rationale"),
+                ("Strategic Actions", "strategic_actions"),
+            ],
+        )
+        trader_plan_context = _format_structured_context(
+            trader_plan_payload,
+            trader_plan,
+            [
+                ("Action", "action"),
+                ("Reasoning", "reasoning"),
+                ("Entry Price", "entry_price"),
+                ("Stop Loss", "stop_loss"),
+                ("Position Sizing", "position_sizing"),
+            ],
+        )
 
         past_context = state.get("past_context", "")
         lessons_line = (
@@ -78,8 +107,8 @@ def create_portfolio_manager(llm):
     - If structured output is unavailable and you must answer in free text, still use these exact markdown headers: **Signal**, **Execution Summary**, **Market Context**, **Investment Thesis**, **Primary Limit Price**, **Secondary Limit Price**, **Stop Loss**, **Take Profit**, **Position Sizing**, **Time Horizon**.
 
 **Context:**
-- Research Manager's investment plan: **{research_plan}**
-- Trader's transaction proposal: **{trader_plan}**
+- Research Manager's investment plan:\n{research_plan_context}
+- Trader's transaction proposal:\n{trader_plan_context}
 {lessons_line}
 **Risk Analysts Debate History:**
 {history}
@@ -88,13 +117,14 @@ def create_portfolio_manager(llm):
 
 Be decisive and ground every conclusion in specific evidence from the analysts.{get_language_instruction()}"""
 
-        final_trade_decision = invoke_structured_or_freetext(
+        final_trade_decision, parsed_decision = invoke_structured_or_freetext_result(
             structured_llm,
             llm,
             prompt,
             render_pm_decision,
             "Portfolio Manager",
         )
+        structured_payload = parsed_decision.model_dump(mode="json") if parsed_decision is not None else {}
 
         new_risk_debate_state = {
             "judge_decision": final_trade_decision,
@@ -112,6 +142,7 @@ Be decisive and ground every conclusion in specific evidence from the analysts.{
         return {
             "risk_debate_state": new_risk_debate_state,
             "final_trade_decision": final_trade_decision,
+            "final_trade_decision_structured": structured_payload,
         }
 
     return portfolio_manager_node

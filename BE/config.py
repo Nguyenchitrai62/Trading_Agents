@@ -77,8 +77,8 @@ SECTION_META = {
         "team": "Analyst Team",
     },
     "fundamentals_report": {
-        "title": "Fundamentals Analysis",
-        "agent": "Fundamentals Analyst",
+        "title": "Flow Analysis",
+        "agent": "Flow Analyst",
         "team": "Analyst Team",
     },
     "investment_plan": {
@@ -94,6 +94,11 @@ SECTION_META = {
     "final_trade_decision": {
         "title": "Portfolio Decision",
         "agent": "Portfolio Manager",
+        "team": "Portfolio Management",
+    },
+    "verification_report": {
+        "title": "Verification Report",
+        "agent": "Verifier",
         "team": "Portfolio Management",
     },
 }

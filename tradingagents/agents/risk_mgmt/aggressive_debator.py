@@ -1,7 +1,11 @@
+from tradingagents.agents.schemas import DebateTurn, render_debate_turn
 from tradingagents.agents.utils.agent_utils import get_language_instruction
+from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext
 
 
 def create_aggressive_debator(llm):
+    structured_llm = bind_structured(llm, DebateTurn, "Aggressive Analyst")
+
     def aggressive_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
@@ -17,7 +21,7 @@ def create_aggressive_debator(llm):
 
         trader_decision = state["trader_investment_plan"]
 
-        prompt = f"""As the Aggressive Risk Analyst, your role is to actively champion high-reward, high-risk opportunities, emphasizing bold strategies and competitive advantages. When evaluating the trader's decision or plan, focus intently on the potential upside, growth potential, and innovative benefits—even when these come with elevated risk. Use the provided market data and sentiment analysis to strengthen your arguments and challenge the opposing views. Specifically, respond directly to each point made by the conservative and neutral analysts, countering with data-driven rebuttals and persuasive reasoning. Highlight where their caution might miss critical opportunities or where their assumptions may be overly conservative. Here is the trader's decision:
+        prompt = f"""As the Aggressive Risk Analyst, actively champion high-reward, high-risk opportunities, emphasizing bold strategies and upside capture. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Use the provided market data and trader plan to challenge the opposing views without inventing unsupported facts. Here is the trader's decision:
 
 {trader_decision}
 
@@ -29,11 +33,17 @@ Latest World Affairs Report: {news_report}
 Asset Fundamentals/Context Report: {fundamentals_report}
 Here is the current conversation history: {history} Here are the last arguments from the conservative analyst: {current_conservative_response} Here are the last arguments from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
-Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting.""" + get_language_instruction()
+Engage actively by addressing specific concerns, refuting weak logic, and asserting the benefits of calculated risk-taking. Make every field concrete and decision-useful.""" + get_language_instruction()
 
-        response = llm.invoke(prompt)
+        response = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_debate_turn,
+            "Aggressive Analyst",
+        )
 
-        argument = f"Aggressive Analyst: {response.content}"
+        argument = f"Aggressive Analyst: {response}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

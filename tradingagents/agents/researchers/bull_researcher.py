@@ -1,7 +1,11 @@
+from tradingagents.agents.schemas import DebateTurn, render_debate_turn
 from tradingagents.agents.utils.agent_utils import get_language_instruction
+from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext
 
 
 def create_bull_researcher(llm):
+    structured_llm = bind_structured(llm, DebateTurn, "Bull Researcher")
+
     def bull_node(state) -> dict:
         investment_debate_state = state["investment_debate_state"]
         history = investment_debate_state.get("history", "")
@@ -15,7 +19,7 @@ def create_bull_researcher(llm):
         target_label = "asset"
         fundamentals_label = "Asset fundamentals/context report (may be unavailable for crypto)"
 
-        prompt = f"""You are a Bull Analyst advocating for investing in the {target_label}. Your task is to build a strong, evidence-based case emphasizing growth potential, competitive advantages, and positive market indicators. Leverage the provided research and data to address concerns and counter bearish arguments effectively.
+        prompt = f"""You are a Bull Analyst advocating for investing in the {target_label}. Build a strong, evidence-based case emphasizing growth potential, competitive advantages, and positive market indicators. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Do not add conversational filler or invent unsupported facts.
 
 Key points to focus on:
 - Growth Potential: Highlight market opportunities, adoption, liquidity, and upside catalysts.
@@ -34,9 +38,15 @@ Last bear argument: {current_response}
 Use this information to deliver a compelling bull argument, refute the bear's concerns, and engage in a dynamic debate that demonstrates the strengths of the bull position.
 """ + get_language_instruction()
 
-        response = llm.invoke(prompt)
+        response = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_debate_turn,
+            "Bull Researcher",
+        )
 
-        argument = f"Bull Analyst: {response.content}"
+        argument = f"Bull Analyst: {response}"
 
         new_investment_debate_state = {
             "history": history + "\n" + argument,
