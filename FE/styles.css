@@ -5166,7 +5166,6 @@ body.is-running .window-status {
 .history-table th:nth-child(1),
 .history-table td:nth-child(1) {
     width: 3.5rem;
-    text-align: center;
     color: var(--muted);
 }
 
@@ -5187,20 +5186,18 @@ body.is-running .window-status {
 
 .history-table th:nth-child(5),
 .history-table td:nth-child(5) {
-    width: 9.5rem;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
+    width: 8rem;
 }
 
 .history-table th:nth-child(6),
 .history-table td:nth-child(6) {
-    width: 8rem;
+    width: 7rem;
+    font-variant-numeric: tabular-nums;
 }
 
 .history-table th:nth-child(7),
 .history-table td:nth-child(7) {
-    width: 7rem;
-    text-align: right;
+    width: 9.5rem;
     font-variant-numeric: tabular-nums;
 }
 
@@ -5217,6 +5214,7 @@ body.is-running .window-status {
     font-weight: 800;
     letter-spacing: 0.06em;
     line-height: 1;
+    text-align: center;
     text-transform: uppercase;
     vertical-align: middle;
 }
@@ -5232,7 +5230,13 @@ body.is-running .window-status {
     color: var(--ink);
     font-size: 0.75rem;
     line-height: 1;
+    text-align: left;
     vertical-align: middle;
+}
+
+.history-table tbody td:nth-child(6),
+.history-table tbody td:nth-child(7) {
+    text-align: right;
 }
 
 .history-table tbody tr:last-child td {

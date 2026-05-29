@@ -185,20 +185,26 @@ class PortfolioDecision(BaseModel):
             "only when the current market price is already attractive enough for "
             "immediate execution. Choose Limit Buy or Limit Sell only when waiting "
             "for specific price levels is clearly better than acting now. Use Hold "
-            "only when the edge is too unclear to place any order yet."
+            "only when the edge is too unclear to place any order yet. This "
+            "workflow is long-only: Limit Sell and Market Sell mean reducing or "
+            "exiting an existing long position, never opening a new short."
         ),
     )
     execution_summary: str = Field(
         description=(
             "A concise execution plan covering whether to act now or wait, which "
-            "order type to place, and the key risk controls. Two to four sentences."
+            "order type to place, and the key risk controls. Two to four sentences. "
+            "If the signal is a sell, describe only the long-position reduction or "
+            "exit plan."
         ),
     )
     market_context: str = Field(
         description=(
             "Explain why the current price is good enough for a market order, why "
             "specific limit levels are better, or why no order should be placed "
-            "yet. This must directly justify the chosen signal."
+            "yet. This must directly justify the chosen signal. For Limit Sell, "
+            "justify why waiting for a better exit level above or around current "
+            "market is better than selling now."
         ),
     )
     investment_thesis: str = Field(
@@ -213,7 +219,8 @@ class PortfolioDecision(BaseModel):
         description=(
             "Primary limit order price in the instrument's quote currency. "
             "Required when the signal is Limit Buy or Limit Sell. Leave empty "
-            "for Market Buy, Market Sell, or Hold."
+            "for Market Buy, Market Sell, or Hold. For Limit Sell, this should be "
+            "the concrete better-exit level for the current long position."
         ),
     )
     secondary_limit_price: Optional[float] = Field(
@@ -230,16 +237,33 @@ class PortfolioDecision(BaseModel):
     )
     take_profit: Optional[float] = Field(
         default=None,
-        description="Optional first take-profit or target price in the instrument's quote currency.",
+        description=(
+            "Optional first take-profit or target price in the instrument's quote "
+            "currency. Leave empty for Limit Sell and Market Sell in this long-only "
+            "workflow."
+        ),
     )
     position_sizing: Optional[str] = Field(
         default=None,
-        description="Optional sizing guidance, e.g. '25% starter tranche' or 'no new position'.",
+        description=(
+            "Optional sizing guidance, e.g. '25% starter tranche' or 'no new "
+            "position'. For sell signals, specify how much of the current long "
+            "position to reduce or exit; do not describe new short exposure."
+        ),
     )
     time_horizon: Optional[str] = Field(
         default=None,
         description="Optional recommended holding period, e.g. '3-6 months'.",
     )
+
+    @model_validator(mode="after")
+    def normalize_signal_specific_fields(self) -> "PortfolioDecision":
+        if self.signal in {ExecutionSignal.MARKET_BUY, ExecutionSignal.MARKET_SELL, ExecutionSignal.HOLD}:
+            self.primary_limit_price = None
+            self.secondary_limit_price = None
+        if self.signal in {ExecutionSignal.LIMIT_SELL, ExecutionSignal.MARKET_SELL}:
+            self.take_profit = None
+        return self
 
     @model_validator(mode="after")
     def validate_limit_signal_prices(self) -> "PortfolioDecision":

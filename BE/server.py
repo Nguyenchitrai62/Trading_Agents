@@ -166,6 +166,18 @@ def create_app() -> FastAPI:
             asyncio.to_thread(history_store.count_accessible_runs, user.get("history_access_days")),
         )
         items = rows[:safe_limit]
+        section_metas = await asyncio.to_thread(
+            history_store.list_run_section_metas_bulk,
+            [str(item.get("id") or "") for item in items],
+            user.get("history_access_days"),
+        )
+        items = [
+            {
+                **item,
+                "sections": section_metas.get(str(item.get("id") or ""), []),
+            }
+            for item in items
+        ]
         total_pages = max(1, (int(total_count) + safe_limit - 1) // safe_limit) if total_count else 1
         return {
             "items": items,

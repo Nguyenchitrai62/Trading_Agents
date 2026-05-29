@@ -19,10 +19,21 @@ from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
+from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel
+
+
+def _resolve_portfolio_manager_structured_llm(llm):
+    if isinstance(llm, MiniMaxMCPChatModel):
+        return llm.llm
+    return llm
 
 
 def create_portfolio_manager(llm):
-    structured_llm = bind_structured(llm, PortfolioDecision, "Portfolio Manager")
+    structured_llm = bind_structured(
+        _resolve_portfolio_manager_structured_llm(llm),
+        PortfolioDecision,
+        "Portfolio Manager",
+    )
 
     def portfolio_manager_node(state) -> dict:
         instrument_context = build_instrument_context(state["company_of_interest"])
@@ -52,12 +63,18 @@ def create_portfolio_manager(llm):
     - **Limit Sell**: Do not sell now; place one or more concrete sell limits at better exit levels instead
     - **Market Sell**: Sell immediately at the current market price because downside risk or weak structure justifies acting now
 
+    **Positioning scope:**
+    - This workflow is long-only. A sell signal means reducing or exiting an existing long position, not opening a new short.
+    - Do not mix multiple plans. If you choose a sell signal, describe only the exit or reduction plan for the current long inventory.
+
     **Hard rules:**
     - Never output generic final signals like Buy / Sell / Overweight / Underweight.
     - If you choose **Limit Buy** or **Limit Sell**, you must provide at least one exact limit price and explain why waiting is better than executing at market now.
     - If you choose **Market Buy** or **Market Sell**, you must explain why the current price is good enough for immediate execution.
+    - For **Limit Sell**, the limit price must be a better exit level for the current long position. If immediate selling is the right action, choose **Market Sell** instead.
     - If you choose **Hold**, explain what confirmation, catalyst, or price zone would be needed before placing an order.
     - When the setup is actionable, include stop-loss, take-profit, and position sizing.
+    - For **Limit Sell** or **Market Sell**, do not include a new short thesis or an upside take-profit ladder. Use **Position Sizing** to say how much of the current long to trim or exit, and only use **Stop Loss** if you explicitly keep a remaining long tranche.
     - If structured output is unavailable and you must answer in free text, still use these exact markdown headers: **Signal**, **Execution Summary**, **Market Context**, **Investment Thesis**, **Primary Limit Price**, **Secondary Limit Price**, **Stop Loss**, **Take Profit**, **Position Sizing**, **Time Horizon**.
 
 **Context:**

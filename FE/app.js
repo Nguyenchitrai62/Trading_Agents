@@ -389,6 +389,8 @@ function createEmptyHistoryState() {
         activeId: "",
         active: null,
         detailLoading: false,
+        cache: {},
+        prefetchToken: 0,
     };
 }
 
@@ -3965,7 +3967,7 @@ function getDetailContent(detail) {
         const section = getHistorySectionMeta(detail.sectionKey);
         const active = state.history.active || {};
         const content = active.sectionMarkdown?.[detail.sectionKey] || "";
-        const loading = active.sectionLoadingKey === detail.sectionKey;
+        const loading = Array.isArray(active.sectionLoadingKeys) && active.sectionLoadingKeys.includes(detail.sectionKey);
         return {
             content,
             fallback: loading
@@ -4196,10 +4198,155 @@ function formatHistoryElapsedSeconds(value) {
     if (!Number.isFinite(seconds)) {
         return "-";
     }
-    return seconds.toLocaleString(undefined, {
-        minimumFractionDigits: Number.isInteger(seconds) ? 0 : 2,
-        maximumFractionDigits: 2,
-    });
+    const roundedSeconds = Math.max(0, Math.round(seconds));
+    const minutes = Math.floor(roundedSeconds / 60);
+    const remainingSeconds = roundedSeconds % 60;
+    return `${minutes}m ${remainingSeconds}s`;
+}
+
+function getHistoryArchiveEntry(historyId = "") {
+    if (!historyId) {
+        return null;
+    }
+    return state.history.cache?.[historyId] || null;
+}
+
+function upsertHistoryArchiveEntry(item = {}, sections = null) {
+    const historyId = String(item?.id || "").trim();
+    if (!historyId) {
+        return null;
+    }
+    const cache = state.history.cache || (state.history.cache = {});
+    const existing = cache[historyId] || {};
+    const resolvedSections = Array.isArray(sections)
+        ? sections.map((section) => ({ ...section }))
+        : Array.isArray(existing.sections)
+        ? existing.sections
+        : [];
+    const activeSectionKey = existing.activeSectionKey || resolvedSections[0]?.section_key || "";
+
+    cache[historyId] = {
+        item: {
+            ...(existing.item || {}),
+            ...item,
+            sections: resolvedSections,
+        },
+        sections: resolvedSections,
+        sectionMarkdown: { ...(existing.sectionMarkdown || {}) },
+        activeSectionKey,
+        sectionLoadingKeys: Array.isArray(existing.sectionLoadingKeys) ? [...existing.sectionLoadingKeys] : [],
+        sectionRequests: existing.sectionRequests || {},
+    };
+
+    return cache[historyId];
+}
+
+function syncHistoryActiveEntry(historyId = "") {
+    const entry = getHistoryArchiveEntry(historyId);
+    if (!entry) {
+        return null;
+    }
+    if (!entry.activeSectionKey) {
+        entry.activeSectionKey = entry.sections[0]?.section_key || "";
+    }
+    if (state.history.activeId === historyId) {
+        state.history.active = entry;
+    }
+    return entry;
+}
+
+function addHistoryLoadingKey(entry, sectionKey) {
+    if (!entry || !sectionKey) {
+        return;
+    }
+    const loadingKeys = Array.isArray(entry.sectionLoadingKeys) ? entry.sectionLoadingKeys : [];
+    if (!loadingKeys.includes(sectionKey)) {
+        entry.sectionLoadingKeys = [...loadingKeys, sectionKey];
+    }
+}
+
+function removeHistoryLoadingKey(entry, sectionKey) {
+    if (!entry || !sectionKey) {
+        return;
+    }
+    entry.sectionLoadingKeys = (entry.sectionLoadingKeys || []).filter((key) => key !== sectionKey);
+}
+
+async function ensureHistorySectionMarkdown(historyId, sectionKey, options = {}) {
+    const { silent = false } = options;
+    const entry = syncHistoryActiveEntry(historyId);
+    if (!entry || !sectionKey) {
+        return "";
+    }
+    if (Object.prototype.hasOwnProperty.call(entry.sectionMarkdown || {}, sectionKey)) {
+        return entry.sectionMarkdown[sectionKey] || "";
+    }
+
+    entry.sectionRequests = entry.sectionRequests || {};
+    if (entry.sectionRequests[sectionKey]) {
+        return entry.sectionRequests[sectionKey];
+    }
+
+    addHistoryLoadingKey(entry, sectionKey);
+    if (state.history.activeId === historyId) {
+        renderHistoryPage();
+    }
+
+    entry.sectionRequests[sectionKey] = (async () => {
+        try {
+            const response = await apiFetch(`/api/history/${encodeURIComponent(historyId)}/sections/${encodeURIComponent(sectionKey)}`, {
+                headers: getAuthHeaders(),
+                cache: "no-store",
+            });
+            if (!response.ok) {
+                throw new Error(await readResponseError(response));
+            }
+            const payload = await response.json();
+            entry.sectionMarkdown = {
+                ...(entry.sectionMarkdown || {}),
+                [sectionKey]: payload.section?.markdown || "",
+            };
+            state.history.error = "";
+            return entry.sectionMarkdown[sectionKey];
+        } catch (error) {
+            if (!silent) {
+                state.history.error = error instanceof Error ? error.message : String(error || "Could not load history section.");
+            }
+            throw error;
+        } finally {
+            removeHistoryLoadingKey(entry, sectionKey);
+            delete entry.sectionRequests[sectionKey];
+            if (state.history.activeId === historyId) {
+                state.history.active = entry;
+                renderHistoryPage();
+            }
+        }
+    })();
+
+    return entry.sectionRequests[sectionKey];
+}
+
+async function prefetchHistorySections(historyId) {
+    const entry = syncHistoryActiveEntry(historyId);
+    if (!entry || !entry.sections.length) {
+        return;
+    }
+    state.history.prefetchToken += 1;
+    const token = state.history.prefetchToken;
+    for (const section of entry.sections) {
+        if (token !== state.history.prefetchToken || state.history.activeId !== historyId) {
+            return;
+        }
+        const sectionKey = section?.section_key || "";
+        if (!sectionKey || Object.prototype.hasOwnProperty.call(entry.sectionMarkdown || {}, sectionKey)) {
+            continue;
+        }
+        try {
+            await ensureHistorySectionMarkdown(historyId, sectionKey, { silent: true });
+        } catch {
+            // Keep prefetch best-effort so one failed section does not block the rest.
+        }
+    }
 }
 
 function buildHistoryPaginationItems(totalPages = 1, currentPage = 1) {
@@ -4287,10 +4434,10 @@ function renderHistoryDiagramNode(section = {}, options = {}, layout = {}) {
     const flowMeta = HISTORY_FLOW_SECTION_META[sectionKey] || {};
     const activeSectionKey = options.activeSectionKey || "";
     const sectionMarkdown = options.sectionMarkdown || {};
-    const loadingKey = options.loadingKey || "";
+    const loadingKeys = Array.isArray(options.loadingKeys) ? options.loadingKeys : [];
     const isActive = sectionKey === activeSectionKey;
     const isLoaded = Object.prototype.hasOwnProperty.call(sectionMarkdown, sectionKey);
-    const loading = sectionKey === loadingKey;
+    const loading = loadingKeys.includes(sectionKey);
     const shortTitle = layout.shortTitle || flowMeta.shortTitle || getHistorySectionLabel(section);
     const tone = layout.tone || flowMeta.tone || "neutral";
     const iconKey = layout.icon || flowMeta.icon || tone;
@@ -4556,9 +4703,9 @@ function renderHistoryPage() {
                                 <th scope="col">Symbol</th>
                                 <th scope="col">Signals</th>
                                 <th scope="col">Created at</th>
-                                <th scope="col">Elapsed seconds</th>
                                 <th scope="col">Research depth</th>
                                 <th scope="col">Lookback day</th>
+                                <th scope="col">Elapsed time</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -4570,9 +4717,9 @@ function renderHistoryPage() {
                                             <td>${escapeHtml(item.symbol || "-")}</td>
                                             <td>${escapeHtml(item.signal || "Completed")}</td>
                                             <td>${escapeHtml(formatHistoryTimestamp(item.created_at))}</td>
-                                            <td>${escapeHtml(formatHistoryElapsedSeconds(item.elapsed_seconds))}</td>
                                             <td>${escapeHtml(item.research_depth || "-")}</td>
                                             <td>${escapeHtml(String(item.lookback_days || "-"))}</td>
+                                            <td>${escapeHtml(formatHistoryElapsedSeconds(item.elapsed_seconds))}</td>
                                         </tr>
                                     `,
                                 )
@@ -4618,12 +4765,14 @@ function renderHistoryPage() {
 
     const sectionMarkdown = history.active.sectionMarkdown || {};
     const activeSectionKey = history.active.activeSectionKey || "";
-    const isSectionLoading = Boolean(history.active.sectionLoadingKey);
+    const loadingKeys = Array.isArray(history.active.sectionLoadingKeys) ? history.active.sectionLoadingKeys : [];
+    const loadedCount = sections.filter((section) => Object.prototype.hasOwnProperty.call(sectionMarkdown, section.section_key || "")).length;
+    const isSectionLoading = Boolean(loadingKeys.length);
     const diagram = buildHistoryDiagramModel(sections);
     const diagramOptions = {
         activeSectionKey,
         sectionMarkdown,
-        loadingKey: history.active.sectionLoadingKey,
+        loadingKeys,
     };
     const stages = [];
     if (diagram.inputs.length) {
@@ -4664,7 +4813,7 @@ function renderHistoryPage() {
         });
     }
     elements.historyStatusText.textContent = isSectionLoading
-        ? "Loading markdown"
+        ? `Loading markdown ${loadedCount}/${sections.length}`
         : `${sections.length} block${sections.length === 1 ? "" : "s"}`;
     elements.historyDetail.innerHTML = `
         <div class="history-detail-meta">
@@ -4674,7 +4823,7 @@ function renderHistoryPage() {
             <span>${escapeHtml(formatHistoryTimestamp(item.created_at))}</span>
         </div>
         <div class="history-flow-note">
-            Click any block to open its saved markdown.
+            Flow appears immediately. Markdown loads in the background; green dots mean ready.
         </div>
         <div class="history-diagram-wrap">
             <div class="history-diagram history-diagram--count-${stages.length}">
@@ -4717,13 +4866,24 @@ async function loadHistoryList(force = false) {
             throw new Error(await readResponseError(response));
         }
         const payload = await response.json();
-        state.history.items = payload.items || [];
+        state.history.items = (payload.items || []).map((item) => {
+            const entry = upsertHistoryArchiveEntry(item, item.sections || []);
+            return entry
+                ? {
+                    ...entry.item,
+                    sections: entry.sections,
+                }
+                : item;
+        });
         state.history.page = Number(payload.page || 1);
         state.history.limit = Number(payload.limit || HISTORY_PAGE_SIZE);
         state.history.hasMore = Boolean(payload.has_more);
         state.history.totalCount = Math.max(0, Number(payload.total_count || 0));
         state.history.totalPages = Math.max(1, Number(payload.total_pages || 1));
         state.history.loaded = true;
+        if (state.history.activeId) {
+            syncHistoryActiveEntry(state.history.activeId);
+        }
     } catch (error) {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history.");
     } finally {
@@ -4745,7 +4905,20 @@ async function loadHistoryDetail(historyId) {
         await ensureAuthorizedSession();
     }
     state.history.activeId = historyId;
-    state.history.active = null;
+    state.history.error = "";
+    const cachedItem = state.history.items.find((item) => item.id === historyId) || getHistoryArchiveEntry(historyId)?.item || { id: historyId };
+    const cachedEntry = upsertHistoryArchiveEntry(
+        cachedItem,
+        cachedItem.sections || getHistoryArchiveEntry(historyId)?.sections || [],
+    );
+    if (cachedEntry && cachedEntry.sections.length) {
+        state.history.active = cachedEntry;
+        state.history.detailLoading = false;
+        renderHistoryPage();
+        prefetchHistorySections(historyId).catch(() => {});
+        return;
+    }
+    state.history.active = cachedEntry;
     state.history.detailLoading = true;
     renderHistoryPage();
     try {
@@ -4757,64 +4930,45 @@ async function loadHistoryDetail(historyId) {
             throw new Error(await readResponseError(response));
         }
         const payload = await response.json();
-        state.history.active = {
-            ...payload,
-            sectionMarkdown: {},
-            activeSectionKey: "",
-            sectionLoadingKey: "",
-        };
+        state.history.active = upsertHistoryArchiveEntry(payload.item || { id: historyId }, payload.sections || []);
         state.history.error = "";
     } catch (error) {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history detail.");
     } finally {
         state.history.detailLoading = false;
         renderHistoryPage();
+        if (state.history.activeId === historyId && state.history.active?.sections?.length) {
+            prefetchHistorySections(historyId).catch(() => {});
+        }
     }
 }
 
 async function loadHistorySection(historyId, sectionKey, options = {}) {
     const { openModal = false } = options;
-    if (!historyId || !sectionKey || !state.history.active || state.history.activeId !== historyId) {
+    const entry = syncHistoryActiveEntry(historyId);
+    if (!historyId || !sectionKey || !entry || state.history.activeId !== historyId) {
         return;
     }
-    if (Object.prototype.hasOwnProperty.call(state.history.active.sectionMarkdown || {}, sectionKey)) {
-        state.history.active.activeSectionKey = sectionKey;
+    entry.activeSectionKey = sectionKey;
+    state.history.active = entry;
+    if (Object.prototype.hasOwnProperty.call(entry.sectionMarkdown || {}, sectionKey)) {
         renderHistoryPage();
         if (openModal) {
             openHistorySectionDetail(sectionKey);
         }
         return;
     }
-    state.history.active.activeSectionKey = sectionKey;
-    state.history.active.sectionLoadingKey = sectionKey;
-    let shouldOpenModal = false;
     renderHistoryPage();
     try {
-        const response = await apiFetch(`/api/history/${encodeURIComponent(historyId)}/sections/${encodeURIComponent(sectionKey)}`, {
-            headers: getAuthHeaders(),
-            cache: "no-store",
-        });
-        if (!response.ok) {
-            throw new Error(await readResponseError(response));
-        }
-        const payload = await response.json();
-        state.history.active.sectionMarkdown = {
-            ...(state.history.active.sectionMarkdown || {}),
-            [sectionKey]: payload.section?.markdown || "",
-        };
-        state.history.active.activeSectionKey = sectionKey;
-        state.history.error = "";
-        shouldOpenModal = openModal;
+        await ensureHistorySectionMarkdown(historyId, sectionKey);
     } catch (error) {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history section.");
-    } finally {
-        if (state.history.active) {
-            state.history.active.sectionLoadingKey = "";
-        }
         renderHistoryPage();
-        if (shouldOpenModal && state.history.active && state.history.activeId === historyId) {
-            openHistorySectionDetail(sectionKey);
-        }
+        return;
+    }
+    renderHistoryPage();
+    if (openModal && state.history.active && state.history.activeId === historyId) {
+        openHistorySectionDetail(sectionKey);
     }
 }
 

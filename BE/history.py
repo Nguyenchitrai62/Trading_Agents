@@ -519,6 +519,46 @@ class TursoHistoryStore:
             args,
         )
 
+    def list_run_section_metas_bulk(self, run_ids: list[str], history_access_days: int | None) -> dict[str, list[dict]]:
+        self.ensure_schema()
+        safe_run_ids = [str(run_id).strip() for run_id in run_ids if str(run_id).strip()]
+        if not safe_run_ids:
+            return {}
+
+        placeholders = ", ".join("?" for _ in safe_run_ids)
+        cutoff = self._history_cutoff(history_access_days)
+        extra_where = "AND r.created_at >= ?" if cutoff else ""
+        args: list[object] = [*safe_run_ids]
+        if cutoff:
+            args.append(cutoff)
+
+        rows = self._query_rows(
+            f"""
+            SELECT
+                s.run_id, s.section_key, s.title, s.agent, s.team, s.created_at
+            FROM analysis_sections s
+            INNER JOIN analysis_runs r ON r.id = s.run_id
+            WHERE s.run_id IN ({placeholders})
+              {extra_where}
+            ORDER BY s.run_id ASC, s.display_order ASC
+            """,
+            args,
+        )
+
+        grouped = {run_id: [] for run_id in safe_run_ids}
+        for row in rows:
+            run_id = str(row.get("run_id") or "")
+            if not run_id:
+                continue
+            grouped.setdefault(run_id, []).append({
+                "section_key": row.get("section_key"),
+                "title": row.get("title"),
+                "agent": row.get("agent"),
+                "team": row.get("team"),
+                "created_at": row.get("created_at"),
+            })
+        return grouped
+
     def count_accessible_runs(self, history_access_days: int | None) -> int:
         self.ensure_schema()
         cutoff = self._history_cutoff(history_access_days)
