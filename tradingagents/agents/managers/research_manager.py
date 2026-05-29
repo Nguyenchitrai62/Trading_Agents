@@ -6,6 +6,7 @@ from tradingagents.agents.schemas import ResearchPlan, render_research_plan
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_coinglass_context_instruction,
+    get_coinglass_packages_for_role,
     get_language_instruction,
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
@@ -24,14 +25,7 @@ def create_research_manager(llm):
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=18)
         coinglass_context = get_coinglass_context_instruction(
             state,
-            packages=(
-                "derivatives_positioning",
-                "funding_pressure",
-                "liquidation_risk",
-                "exchange_reserves",
-                "institutional_flow",
-                "macro_cycle_context",
-            ),
+            packages=get_coinglass_packages_for_role("research_manager"),
         )
 
         investment_debate_state = state["investment_debate_state"]

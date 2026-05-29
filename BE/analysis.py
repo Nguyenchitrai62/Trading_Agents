@@ -29,7 +29,7 @@ from tradingagents.dataflows.coinglass_client import (
 )
 
 try:
-    from tradingagents.default_config import DEFAULT_CONFIG as TRADINGAGENTS_DEFAULT_CONFIG
+    from tradingagents.agent_config import DEFAULT_CONFIG as TRADINGAGENTS_DEFAULT_CONFIG
     from tradingagents.graph.analyst_execution import ANALYST_NODE_SPECS
     from tradingagents.graph.checkpointer import (
         checkpoint_step,
@@ -834,7 +834,13 @@ class AnalysisService:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    def build_analysis_config(self, request: AnalysisRequest, minimax_settings: dict, runtime_profile: dict) -> dict:
+    def build_analysis_config(
+        self,
+        request: AnalysisRequest,
+        minimax_settings: dict,
+        runtime_profile: dict,
+        selected_analysts: list[str],
+    ) -> dict:
         config = deepcopy(TRADINGAGENTS_DEFAULT_CONFIG)
         config.update(
             {
@@ -855,6 +861,16 @@ class AnalysisService:
                 "persist_analysis_artifacts": False,
             }
         )
+        owner_key = str(config.get("coinglass_owner_analyst") or "").strip()
+        if owner_key not in selected_analysts:
+            owner_key = selected_analysts[0]
+
+        owner_spec = ANALYST_NODE_SPECS.get(owner_key)
+        owner_label = owner_spec.agent_node if owner_spec is not None else str(
+            config.get("coinglass_owner_agent_label") or owner_key or "Analyst"
+        ).strip()
+        config["coinglass_owner_analyst"] = owner_key
+        config["coinglass_owner_agent_label"] = owner_label
         return config
 
     def fetch_coinglass_context(
@@ -862,6 +878,8 @@ class AnalysisService:
         *,
         symbol: str,
         analysis_date: str,
+        owner_agent_key: str,
+        owner_agent_label: str,
         emit: Callable[[str, dict], None],
         emit_analysis_log: Callable[..., None],
         ensure_not_cancelled: Callable[[], None],
@@ -883,6 +901,8 @@ class AnalysisService:
             "Prefetching CoinGlass high-value market context.",
             "coinglass",
             base_url=self.settings.coinglass_base_url,
+            concurrency_limit=self.settings.coinglass_concurrency_limit,
+            owner_agent=owner_agent_label,
         )
 
         def on_endpoint_result(result: dict) -> None:
@@ -891,7 +911,7 @@ class AnalysisService:
             emit(
                 "agent_trace",
                 {
-                    "agent": "CoinGlass Data Orchestrator",
+                    "agent": owner_agent_label,
                     "phase": "tool_call",
                     "title": endpoint_title,
                     "trace_id": trace_id,
@@ -917,7 +937,7 @@ class AnalysisService:
                 emit(
                     "agent_trace",
                     {
-                        "agent": "CoinGlass Data Orchestrator",
+                        "agent": owner_agent_label,
                         "phase": "tool_result",
                         "title": endpoint_title,
                         "trace_id": trace_id,
@@ -945,7 +965,7 @@ class AnalysisService:
             emit(
                 "agent_trace",
                 {
-                    "agent": "CoinGlass Data Orchestrator",
+                    "agent": owner_agent_label,
                     "phase": "tool_result",
                     "title": endpoint_title,
                     "trace_id": trace_id,
@@ -963,6 +983,7 @@ class AnalysisService:
             base_url=self.settings.coinglass_base_url,
             timeout_seconds=self.settings.coinglass_timeout_seconds,
             request_interval_seconds=self.settings.coinglass_request_interval_seconds,
+            concurrency_limit=self.settings.coinglass_concurrency_limit,
             on_endpoint_result=on_endpoint_result,
             cancel_check=ensure_not_cancelled,
         )
@@ -974,7 +995,12 @@ class AnalysisService:
             snapshot,
             char_limit=self.settings.coinglass_package_context_char_limit,
         )
-        evidence_items = build_coinglass_evidence_items(snapshot, analysis_date)
+        evidence_items = build_coinglass_evidence_items(
+            snapshot,
+            analysis_date,
+            owner_agent_key=owner_agent_key,
+            owner_agent_label=owner_agent_label,
+        )
 
         emit_analysis_log(
             "CoinGlass high-value context ready.",
@@ -989,7 +1015,7 @@ class AnalysisService:
             emit(
                 "agent_trace",
                 {
-                    "agent": "CoinGlass Data Orchestrator",
+                    "agent": owner_agent_label,
                     "phase": "analysis",
                     "title": "CoinGlass high-value snapshot",
                     "trace_id": "coinglass:snapshot",
@@ -1602,6 +1628,49 @@ class AnalysisService:
         if not filtered_analysts:
             raise HTTPException(status_code=400, detail="No valid analysts remain for crypto analysis.")
 
+        config = self.build_analysis_config(request, minimax_settings, runtime_profile, filtered_analysts)
+        initial_snapshot = self.extract_runtime_snapshot({})
+        analyst_parallel_enabled = (
+            int(config.get("analyst_concurrency_limit") or 1) > 1
+            and len(filtered_analysts) > 1
+        )
+        current_agent = "Analyst Team" if analyst_parallel_enabled else ANALYST_NODE_SPECS[filtered_analysts[0]].agent_node
+        initial_status = self.build_status_snapshot(initial_snapshot, filtered_analysts, current_agent)
+        emit(
+            "analysis_meta",
+            {
+                "symbol": symbol,
+                "asset_type_mode": request.asset_type,
+                "analysis_date": request.analysis_date,
+                "lookback_days": request.lookback_days,
+                "asset_type": asset_type,
+                "output_language": request.output_language,
+                "research_depth": request.research_depth,
+                "depth_rounds": runtime_profile["effective_rounds"],
+                "mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
+                "model": request.model,
+                "llm_max_tokens": runtime_profile["llm_max_tokens"],
+                "resource_constrained": self.settings.resource_constrained_mode,
+                "selected_analysts": filtered_analysts,
+                "selected_analyst_labels": [ANALYST_NODE_SPECS[key].agent_node for key in filtered_analysts],
+                "analyst_concurrency_limit": int(config.get("analyst_concurrency_limit") or 1),
+                "provider": minimax_settings["provider"],
+                "base_url": minimax_settings["base_url"],
+                "coinglass": {
+                    "enabled": self.settings.coinglass_enabled,
+                    "configured": bool(self.settings.coinglass_api_key),
+                    "context_available": False,
+                    "evidence_count": 0,
+                    "concurrency_limit": self.settings.coinglass_concurrency_limit,
+                    "owner_analyst_key": config.get("coinglass_owner_analyst"),
+                    "owner_analyst_label": config.get("coinglass_owner_agent_label"),
+                    "prefetch_pending": bool(self.settings.coinglass_enabled and self.settings.coinglass_api_key),
+                },
+                "initial_status": initial_status,
+            },
+        )
+        emit("status_snapshot", initial_status)
+
         emit_analysis_log(
             "Request validated and runtime options resolved.",
             "prepare",
@@ -1634,13 +1703,13 @@ class AnalysisService:
         coinglass_context, coinglass_package_contexts, coinglass_evidence_items = self.fetch_coinglass_context(
             symbol=symbol,
             analysis_date=request.analysis_date,
+            owner_agent_key=str(config.get("coinglass_owner_analyst") or ""),
+            owner_agent_label=str(config.get("coinglass_owner_agent_label") or "Analyst"),
             emit=emit,
             emit_analysis_log=emit_analysis_log,
             ensure_not_cancelled=ensure_not_cancelled,
         )
         ensure_not_cancelled()
-
-        config = self.build_analysis_config(request, minimax_settings, runtime_profile)
 
         def emit_parallel_trace(trace: dict) -> None:
             if cancel_event.is_set():
@@ -1677,44 +1746,6 @@ class AnalysisService:
             max_tokens=runtime_profile["llm_max_tokens"],
         )
         graph = TradingAgentsGraph(selected_analysts=filtered_analysts, debug=False, config=config)
-
-        initial_snapshot = self.extract_runtime_snapshot({})
-        analyst_parallel_enabled = (
-            int(config.get("analyst_concurrency_limit") or 1) > 1
-            and len(filtered_analysts) > 1
-        )
-        current_agent = "Analyst Team" if analyst_parallel_enabled else ANALYST_NODE_SPECS[filtered_analysts[0]].agent_node
-        initial_status = self.build_status_snapshot(initial_snapshot, filtered_analysts, current_agent)
-        emit(
-            "analysis_meta",
-            {
-                "symbol": symbol,
-                "asset_type_mode": request.asset_type,
-                "analysis_date": request.analysis_date,
-                "lookback_days": request.lookback_days,
-                "asset_type": asset_type,
-                "output_language": request.output_language,
-                "research_depth": request.research_depth,
-                "depth_rounds": runtime_profile["effective_rounds"],
-                "mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
-                "model": request.model,
-                "llm_max_tokens": runtime_profile["llm_max_tokens"],
-                "resource_constrained": self.settings.resource_constrained_mode,
-                "selected_analysts": filtered_analysts,
-                "selected_analyst_labels": [ANALYST_NODE_SPECS[key].agent_node for key in filtered_analysts],
-                "analyst_concurrency_limit": int(config.get("analyst_concurrency_limit") or 1),
-                "provider": minimax_settings["provider"],
-                "base_url": minimax_settings["base_url"],
-                "coinglass": {
-                    "enabled": self.settings.coinglass_enabled,
-                    "configured": bool(self.settings.coinglass_api_key),
-                    "context_available": bool(coinglass_context),
-                    "evidence_count": len(coinglass_evidence_items),
-                },
-                "initial_status": initial_status,
-            },
-        )
-        emit("status_snapshot", initial_status)
 
         ensure_not_cancelled()
         graph.ticker = symbol

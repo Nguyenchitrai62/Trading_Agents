@@ -428,7 +428,11 @@ function renderLogEntries(element, entries, emptyText, options = {}) {
 
 function renderOperationsRail() {
     const toolFeed = state.run.traceFeed.filter((item) => isToolTracePhase(item.phase));
-    const feed = toolFeed.slice(-TRACE_DISPLAY_LIMIT);
+    const visibleToolLimit = Math.max(
+        TRACE_DISPLAY_LIMIT,
+        Math.min(TRACE_FEED_LIMIT, toolFeed.length),
+    );
+    const feed = toolFeed.slice(-visibleToolLimit);
     const newestTool = feed[feed.length - 1];
     const latestUpdate = state.run.latestReportTitle || state.run.complete?.signal || state.run.cancelled?.message || newestTool?.title || "No updates yet";
     const totalToolEvents = toolFeed.length;
@@ -579,10 +583,13 @@ function getDetailContent(detail) {
 
     if (detail?.type === "trace") {
         const entry = getTraceEntryById(detail.traceId);
+        const hasToolPayload = Boolean(entry?.toolCallContent || entry?.toolResultContent);
         return {
             content: formatTraceDetailMarkdown(entry),
             fallback: "This trace is no longer available in the live feed.",
-            toolResult: entry?.toolResultData || null,
+            toolResult: hasToolPayload
+                ? entry?.toolResultData || { answer: "", sections: [], relatedSearches: [] }
+                : null,
             traceEntry: entry || null,
         };
     }
@@ -759,9 +766,11 @@ function renderToolResultDetailMarkup(toolResult, entry) {
 }
 
 function setToolResultPreview(element, toolResult, entry, fallback) {
-    const hasContent = Boolean(toolResult && (toolResult.answer || toolResult.sections.length || toolResult.relatedSearches.length));
+    const hasStructuredContent = Boolean(toolResult && (toolResult.answer || toolResult.sections.length || toolResult.relatedSearches.length));
+    const hasRawContent = Boolean(entry?.toolCallContent || entry?.toolResultContent || entry?.content);
+    const hasContent = Boolean(hasStructuredContent || hasRawContent);
     element.innerHTML = hasContent
-        ? renderToolResultDetailMarkup(toolResult, entry)
+        ? renderToolResultDetailMarkup(toolResult || { answer: "", sections: [], relatedSearches: [] }, entry)
         : `<div class="tool-result-empty">${escapeHtml(fallback)}</div>`;
     element.classList.toggle("is-empty", !hasContent);
 }

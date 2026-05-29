@@ -47,6 +47,7 @@ DEFAULT_COINGLASS_TIMEOUT_SECONDS = 10.0
 DEFAULT_COINGLASS_CONTEXT_CHAR_LIMIT = 0
 DEFAULT_COINGLASS_PACKAGE_CONTEXT_CHAR_LIMIT = 0
 DEFAULT_COINGLASS_REQUEST_INTERVAL_SECONDS = 0.05
+DEFAULT_COINGLASS_CONCURRENCY_LIMIT = 4
 RESEARCH_DEPTH_OPTIONS = {
     "quick": {
         "label": "Quick",
@@ -330,6 +331,7 @@ class BackendSettings:
     coinglass_context_char_limit: int
     coinglass_package_context_char_limit: int
     coinglass_request_interval_seconds: float
+    coinglass_concurrency_limit: int
     trading_view_symbol: str
     trading_view_interval: str
     trading_view_symbols: tuple[str, ...]
@@ -429,6 +431,10 @@ class BackendSettings:
                 0.0,
                 _env_float("COINGLASS_REQUEST_INTERVAL_SECONDS", DEFAULT_COINGLASS_REQUEST_INTERVAL_SECONDS),
             ),
+            coinglass_concurrency_limit=max(
+                1,
+                _env_int("COINGLASS_CONCURRENCY_LIMIT", DEFAULT_COINGLASS_CONCURRENCY_LIMIT),
+            ),
             trading_view_symbol=os.getenv("TRADING_VIEW_SYMBOL", DEFAULT_TRADING_VIEW_SYMBOL),
             trading_view_interval=os.getenv("TRADING_VIEW_INTERVAL", DEFAULT_TRADING_VIEW_INTERVAL),
             trading_view_symbols=trading_view_symbols,
@@ -485,6 +491,7 @@ __all__ = [
     "DEFAULT_ADMIN_EMAILS",
     "DEFAULT_ANALYSTS",
     "DEFAULT_COINGLASS_BASE_URL",
+    "DEFAULT_COINGLASS_CONCURRENCY_LIMIT",
     "DEFAULT_HISTORY_ACCESS_DAYS",
     "RESEARCH_DEPTH_OPTIONS",
     "ROOT_DIR",

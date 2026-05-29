@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -361,6 +362,7 @@ def fetch_high_value_snapshot(
     timeout_seconds: float = 10.0,
     history_limit: int = DEFAULT_LIMIT,
     request_interval_seconds: float = 0.0,
+    concurrency_limit: int = 1,
     on_endpoint_result: Callable[[dict[str, Any]], None] | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
@@ -384,17 +386,43 @@ def fetch_high_value_snapshot(
         }
 
     client = CoinGlassClient(api_key=api_key, base_url=base_url, timeout_seconds=timeout_seconds)
-    results: list[dict[str, Any]] = []
     safe_history_limit = max(1, min(MAX_HISTORY_LIMIT, int(history_limit or DEFAULT_LIMIT)))
-    for spec in HIGH_VALUE_ENDPOINTS:
-        if cancel_check:
-            cancel_check()
-        result = client.fetch(spec, coin_symbol, pair_symbol, safe_history_limit)
-        results.append(result)
+    safe_concurrency_limit = max(1, int(concurrency_limit or 1))
+    results_by_index: list[dict[str, Any] | None] = [None] * len(HIGH_VALUE_ENDPOINTS)
+
+    def store_result(index: int, result: dict[str, Any]) -> None:
+        results_by_index[index] = result
         if on_endpoint_result:
             on_endpoint_result(result)
-        if request_interval_seconds > 0:
-            time.sleep(request_interval_seconds)
+
+    if safe_concurrency_limit == 1:
+        for index, spec in enumerate(HIGH_VALUE_ENDPOINTS):
+            if cancel_check:
+                cancel_check()
+            result = client.fetch(spec, coin_symbol, pair_symbol, safe_history_limit)
+            store_result(index, result)
+            if request_interval_seconds > 0 and index + 1 < len(HIGH_VALUE_ENDPOINTS):
+                time.sleep(request_interval_seconds)
+    else:
+        # CoinGlass endpoints are independent, so fetch them in a bounded pool
+        # and keep the final snapshot ordered by the static endpoint list.
+        with ThreadPoolExecutor(max_workers=safe_concurrency_limit, thread_name_prefix="coinglass") as executor:
+            future_map = {}
+            for index, spec in enumerate(HIGH_VALUE_ENDPOINTS):
+                if cancel_check:
+                    cancel_check()
+                future = executor.submit(client.fetch, spec, coin_symbol, pair_symbol, safe_history_limit)
+                future_map[future] = index
+                if request_interval_seconds > 0 and index + 1 < len(HIGH_VALUE_ENDPOINTS):
+                    time.sleep(request_interval_seconds)
+
+            for future in as_completed(future_map):
+                if cancel_check:
+                    cancel_check()
+                index = future_map[future]
+                store_result(index, future.result())
+
+    results = [result for result in results_by_index if result is not None]
 
     packages = _build_packages(results)
     successful = sum(1 for result in results if result.get("status") == "ok")
@@ -474,7 +502,13 @@ def build_coinglass_package_contexts(snapshot: dict[str, Any], *, char_limit: in
     return contexts
 
 
-def build_coinglass_evidence_items(snapshot: dict[str, Any], analysis_date: str) -> list[dict[str, Any]]:
+def build_coinglass_evidence_items(
+    snapshot: dict[str, Any],
+    analysis_date: str,
+    *,
+    owner_agent_key: str,
+    owner_agent_label: str,
+) -> list[dict[str, Any]]:
     if not snapshot or not snapshot.get("enabled"):
         return []
 
@@ -498,11 +532,11 @@ def build_coinglass_evidence_items(snapshot: dict[str, Any], analysis_date: str)
         freshness = _combined_freshness(ok_results)
         items.append(
             {
-                "agent": "coinglass",
-                "agent_label": "CoinGlass Data Orchestrator",
+                "agent": owner_agent_key,
+                "agent_label": owner_agent_label,
                 "report_section": package,
                 "claim": (
-                    f"CoinGlass package `{package}` was prefetched for {snapshot.get('symbol')} "
+                    f"CoinGlass package `{package}` was collected for the {owner_agent_label} path on {snapshot.get('symbol')} "
                     f"with {len(ok_results)}/{len(results)} high-value endpoints available."
                 ),
                 "source": latest_source,
@@ -513,7 +547,7 @@ def build_coinglass_evidence_items(snapshot: dict[str, Any], analysis_date: str)
                 "direction": "unknown",
                 "confidence": 0.78 if len(ok_results) == len(results) else 0.62,
                 "freshness": freshness,
-                "notes": "Backend-prefetched CoinGlass context shared across agents in this analysis run.",
+                "notes": f"CoinGlass context was collected for the {owner_agent_label} path and then shared with the wider analysis run.",
             }
         )
     return items

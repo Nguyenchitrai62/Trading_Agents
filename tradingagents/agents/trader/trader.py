@@ -10,6 +10,7 @@ from tradingagents.agents.schemas import TraderProposal, render_trader_proposal
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_coinglass_context_instruction,
+    get_coinglass_packages_for_role,
     get_language_instruction,
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
@@ -54,12 +55,7 @@ def create_trader(llm):
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=14)
         coinglass_context = get_coinglass_context_instruction(
             state,
-            packages=(
-                "derivatives_positioning",
-                "funding_pressure",
-                "liquidation_risk",
-                "options_context",
-            ),
+            packages=get_coinglass_packages_for_role("trader"),
         )
 
         messages = [

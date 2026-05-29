@@ -1290,6 +1290,35 @@ body {
 
 .tool-result-summary.markdown-preview {
     margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.58;
+}
+
+.tool-result-summary.markdown-preview h1 {
+    margin: 0 0 0.7em;
+    font-size: 1.06rem;
+}
+
+.tool-result-summary.markdown-preview h2 {
+    margin: 0.95em 0 0.5em;
+    padding-top: 0.55em;
+    font-size: 0.96rem;
+}
+
+.tool-result-summary.markdown-preview h3 {
+    margin: 0.8em 0 0.4em;
+    font-size: 0.88rem;
+}
+
+.tool-result-summary.markdown-preview p,
+.tool-result-summary.markdown-preview li {
+    font-size: 0.88rem;
+    line-height: 1.58;
+}
+
+.tool-result-summary.markdown-preview pre,
+.tool-result-summary.markdown-preview code {
+    font-size: 0.78rem;
 }
 
 .tool-result-section {
@@ -1366,7 +1395,7 @@ body {
 .tool-result-card-snippet {
     margin: 0;
     color: #bdd3d8;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     line-height: 1.6;
 }
 

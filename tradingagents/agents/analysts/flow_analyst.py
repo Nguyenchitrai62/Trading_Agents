@@ -4,6 +4,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_balance_sheet,
     get_cashflow,
     get_coinglass_context_instruction,
+    get_coinglass_packages_for_role,
     get_fundamentals,
     get_income_statement,
     get_global_news,
@@ -25,13 +26,7 @@ def create_flow_analyst(llm):
         instrument_context = build_instrument_context(state["company_of_interest"], asset_type)
         coinglass_context = get_coinglass_context_instruction(
             state,
-            packages=(
-                "exchange_reserves",
-                "institutional_flow",
-                "funding_pressure",
-                "liquidation_risk",
-                "macro_cycle_context",
-            ),
+            packages=get_coinglass_packages_for_role("flow_analyst"),
         )
         require_companion_web_search = (
             asset_type == "crypto"

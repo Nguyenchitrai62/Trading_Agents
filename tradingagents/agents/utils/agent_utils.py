@@ -77,6 +77,23 @@ def get_preferred_reference_sources_instruction() -> str:
     )
 
 
+def get_coinglass_packages_for_role(role_key: str) -> tuple[str, ...]:
+    """Resolve the configured CoinGlass package list for a specific agent role."""
+    from tradingagents.dataflows.config import get_config
+
+    role = str(role_key or "").strip()
+    if not role:
+        return ()
+
+    packages_by_role = get_config().get("coinglass_packages_by_role") or {}
+    packages = packages_by_role.get(role) or ()
+    return tuple(
+        str(package).strip()
+        for package in packages
+        if str(package).strip()
+    )
+
+
 def build_instrument_context(ticker: str, asset_type: str = "crypto") -> str:
     """Describe the exact instrument so agents preserve exchange-qualified tickers."""
     instrument_label = "asset" if asset_type == "crypto" else "instrument"
@@ -96,9 +113,16 @@ def build_instrument_context(ticker: str, asset_type: str = "crypto") -> str:
 def get_coinglass_context_instruction(
     state: dict,
     packages: list[str] | tuple[str, ...] | None = None,
-    char_limit: int = 4800,
+    char_limit: int | None = None,
 ) -> str:
-    """Return backend-prefetched CoinGlass context for prompts."""
+    """Return CoinGlass context assigned to the configured analyst path."""
+    from tradingagents.dataflows.config import get_config
+
+    config = get_config()
+    owner_label = str(config.get("coinglass_owner_agent_label") or "configured analyst").strip()
+    if char_limit is None:
+        char_limit = int(config.get("coinglass_prompt_char_limit") or 0)
+
     package_contexts = state.get("coinglass_package_contexts") or {}
     context_parts: list[str] = []
     if packages and isinstance(package_contexts, dict):
@@ -120,7 +144,7 @@ def get_coinglass_context_instruction(
         context = context[: max(0, char_limit - 14)].rstrip() + "\n[truncated]"
 
     return (
-        "\n\nCoinGlass high-value context prefetched by the backend for this same analysis run. "
+        f"\n\nCoinGlass high-value context collected for the {owner_label} path in this same analysis run. "
         "Use it as source-backed market evidence, mention gaps when an endpoint failed, and do not call CoinGlass again:\n"
         f"{context}"
     )

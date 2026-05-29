@@ -4,6 +4,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_crypto_indicators,
     get_crypto_ohlcv,
     get_coinglass_context_instruction,
+    get_coinglass_packages_for_role,
     get_language_instruction,
     get_preferred_reference_sources_instruction,
 )
@@ -29,12 +30,7 @@ def create_market_analyst(llm):
         )
         coinglass_context = get_coinglass_context_instruction(
             state,
-            packages=(
-                "derivatives_positioning",
-                "funding_pressure",
-                "liquidation_risk",
-                "macro_cycle_context",
-            ),
+            packages=get_coinglass_packages_for_role("market_analyst"),
         )
 
         tools = [get_crypto_ohlcv, get_crypto_indicators]
