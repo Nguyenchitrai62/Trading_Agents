@@ -4222,7 +4222,7 @@ function upsertHistoryArchiveEntry(item = {}, sections = null) {
         : Array.isArray(existing.sections)
         ? existing.sections
         : [];
-    const activeSectionKey = existing.activeSectionKey || resolvedSections[0]?.section_key || "";
+    const activeSectionKey = existing.activeSectionKey || "";
 
     cache[historyId] = {
         item: {
@@ -4244,9 +4244,6 @@ function syncHistoryActiveEntry(historyId = "") {
     const entry = getHistoryArchiveEntry(historyId);
     if (!entry) {
         return null;
-    }
-    if (!entry.activeSectionKey) {
-        entry.activeSectionKey = entry.sections[0]?.section_key || "";
     }
     if (state.history.activeId === historyId) {
         state.history.active = entry;
