@@ -249,7 +249,7 @@ News report:
 {state.get('news_report') or '<missing>'}
 
 Flow report:
-{state.get('fundamentals_report') or '<missing>'}
+{state.get('flow_report') or '<missing>'}
 
 Research Manager handoff:
 {research_plan or '<missing>'}

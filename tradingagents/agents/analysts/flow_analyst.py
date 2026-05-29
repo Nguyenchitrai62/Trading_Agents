@@ -13,8 +13,8 @@ from tradingagents.agents.utils.agent_utils import (
 from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel, has_minimax_mcp_tool
 
 
-def create_fundamentals_analyst(llm):
-    def fundamentals_analyst_node(state):
+def create_flow_analyst(llm):
+    def flow_analyst_node(state):
         current_date = state["trade_date"]
         asset_type = state.get("asset_type", "crypto")
         instrument_context = build_instrument_context(state["company_of_interest"], asset_type)
@@ -103,7 +103,7 @@ def create_fundamentals_analyst(llm):
 
         return {
             "messages": [result],
-            "fundamentals_report": report,
+            "flow_report": report,
         }
 
-    return fundamentals_analyst_node
+    return flow_analyst_node

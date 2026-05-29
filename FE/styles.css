@@ -7231,11 +7231,35 @@ body.is-running .window-status {
 }
 
 /* Auth slot final override: keep the Google-controlled iframe stable on hover. */
+.topbar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.topbar-brand {
+    position: relative;
+    z-index: 2;
+    min-width: 220px;
+}
+
+.page-tabs {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(500px, calc(100% - 760px));
+    max-width: 100%;
+    z-index: 1;
+}
+
 .topbar-actions {
     width: auto;
     max-width: 100%;
     min-width: max-content;
     min-height: 44px;
+    margin-left: auto;
     justify-self: end;
     justify-content: flex-end;
     flex-wrap: wrap;
@@ -7282,10 +7306,33 @@ body.is-running .window-status {
     max-width: none !important;
 }
 
+.history-diagram-node.is-loading {
+    border-color: rgba(245, 186, 84, 0.5);
+    background: linear-gradient(180deg, rgba(55, 40, 14, 0.94) 0%, rgba(29, 22, 9, 0.96) 100%);
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(245, 186, 84, 0.18);
+}
+
+.history-diagram-node.is-loading strong {
+    color: #ffe4a8;
+}
+
 @media (max-width: 1180px) {
+    .topbar {
+        display: grid;
+    }
+
+    .page-tabs {
+        position: static;
+        left: auto;
+        transform: none;
+        width: 100%;
+        z-index: auto;
+    }
+
     .topbar-actions {
         width: 100%;
         min-width: 0;
+        margin-left: 0;
         justify-self: stretch;
         justify-content: flex-end;
     }

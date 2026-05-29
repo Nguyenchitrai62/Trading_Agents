@@ -45,9 +45,9 @@ ANALYST_NODE_SPECS: Dict[str, AnalystNodeSpec] = {
         key="fundamentals",
         # Wire key stays fundamentals for saved-config back-compat.
         agent_node="Flow Analyst",
-        clear_node="Msg Clear Fundamentals",
-        tool_node="tools_fundamentals",
-        report_key="fundamentals_report",
+        clear_node="Msg Clear Flow",
+        tool_node="tools_flow",
+        report_key="flow_report",
     ),
 }
 

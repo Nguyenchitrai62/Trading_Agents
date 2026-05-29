@@ -116,7 +116,7 @@ STATE_UPDATE_KEYS = {
     "investment_debate_state",
     "risk_debate_state",
     "market_report",
-    "fundamentals_report",
+    "flow_report",
     "sentiment_report",
     "news_report",
     "investment_plan",

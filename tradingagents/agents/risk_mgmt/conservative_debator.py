@@ -17,7 +17,7 @@ def create_conservative_debator(llm):
         market_research_report = state["market_report"]
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
-        fundamentals_report = state["fundamentals_report"]
+        flow_report = state["flow_report"]
 
         trader_decision = state["trader_investment_plan"]
 
@@ -30,7 +30,7 @@ Your task is to actively counter the arguments of the Aggressive and Neutral Ana
 Market Research Report: {market_research_report}
 Social Report: {sentiment_report}
 Latest World Affairs Report: {news_report}
-Asset Fundamentals/Context Report: {fundamentals_report}
+Asset Flow Report: {flow_report}
 Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_aggressive_response} Here is the last response from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
 Question excessive optimism, highlight downside scenarios, and explain what safer positioning or confirmation is needed before action.""" + get_language_instruction()

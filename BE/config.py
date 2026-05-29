@@ -76,7 +76,7 @@ SECTION_META = {
         "agent": "News Analyst",
         "team": "Analyst Team",
     },
-    "fundamentals_report": {
+    "flow_report": {
         "title": "Flow Analysis",
         "agent": "Flow Analyst",
         "team": "Analyst Team",

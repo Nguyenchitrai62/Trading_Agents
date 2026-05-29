@@ -10,7 +10,7 @@ const REPORT_BY_ANALYST = {
     market: { section: "market_report", title: "Market Analysis" },
     social: { section: "sentiment_report", title: "Social Analysis" },
     news: { section: "news_report", title: "News Analysis" },
-    fundamentals: { section: "fundamentals_report", title: "Flow Analysis" },
+    fundamentals: { section: "flow_report", title: "Fundamentals Analysis" },
 };
 
 const REPORT_DETAIL_BY_AGENT = {
@@ -42,7 +42,7 @@ const REPORT_DETAIL_BY_AGENT = {
         type: "report",
         section: REPORT_BY_ANALYST.fundamentals.section,
         title: REPORT_BY_ANALYST.fundamentals.title,
-        subtitle: "Flow Analyst",
+        subtitle: "Fundamentals Analyst",
     },
 };
 
@@ -53,7 +53,7 @@ const COMPACT_AGENT_LABELS = {
     "Social Analyst": "Social",
     "News Analyst": "News",
     "Fundamentals Analyst": "Fund",
-    "Flow Analyst": "Flow",
+    "Flow Analyst": "Fund",
     "Research Manager": "Lead",
     "Portfolio Manager": "Manager",
     "Verifier": "Verify",
@@ -104,7 +104,7 @@ const DETAIL_PANEL_META = {
 };
 
 const HISTORY_FLOW_SECTION_ORDER = {
-    inputs: ["market_report", "sentiment_report", "news_report", "fundamentals_report"],
+    inputs: ["market_report", "sentiment_report", "news_report", "flow_report"],
     research: ["bull_research", "research_debate", "bear_research", "investment_plan"],
     trading: ["trader_investment_plan"],
     risk: ["aggressive_risk", "neutral_risk", "conservative_risk", "risk_debate"],
@@ -130,11 +130,11 @@ const HISTORY_FLOW_SECTION_META = {
         icon: "news",
         description: "Catalysts, headlines, and event pressure gathered into one report.",
     },
-    fundamentals_report: {
-        shortTitle: "Flow",
+    flow_report: {
+        shortTitle: "Fundamentals",
         tone: "signal",
         icon: "fund",
-        description: "On-chain, derivatives, ETF, liquidity, and positioning context for crypto.",
+        description: "Crypto flow context presented in the familiar fundamentals slot on the FE.",
     },
     bull_research: {
         shortTitle: "Bullish",
@@ -1893,7 +1893,7 @@ function normalizeFrontendConfig() {
                 { value: "market", label: "Market Analyst" },
                 { value: "social", label: "Social Analyst" },
                 { value: "news", label: "News Analyst" },
-                { value: "fundamentals", label: "Flow Analyst" },
+                { value: "fundamentals", label: "Fundamentals Analyst" },
             ],
             asset_types: [{ value: "crypto", label: "Crypto" }],
             lookback_presets: options.lookbackPresets || options.lookback_presets || [
@@ -4667,6 +4667,14 @@ function scheduleHistoryTableLayoutMetrics() {
     });
 }
 
+function waitForNextPaint() {
+    return new Promise((resolve) => {
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(resolve);
+        });
+    });
+}
+
 function renderHistoryPage() {
     if (!(elements.historyList instanceof HTMLElement) || !(elements.historyDetail instanceof HTMLElement)) {
         return;
@@ -4988,7 +4996,12 @@ async function loadHistorySection(historyId, sectionKey, options = {}) {
         }
         return;
     }
+    addHistoryLoadingKey(entry, sectionKey);
     renderHistoryPage();
+    await waitForNextPaint();
+    if (state.history.activeId !== historyId) {
+        return;
+    }
     try {
         await ensureHistorySectionMarkdown(historyId, sectionKey);
     } catch (error) {

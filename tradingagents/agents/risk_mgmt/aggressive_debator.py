@@ -17,7 +17,7 @@ def create_aggressive_debator(llm):
         market_research_report = state["market_report"]
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
-        fundamentals_report = state["fundamentals_report"]
+        flow_report = state["flow_report"]
 
         trader_decision = state["trader_investment_plan"]
 
@@ -30,7 +30,7 @@ Your task is to create a compelling case for the trader's decision by questionin
 Market Research Report: {market_research_report}
 Social Report: {sentiment_report}
 Latest World Affairs Report: {news_report}
-Asset Fundamentals/Context Report: {fundamentals_report}
+Asset Flow Report: {flow_report}
 Here is the current conversation history: {history} Here are the last arguments from the conservative analyst: {current_conservative_response} Here are the last arguments from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
 Engage actively by addressing specific concerns, refuting weak logic, and asserting the benefits of calculated risk-taking. Make every field concrete and decision-useful.""" + get_language_instruction()

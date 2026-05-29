@@ -15,9 +15,9 @@ def create_bull_researcher(llm):
         market_research_report = state["market_report"]
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
-        fundamentals_report = state["fundamentals_report"]
+        flow_report = state["flow_report"]
         target_label = "asset"
-        fundamentals_label = "Asset fundamentals/context report (may be unavailable for crypto)"
+        flow_label = "Asset flow context report"
 
         prompt = f"""You are a Bull Analyst advocating for investing in the {target_label}. Build a strong, evidence-based case emphasizing growth potential, competitive advantages, and positive market indicators. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Do not add conversational filler or invent unsupported facts.
 
@@ -32,7 +32,7 @@ Resources available:
 Market research report: {market_research_report}
 Social report: {sentiment_report}
 Latest world affairs news: {news_report}
-{fundamentals_label}: {fundamentals_report}
+{flow_label}: {flow_report}
 Conversation history of the debate: {history}
 Last bear argument: {current_response}
 Use this information to deliver a compelling bull argument, refute the bear's concerns, and engage in a dynamic debate that demonstrates the strengths of the bull position.
