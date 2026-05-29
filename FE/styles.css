@@ -4978,56 +4978,9 @@ body.is-running .window-status {
     text-transform: uppercase;
 }
 
-.history-table-control select {
-    min-width: 0;
-    min-height: 36px;
-    padding: 0 18px 0 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    color: #f4f8fc;
-    font-size: 0.84rem;
-    font-weight: 700;
-    appearance: none;
-    cursor: pointer;
-}
-
-.history-table-control--rows {
-    gap: 6px;
-}
-
-.history-table-select-wrap {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    min-width: 92px;
-    padding: 0 14px;
-    border: 1px solid rgba(101, 208, 173, 0.18);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.04);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
-}
-
-.history-table-select-wrap:hover {
-    border-color: rgba(101, 208, 173, 0.34);
-    background: rgba(255, 255, 255, 0.06);
-}
-
-.history-table-select-icon {
-    position: absolute;
-    right: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--accent);
-    font-size: 0.76rem;
-    font-weight: 800;
-    pointer-events: none;
-}
-
-.history-table-control select:focus-visible,
 .history-page-button:focus-visible,
 .history-page-chip:focus-visible,
+.history-table-limit-chip:focus-visible,
 .history-table-row:focus-visible {
     outline: 2px solid rgba(101, 208, 173, 0.4);
     outline-offset: 3px;
@@ -5047,16 +5000,68 @@ body.is-running .window-status {
 
 .history-table-footer-meta {
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+}
+
+.history-table-limit-control {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.history-table-limit-label {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.history-table-limit-track {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    border: 1px solid rgba(101, 208, 173, 0.16);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.03);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.history-table-limit-chip {
+    min-width: 42px;
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 700;
+    transition: transform 180ms ease, background 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+
+.history-table-limit-chip:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: rgba(101, 208, 173, 0.28);
+    color: #f4f8fc;
+}
+
+.history-table-limit-chip.is-active {
+    background: radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.12), rgba(101, 208, 173, 0.22)), rgba(101, 208, 173, 0.14);
+    border-color: rgba(101, 208, 173, 0.4);
+    box-shadow: 0 10px 24px rgba(5, 10, 16, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    color: #f4f8fc;
 }
 
 .history-table-footer-copy {
     color: var(--muted);
     font-size: 0.74rem;
     line-height: 1.4;
-    padding-bottom: 7px;
 }
 
 .history-page-button {
@@ -5143,6 +5148,9 @@ body.is-running .window-status {
 }
 
 .history-table-wrap {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
     min-width: 0;
     overflow-y: auto;
     overflow-x: hidden;
@@ -5154,57 +5162,65 @@ body.is-running .window-status {
 }
 
 .history-table {
-    width: 100%;
+    width: max-content;
     min-width: 0;
+    max-width: 100%;
     border-collapse: separate;
     border-spacing: 0;
-    table-layout: fixed;
+    table-layout: auto;
 }
 
 .history-table th,
 .history-table td {
     text-align: left;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    white-space: nowrap;
+    overflow-wrap: normal;
+    word-break: normal;
+}
+
+.history-table th + th,
+.history-table td + td {
+    border-left: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .history-table th:nth-child(1),
 .history-table td:nth-child(1) {
-    width: 5%;
+    width: 3.5rem;
     text-align: center;
     color: var(--muted);
 }
 
 .history-table th:nth-child(2),
 .history-table td:nth-child(2) {
-    width: 15%;
+    width: 8.75rem;
 }
 
 .history-table th:nth-child(3),
 .history-table td:nth-child(3) {
-    width: 15%;
+    width: 9.5rem;
 }
 
 .history-table th:nth-child(4),
 .history-table td:nth-child(4) {
-    width: 23%;
+    width: 14.5rem;
 }
 
 .history-table th:nth-child(5),
 .history-table td:nth-child(5) {
-    width: 16%;
+    width: 9.5rem;
+    text-align: right;
     font-variant-numeric: tabular-nums;
 }
 
 .history-table th:nth-child(6),
 .history-table td:nth-child(6) {
-    width: 15%;
+    width: 8rem;
 }
 
 .history-table th:nth-child(7),
 .history-table td:nth-child(7) {
-    width: 11%;
-    text-align: center;
+    width: 7rem;
+    text-align: right;
     font-variant-numeric: tabular-nums;
 }
 
@@ -5212,7 +5228,7 @@ body.is-running .window-status {
     position: sticky;
     top: 0;
     z-index: 1;
-    padding: 11px 12px;
+    padding: 10px 11px;
     border-bottom: 1px solid var(--line);
     background: rgba(13, 21, 24, 0.96);
     color: var(--muted);
@@ -5223,11 +5239,11 @@ body.is-running .window-status {
 }
 
 .history-table tbody td {
-    padding: 12px;
+    padding: 10px 11px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     color: var(--ink);
     font-size: 0.79rem;
-    line-height: 1.36;
+    line-height: 1.32;
     vertical-align: middle;
 }
 
@@ -5429,9 +5445,18 @@ body.is-running .window-status {
         align-items: stretch;
     }
 
-    .history-table-select-wrap,
+    .history-table-limit-control,
+    .history-table-limit-track,
     .history-page-button {
         width: 100%;
+    }
+
+    .history-table-limit-track {
+        justify-content: stretch;
+    }
+
+    .history-table-limit-chip {
+        flex: 1 1 0;
     }
 
     .history-page-nav {

@@ -4539,19 +4539,24 @@ function renderHistoryPage() {
                 </div>
                 <div class="history-table-footer">
                     <div class="history-table-footer-meta">
-                        <label class="history-table-control history-table-control--rows">
-                            <span>Rows per page</span>
-                            <span class="history-table-select-wrap">
-                                <select data-history-limit-select aria-label="Rows per page">
-                                    ${pageSizeOptions
-                                        .map(
-                                            (pageSize) => `<option value="${pageSize}" ${pageSize === currentLimit ? "selected" : ""}>${pageSize}</option>`,
-                                        )
-                                        .join("")}
-                                </select>
-                                <span class="history-table-select-icon" aria-hidden="true">⌄</span>
-                            </span>
-                        </label>
+                        <div class="history-table-limit-control" role="group" aria-label="Rows per page">
+                            <span class="history-table-limit-label">Rows per page</span>
+                            <div class="history-table-limit-track">
+                                ${pageSizeOptions
+                                    .map(
+                                        (pageSize) => `
+                                            <button class="history-table-limit-chip ${pageSize === currentLimit ? "is-active" : ""}"
+                                                type="button"
+                                                data-history-limit-target="${pageSize}"
+                                                aria-label="Show ${pageSize} rows per page"
+                                                ${pageSize === currentLimit ? 'aria-pressed="true"' : 'aria-pressed="false"'}>
+                                                ${pageSize}
+                                            </button>
+                                        `,
+                                    )
+                                    .join("")}
+                            </div>
+                        </div>
                         <span class="history-table-footer-copy">Page ${escapeHtml(String(currentPage))} of ${escapeHtml(String(totalPages))}</span>
                     </div>
                     <nav class="history-page-nav" aria-label="History pages">
@@ -5966,22 +5971,17 @@ elements.historyList.addEventListener("click", (event) => {
         setHistoryPage(Number(pageTargetButton.dataset.historyPageTarget || state.history.page));
         return;
     }
+    const limitTargetButton = target.closest("[data-history-limit-target]");
+    if (limitTargetButton instanceof HTMLElement) {
+        setHistoryLimit(Number(limitTargetButton.dataset.historyLimitTarget || state.history.limit));
+        return;
+    }
     const historyRow = target.closest("[data-history-row-id]");
     if (historyRow instanceof HTMLElement) {
         loadHistoryDetail(historyRow.dataset.historyRowId).catch((error) => {
             state.history.error = error instanceof Error ? error.message : String(error || "Could not load history detail.");
             renderHistoryPage();
         });
-    }
-});
-elements.historyList.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLSelectElement)) {
-        return;
-    }
-    if (target.matches("[data-history-limit-select]")) {
-        setHistoryLimit(target.value);
-        return;
     }
 });
 elements.historyList.addEventListener("keydown", (event) => {
