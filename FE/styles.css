@@ -5112,7 +5112,7 @@ body.is-running .window-status {
 
 .history-table-wrap {
     display: flex;
-    align-items: stretch;
+    align-items: flex-start;
     justify-content: flex-start;
     min-width: 0;
     min-height: 0;
@@ -5129,6 +5129,8 @@ body.is-running .window-status {
     width: max-content;
     min-width: 0;
     max-width: 100%;
+    align-self: flex-start;
+    height: auto;
     border-collapse: separate;
     border-spacing: 0;
     table-layout: auto;
