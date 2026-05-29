@@ -4491,6 +4491,9 @@ function renderHistoryPage() {
         return;
     }
     const history = state.history;
+    if (elements.historyPage instanceof HTMLElement) {
+        elements.historyPage.dataset.historyLayout = history.loading || !history.loaded ? "split" : "fit";
+    }
     setElementLoadingState(elements.historyList, history.loading, "Loading history");
     setElementLoadingState(elements.historyDetail, history.detailLoading, "Loading detail");
     if (!canReadHistory()) {

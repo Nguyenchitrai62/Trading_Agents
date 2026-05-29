@@ -4895,11 +4895,25 @@ body.is-running .window-status {
     overflow: hidden;
 }
 
+.history-page[data-history-layout="split"] {
+    grid-template-columns: minmax(0, 0.3fr) minmax(0, 0.7fr);
+}
+
 .history-list-window,
 .history-detail-window,
 .chart-window {
     min-height: 0;
     overflow: hidden;
+}
+
+.history-page[data-history-layout="split"] .history-list-window {
+    width: auto;
+    justify-self: stretch;
+}
+
+.history-page[data-history-layout="split"] .history-list,
+.history-page[data-history-layout="split"] .history-table-shell {
+    width: auto;
 }
 
 .history-list-window {
