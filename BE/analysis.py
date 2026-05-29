@@ -941,10 +941,7 @@ class AnalysisService:
                         "phase": "tool_result",
                         "title": endpoint_title,
                         "trace_id": trace_id,
-                        "content": self._trim_text(
-                            self._format_coinglass_endpoint_result(result),
-                            self.settings.analysis_trace_char_limit,
-                        ),
+                        "content": self._build_coinglass_tool_result_payload(result),
                     },
                 )
                 return
@@ -969,10 +966,7 @@ class AnalysisService:
                     "phase": "tool_result",
                     "title": endpoint_title,
                     "trace_id": trace_id,
-                    "content": self._trim_text(
-                        self._format_coinglass_endpoint_result(result),
-                        self.settings.analysis_trace_char_limit,
-                    ),
+                    "content": self._build_coinglass_tool_result_payload(result),
                 },
             )
             emit("warning", {"message": f"{title} unavailable from CoinGlass: {error}"})
@@ -1103,6 +1097,134 @@ class AnalysisService:
             lines.append(f"Input: {param_text}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _format_coinglass_markdown_cell(value: object) -> str:
+        if value in (None, "", [], {}):
+            return "-"
+        if isinstance(value, (dict, list)):
+            text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        else:
+            text = str(value)
+        return text.replace("\n", " ").replace("|", "\\|").strip() or "-"
+
+    @classmethod
+    def _build_coinglass_markdown_table(cls, title: str, rows: object) -> str:
+        if not isinstance(rows, list) or not rows:
+            return ""
+
+        normalized_rows = [row for row in rows if isinstance(row, dict) and row]
+        if not normalized_rows:
+            return ""
+
+        columns: list[str] = []
+        for row in normalized_rows:
+            for key in row.keys():
+                label = str(key).strip()
+                if not label or label == "..." or label in columns:
+                    continue
+                columns.append(label)
+
+        if not columns:
+            return ""
+
+        lines = [
+            f"### {title}",
+            "| " + " | ".join(columns) + " |",
+            "| " + " | ".join("---" for _ in columns) + " |",
+        ]
+        for row in normalized_rows:
+            values = [cls._format_coinglass_markdown_cell(row.get(column)) for column in columns]
+            lines.append("| " + " | ".join(values) + " |")
+        return "\n".join(lines)
+
+    @classmethod
+    def _build_coinglass_tool_result_payload(cls, result: dict) -> dict[str, str]:
+        source = str(result.get("source") or result.get("path") or "CoinGlass endpoint")
+        package_label = str(result.get("package_label") or result.get("package") or "CoinGlass")
+        status = str(result.get("status") or "unknown")
+        http_status = result.get("http_status")
+        elapsed_ms = result.get("elapsed_ms")
+        summary = result.get("summary") or {}
+        rate_limit = result.get("rate_limit") or {}
+
+        meta_rows: list[tuple[str, object]] = [
+            ("Source", source),
+            ("Package", package_label),
+            ("Status", status),
+            ("HTTP status", http_status),
+            ("Elapsed", f"{elapsed_ms}ms" if elapsed_ms is not None else ""),
+            ("API code", summary.get("api_code") if isinstance(summary, dict) else ""),
+            ("API message", summary.get("api_message") if isinstance(summary, dict) else ""),
+            ("Rows", summary.get("item_count") if isinstance(summary, dict) else ""),
+            ("Primary list", summary.get("primary_list_key") if isinstance(summary, dict) else ""),
+            (
+                "Rate limit",
+                "; ".join(f"{key}={value}" for key, value in sorted(rate_limit.items())) if isinstance(rate_limit, dict) else "",
+            ),
+        ]
+
+        lines = [
+            "### API response",
+            "| Field | Value |",
+            "| --- | --- |",
+        ]
+        for label, value in meta_rows:
+            if value in (None, "", [], {}):
+                continue
+            lines.append(f"| {label} | {cls._format_coinglass_markdown_cell(value)} |")
+
+        if isinstance(summary, dict):
+            fields = summary.get("fields") or summary.get("keys") or []
+            if isinstance(fields, list) and fields:
+                lines.extend([
+                    "",
+                    "### Fields",
+                    ", ".join(f"`{cls._format_coinglass_markdown_cell(field)}`" for field in fields),
+                ])
+
+            numeric_summary = summary.get("numeric_summary") or {}
+            if isinstance(numeric_summary, dict) and numeric_summary:
+                lines.extend([
+                    "",
+                    "### Latest metrics",
+                    "| Metric | Latest |",
+                    "| --- | --- |",
+                ])
+                for key, values in numeric_summary.items():
+                    if not isinstance(values, dict):
+                        continue
+                    latest = values.get("latest")
+                    if latest in (None, ""):
+                        continue
+                    lines.append(
+                        f"| {cls._format_coinglass_markdown_cell(key)} | {cls._format_coinglass_markdown_cell(latest)} |"
+                    )
+
+            sample_table = cls._build_coinglass_markdown_table("Sample rows", summary.get("sample_items"))
+            if sample_table:
+                lines.extend(["", sample_table])
+
+            recent_table = cls._build_coinglass_markdown_table("Recent rows", summary.get("latest_items"))
+            if recent_table:
+                lines.extend(["", recent_table])
+            elif summary.get("data") not in (None, "", [], {}):
+                lines.extend([
+                    "",
+                    "### Data preview",
+                    "```json",
+                    json.dumps(summary.get("data"), ensure_ascii=False, indent=2, sort_keys=True, default=str),
+                    "```",
+                ])
+
+        error = str(result.get("error") or "").strip()
+        if error:
+            lines.extend(["", f"> Error: {error}"])
+
+        return {
+            "type": "coinglass_api_result",
+            "answer": "\n".join(lines).strip(),
+        }
+
     @classmethod
     def _format_coinglass_endpoint_result(cls, result: dict) -> str:
         source = str(result.get("source") or result.get("path") or "CoinGlass endpoint")
@@ -1187,10 +1309,7 @@ class AnalysisService:
                     "name": getattr(message, "name", ""),
                     "content": cls._normalize_message_content(getattr(message, "content", "")),
                     "tool_calls": getattr(message, "tool_calls", []),
-                    "tool_call_id": getattr(message, "tool_call_id", ""),
-                    "additional_kwargs": getattr(message, "additional_kwargs", {}),
                 },
-                ensure_ascii=False,
                 sort_keys=True,
                 default=str,
             )
@@ -1340,10 +1459,6 @@ class AnalysisService:
 
     def build_status_snapshot(self, snapshot: dict, selected_analysts: list[str], current_agent: str | None) -> dict:
         selected_specs = [ANALYST_NODE_SPECS[key] for key in selected_analysts]
-        sections = snapshot["sections"]
-        analysts = []
-        first_incomplete = True
-        parallel_analysts_active = current_agent in {"Analyst Team", "Parallel Analyst Team"}
         for spec in selected_specs:
             has_report = bool(sections.get(spec.report_key))
             if has_report:
