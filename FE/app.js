@@ -69,7 +69,7 @@ const CUSTOM_LOOKBACK_VALUE = "__custom__";
 const TRACE_DISPLAY_LIMIT = Number(APP_SETTINGS.traceDisplayLimit || APP_SETTINGS.trace_display_limit || 14);
 const LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.logDisplayLimit || APP_SETTINGS.log_display_limit || 12);
 const EXECUTION_LOG_DISPLAY_LIMIT = Number(APP_SETTINGS.executionLogDisplayLimit || APP_SETTINGS.execution_log_display_limit || 80);
-const LOG_AUTO_SCROLL_THRESHOLD = 64;
+const LOG_AUTO_SCROLL_THRESHOLD = 2;
 const MIN_ANALYSIS_STOP_DELAY_MS = Math.max(0, Number(APP_SETTINGS.minStopDelayMs || APP_SETTINGS.min_stop_delay_ms || 5000));
 const HISTORY_PAGE_SIZE = 20;
 const AUTH_STORAGE_KEY = AUTH_SETTINGS.storageKey || AUTH_SETTINGS.storage_key || "tradingagents.googleAuth";
@@ -93,7 +93,6 @@ const DETAIL_PANEL_META = {
     neutralRisk: { title: "Neutral Analyst", subtitle: "Risk Room" },
     portfolioDecision: { title: "Final Decision", subtitle: "Portfolio Management" },
     verifierReport: { title: "Verifier", subtitle: "Portfolio Management" },
-    eventLog: { title: "Event Log", subtitle: "SSE Timeline", mode: "markdown" },
     backendLog: { title: "Backend Log", subtitle: "Runtime stream", mode: "markdown" },
 };
 
@@ -282,6 +281,9 @@ const elements = {
     chartSymbolInput: document.getElementById("chartSymbolInput"),
     addChartSymbolButton: document.getElementById("addChartSymbolButton"),
     refreshAdminUsersButton: document.getElementById("refreshAdminUsersButton"),
+    adminHistoryPolicyPanel: document.getElementById("adminHistoryPolicyPanel"),
+    adminHistoryPublicReadToggle: document.getElementById("adminHistoryPublicReadToggle"),
+    saveAdminHistoryPolicyButton: document.getElementById("saveAdminHistoryPolicyButton"),
     adminUserList: document.getElementById("adminUserList"),
     adminStatusText: document.getElementById("adminStatusText"),
     chatNewButton: document.getElementById("chatNewButton"),
@@ -313,7 +315,6 @@ const elements = {
     neutralRiskPanel: document.getElementById("neutralRiskPanel"),
     signalBadge: document.getElementById("signalBadge"),
     portfolioDecisionPanel: document.getElementById("portfolioDecisionPanel"),
-    eventLog: document.getElementById("eventLog"),
     executionLog: document.getElementById("executionLog"),
     executionLogStatusText: document.getElementById("executionLogStatusText"),
     opsStatusText: document.getElementById("opsStatusText"),
@@ -321,7 +322,6 @@ const elements = {
     opsPhaseText: document.getElementById("opsPhaseText"),
     opsLatestText: document.getElementById("opsLatestText"),
     toolTraceList: document.getElementById("toolTraceList"),
-    eventLogStatusText: document.getElementById("eventLogStatusText"),
     openConfigButton: document.getElementById("openConfigButton"),
     closeConfigButton: document.getElementById("closeConfigButton"),
     runAnalysisButton: document.getElementById("runAnalysisButton"),
@@ -410,6 +410,8 @@ function createEmptyAdminState() {
         loaded: false,
         error: "",
         savingEmail: "",
+        historyPublicRead: false,
+        historyPolicySaving: false,
     };
 }
 
@@ -676,6 +678,7 @@ function createInitialAuthState() {
         isAuthorized: false,
         canRunAnalysis: false,
         isAdmin: false,
+        canReadHistory: false,
         historyAccessDays: null,
         historyAccessUnlimited: false,
         initialized: false,
@@ -1994,7 +1997,7 @@ function getGoogleClientId() {
 }
 
 function canReadHistory() {
-    return Boolean(state.auth.isAuthorized);
+    return Boolean(state.auth.canReadHistory);
 }
 
 function canOpenAdminPage() {
@@ -2079,8 +2082,9 @@ function applyAuthUser(user = {}) {
     state.auth.isAuthorized = Boolean(user.authorized ?? user.email);
     state.auth.canRunAnalysis = Boolean(user.can_run_analysis || user.is_admin);
     state.auth.isAdmin = Boolean(user.is_admin);
+    state.auth.canReadHistory = Boolean(user.can_read_history || user.is_admin);
     state.auth.historyAccessDays = user.history_access_days ?? null;
-    state.auth.historyAccessUnlimited = Boolean(user.history_access_unlimited || user.history_access_days == null);
+    state.auth.historyAccessUnlimited = Boolean(user.history_access_unlimited || user.is_admin);
 }
 
 function clearAuthState() {
@@ -2097,6 +2101,7 @@ function clearAuthState() {
         isAuthorized: false,
         canRunAnalysis: false,
         isAdmin: false,
+        canReadHistory: false,
         historyAccessDays: null,
         historyAccessUnlimited: false,
         initialized: state.auth.initialized,
@@ -2788,6 +2793,55 @@ function formatTracePhaseLabel(phase = "analysis") {
     return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : "Analysis";
 }
 
+function isToolTracePhase(phase = "") {
+    return phase === "tool_call" || phase === "tool_result" || phase === "tool_trace";
+}
+
+function buildToolTraceMatchKey(agent = "", title = "") {
+    const normalizedAgent = String(agent || "").trim().toLowerCase();
+    const normalizedTitle = String(title || "").trim().toLowerCase();
+    return normalizedAgent || normalizedTitle ? `${normalizedAgent}::${normalizedTitle}` : "";
+}
+
+function buildToolTracePreviewText(toolCallContent = "", toolResultContent = "") {
+    const callSummary = compactText(stripMarkdownToPlainText(toolCallContent || ""), 140);
+    const resultSummary = compactText(stripMarkdownToPlainText(toolResultContent || ""), 220);
+    if (callSummary && resultSummary) {
+        return `Call: ${callSummary}\nResult: ${resultSummary}`;
+    }
+    return resultSummary || callSummary;
+}
+
+function buildToolTraceCombinedContent(toolCallContent = "", toolResultContent = "") {
+    const callText = String(toolCallContent || "").trim();
+    const resultText = String(toolResultContent || "").trim();
+    if (callText && resultText) {
+        return `Tool call\n${callText}\n\nTool result\n${resultText}`;
+    }
+    return resultText || callText;
+}
+
+function findPendingToolTraceEntry(agent = "", title = "") {
+    const matchKey = buildToolTraceMatchKey(agent, title);
+    if (!matchKey) {
+        return null;
+    }
+    for (let index = state.run.traceFeed.length - 1; index >= 0; index -= 1) {
+        const entry = state.run.traceFeed[index];
+        if (!entry || !isToolTracePhase(entry.phase)) {
+            continue;
+        }
+        if (buildToolTraceMatchKey(entry.agent, entry.title) !== matchKey) {
+            continue;
+        }
+        if (entry.toolResultContent) {
+            continue;
+        }
+        return entry;
+    }
+    return null;
+}
+
 function formatStructuredValue(payload) {
     if (typeof payload === "string") {
         return payload.trim();
@@ -2956,7 +3010,7 @@ function pushStreamFeed(entry) {
 }
 
 function getFeedToneForPhase(phase = "progress") {
-    if (phase === "tool_result" || phase === "analysis") {
+    if (phase === "tool_result" || phase === "analysis" || phase === "tool_trace") {
         return "live";
     }
     if (phase === "warning") {
@@ -2971,9 +3025,10 @@ function getFeedToneForPhase(phase = "progress") {
 function pushAgentTrace(trace) {
     const agent = trace.agent || state.run.status?.current_agent || "Agent";
     const phase = trace.phase || "analysis";
+    const title = trace.title || agent;
     const content = formatTraceContentForDisplay(phase, trace.content || "");
     const toolResultData = phase === "tool_result" ? getStructuredToolResultData(trace.content || "") : null;
-    const fingerprint = buildContentFingerprint(agent, phase, trace.title || agent, content);
+    const fingerprint = buildContentFingerprint(agent, phase, title, content);
     if (!content || (fingerprint && state.run.seenTraceFingerprints.has(fingerprint))) {
         return;
     }
@@ -2982,14 +3037,39 @@ function pushAgentTrace(trace) {
     }
 
     const wasAtLatest = isScrolledNearBottom(elements.toolTraceList);
+    if (phase === "tool_result") {
+        const existingEntry = findPendingToolTraceEntry(agent, title);
+        if (existingEntry) {
+            existingEntry.phase = "tool_trace";
+            existingEntry.tone = getFeedToneForPhase("tool_trace");
+            existingEntry.timestamp = new Date().toLocaleTimeString();
+            existingEntry.toolCallContent = existingEntry.toolCallContent || existingEntry.content || "";
+            existingEntry.toolResultContent = content;
+            existingEntry.content = buildToolTraceCombinedContent(existingEntry.toolCallContent, existingEntry.toolResultContent);
+            existingEntry.previewContent = buildToolTracePreviewText(existingEntry.toolCallContent, existingEntry.toolResultContent);
+            existingEntry.toolResultData = toolResultData;
+            state.run.latestTraceId = existingEntry.id;
+            state.run.flashLatestTrace = wasAtLatest;
+            pushStreamFeed({
+                title: `${agent} - ${existingEntry.title}`,
+                content: compactText(stripMarkdownToPlainText(existingEntry.previewContent || existingEntry.content), 260),
+                tone: existingEntry.tone,
+            });
+            return;
+        }
+    }
+
     const entry = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         timestamp: new Date().toLocaleTimeString(),
         agent,
         phase,
         tone: getFeedToneForPhase(phase),
-        title: trace.title || agent,
+        title,
         content,
+        previewContent: content,
+        toolCallContent: phase === "tool_call" ? content : "",
+        toolResultContent: phase === "tool_result" ? content : "",
         toolResultData,
     };
 
@@ -3381,7 +3461,7 @@ function appendLog(label, payload, options = {}) {
 
     state.run.logEntries = [...state.run.logEntries, entry].slice(-120);
     state.run.logs = [...state.run.logs, entry.detail].slice(-120);
-    if (state.activeDetail?.key === "eventLog") {
+    if (state.activeDetail?.key === "backendLog") {
         renderActiveDetail();
     }
 }
@@ -3926,7 +4006,7 @@ function renderLogEntries(element, entries, emptyText, options = {}) {
 }
 
 function renderOperationsRail() {
-    const toolFeed = state.run.traceFeed.filter((item) => item.phase === "tool_call" || item.phase === "tool_result");
+    const toolFeed = state.run.traceFeed.filter((item) => isToolTracePhase(item.phase));
     const feed = toolFeed.slice(-TRACE_DISPLAY_LIMIT);
     const newestTool = feed[feed.length - 1];
     const latestUpdate = state.run.latestReportTitle || state.run.complete?.signal || state.run.cancelled?.message || newestTool?.title || "No updates yet";
@@ -3946,18 +4026,10 @@ function renderOperationsRail() {
     elements.opsPhaseText.title = elements.opsPhaseText.textContent;
     elements.opsLatestText.textContent = latestUpdate;
     elements.opsLatestText.title = latestUpdate;
-    elements.eventLogStatusText.textContent = state.run.logEntries.length
-        ? `${Math.min(state.run.logEntries.length, LOG_DISPLAY_LIMIT)} recent events`
-        : "Recent SSE events";
     elements.executionLogStatusText.textContent = state.run.logEntries.length
         ? `${Math.min(state.run.logEntries.length, EXECUTION_LOG_DISPLAY_LIMIT)} backend lines`
         : "Waiting for stream";
 
-    renderLogEntries(
-        elements.eventLog,
-        state.run.logEntries.slice(-LOG_DISPLAY_LIMIT),
-        "No SSE events yet. Run analysis to start the backend stream.",
-    );
     renderLogEntries(
         elements.executionLog,
         state.run.logEntries.slice(-EXECUTION_LOG_DISPLAY_LIMIT),
@@ -3966,7 +4038,6 @@ function renderOperationsRail() {
     );
 
     setElementLoadingState(elements.toolTraceList, state.isBusy && !feed.length, "Waiting traces");
-    setElementLoadingState(elements.eventLog, state.isBusy && !state.run.logEntries.length, "Waiting events");
     setElementLoadingState(elements.executionLog, state.isBusy && !state.run.logEntries.length, "Waiting backend");
 
     const flashLatestTrace = state.run.flashLatestTrace;
@@ -3991,7 +4062,7 @@ function renderOperationsRail() {
                             <span class="trace-phase-badge">${escapeHtml(formatTracePhaseLabel(item.phase))}</span>
                             <span>${escapeHtml(item.title || "Live update")}</span>
                         </div>
-                        <p>${escapeHtml(compactText(stripMarkdownToPlainText(item.content || ""), 320))}</p>
+                        <p>${escapeHtml(compactText(stripMarkdownToPlainText(item.previewContent || item.content || ""), 320))}</p>
                     </article>
                                 `;
                                     })
@@ -4090,7 +4161,7 @@ function getDetailContent(detail) {
         return {
             content: formatTraceDetailMarkdown(entry),
             fallback: "This trace is no longer available in the live feed.",
-            toolResult: entry?.phase === "tool_result" ? entry.toolResultData || null : null,
+            toolResult: entry?.toolResultData || null,
             traceEntry: entry || null,
         };
     }
@@ -4138,8 +4209,6 @@ function getDetailContent(detail) {
                 content: buildFinalDecisionMarkdown(),
                 fallback: "The Portfolio Manager has not finalized a decision yet.",
             };
-        case "eventLog":
-            return { content: formatEventLogMarkdown(), fallback: "No SSE events yet." };
         case "backendLog":
             return { content: formatBackendLogMarkdown(), fallback: "No backend log lines yet." };
         default:
@@ -4150,6 +4219,21 @@ function getDetailContent(detail) {
 function formatTraceDetailMarkdown(entry) {
     if (!entry) {
         return "";
+    }
+
+    if (entry.toolCallContent || entry.toolResultContent) {
+        const toolResultBody = entry.toolResultData
+            ? renderStructuredToolResultToMarkdown(entry.toolResultData)
+            : String(entry.toolResultContent || "").trim();
+        return [
+            `**Agent:** ${entry.agent || "Agent"}`,
+            `**Phase:** ${formatTracePhaseLabel(entry.phase)}`,
+            `**Time:** ${entry.timestamp || "-"}`,
+            entry.toolCallContent ? `**Tool call**\n\n\`\`\`text\n${entry.toolCallContent}\n\`\`\`` : "",
+            toolResultBody ? `**Tool result**\n\n${toolResultBody}` : "",
+        ]
+            .filter(Boolean)
+            .join("\n\n");
     }
 
     const content = formatTraceContentForDisplay(entry.phase, entry.content || "");
@@ -4187,6 +4271,9 @@ function renderToolResultCardMarkup(item) {
 }
 
 function renderToolResultDetailMarkup(toolResult, entry) {
+    const toolCallContent = String(entry?.toolCallContent || "").trim();
+    const rawResultContent = String(entry?.toolResultContent || entry?.content || "").trim();
+    const hasStructuredContent = Boolean(toolResult.answer || toolResult.sections.length || toolResult.relatedSearches.length);
     const metaItems = [
         entry?.agent ? `Agent: ${entry.agent}` : "",
         entry?.title ? `Tool: ${entry.title}` : "",
@@ -4195,6 +4282,17 @@ function renderToolResultDetailMarkup(toolResult, entry) {
 
     return `
         ${metaItems.length ? `<div class="tool-result-meta-strip">${metaItems.map((item) => `<span class="tool-result-meta-pill">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+        ${toolCallContent
+            ? `
+                <section class="tool-result-section">
+                    <div class="tool-result-section-head">
+                        <h3>Tool call</h3>
+                        <span>Input</span>
+                    </div>
+                    <div class="tool-result-summary markdown-preview">${renderMarkdown(`\`\`\`text\n${toolCallContent}\n\`\`\``, "")}</div>
+                </section>
+            `
+            : ""}
         ${toolResult.answer ? `<section class="tool-result-summary markdown-preview">${renderMarkdown(toolResult.answer, "")}</section>` : ""}
         ${toolResult.sections
             .map(
@@ -4221,6 +4319,17 @@ function renderToolResultDetailMarkup(toolResult, entry) {
                     <div class="tool-result-related-list">
                         ${toolResult.relatedSearches.map((item) => `<span class="tool-result-chip">${escapeHtml(item)}</span>`).join("")}
                     </div>
+                </section>
+            `
+            : ""}
+        ${!hasStructuredContent && rawResultContent
+            ? `
+                <section class="tool-result-section">
+                    <div class="tool-result-section-head">
+                        <h3>Tool result</h3>
+                        <span>Raw output</span>
+                    </div>
+                    <div class="tool-result-summary markdown-preview">${renderMarkdown(rawResultContent, "")}</div>
                 </section>
             `
             : ""}
@@ -4783,11 +4892,14 @@ function renderHistoryPage() {
     setElementLoadingState(elements.historyList, history.loading, "Loading history");
     setElementLoadingState(elements.historyDetail, history.detailLoading, "Loading detail");
     if (!canReadHistory()) {
-        elements.historyStatusText.textContent = "Sign in required";
-        elements.historyList.innerHTML = '<div class="history-empty">Sign in with Google to view saved analyses.</div>';
+        const accessMessage = state.auth.isAuthorized
+            ? "History access is disabled for this account."
+            : "Sign in with Google to view saved analyses.";
+        elements.historyStatusText.textContent = state.auth.isAuthorized ? "History locked" : "Sign in required";
+        elements.historyList.innerHTML = `<div class="history-empty">${escapeHtml(accessMessage)}</div>`;
         resetHistoryTableLayoutMetrics();
         elements.historyDetailTitle.textContent = "Analysis Detail";
-        elements.historyDetail.innerHTML = '<div class="history-empty">History is available after sign-in.</div>';
+        elements.historyDetail.innerHTML = `<div class="history-empty">${escapeHtml(accessMessage)}</div>`;
         return;
     }
     if (history.loading) {
@@ -4992,6 +5104,10 @@ async function loadHistoryList(force = false) {
     }
     if (!canReadHistory()) {
         await ensureAuthorizedSession();
+        if (!canReadHistory()) {
+            renderHistoryPage();
+            return;
+        }
     }
     state.history.loading = true;
     state.history.error = "";
@@ -5042,6 +5158,10 @@ async function loadHistoryDetail(historyId) {
     }
     if (!canReadHistory()) {
         await ensureAuthorizedSession();
+        if (!canReadHistory()) {
+            renderHistoryPage();
+            return;
+        }
     }
     state.history.activeId = historyId;
     state.history.error = "";
@@ -5082,6 +5202,10 @@ async function loadHistorySection(historyId, sectionKey, options = {}) {
     const { openModal = false } = options;
     const entry = syncHistoryActiveEntry(historyId);
     if (!historyId || !sectionKey || !entry || state.history.activeId !== historyId) {
+        return;
+    }
+    if (!canReadHistory()) {
+        renderHistoryPage();
         return;
     }
     entry.activeSectionKey = sectionKey;
@@ -5522,10 +5646,30 @@ function finishChartPointerDrag(commitOrder) {
     resetChartPointerDrag();
 }
 
+function renderAdminHistoryPolicyControls() {
+    if (!(elements.adminHistoryPolicyPanel instanceof HTMLElement)) {
+        return;
+    }
+    const toggle = elements.adminHistoryPublicReadToggle;
+    const button = elements.saveAdminHistoryPolicyButton;
+    const disabled = !state.auth.isAdmin || state.admin.loading || state.admin.historyPolicySaving;
+
+    elements.adminHistoryPolicyPanel.classList.toggle("is-disabled", !state.auth.isAdmin);
+    if (toggle instanceof HTMLInputElement) {
+        toggle.checked = Boolean(state.admin.historyPublicRead);
+        toggle.disabled = disabled;
+    }
+    if (button instanceof HTMLButtonElement) {
+        button.disabled = disabled;
+        button.textContent = state.admin.historyPolicySaving ? "Saving" : "Save policy";
+    }
+}
+
 function renderAdminPage() {
     if (!(elements.adminUserList instanceof HTMLElement)) {
         return;
     }
+    renderAdminHistoryPolicyControls();
     setElementLoadingState(elements.adminUserList, state.admin.loading, "Loading users");
     if (!state.auth.isAdmin) {
         elements.adminStatusText.textContent = "Admin only";
@@ -5554,10 +5698,11 @@ function renderAdminPage() {
             const unlimited = Boolean(user.history_access_unlimited || user.history_access_days == null);
             const isAdmin = Boolean(user.is_admin);
             const canRunAnalysis = isAdmin || Boolean(user.can_run_analysis);
+            const hasHistoryAccess = isAdmin || unlimited || Number(user.history_access_days ?? 0) > 0;
             const isSeedAdmin = Boolean(user.is_seed_admin);
             const isSaving = state.admin.savingEmail === email;
-            const roleLabel = isAdmin ? "Admin" : canRunAnalysis ? "Can run" : "History only";
-            const dayValue = user.history_access_days || state.config?.history?.default_access_days || 7;
+            const roleLabel = isAdmin ? "Admin" : canRunAnalysis ? "Can run" : hasHistoryAccess ? "History only" : "No history";
+            const dayValue = user.history_access_days ?? state.config?.history?.default_access_days ?? 7;
             return `
                 <article class="admin-user-card ${isAdmin ? "is-admin-role" : ""} ${canRunAnalysis ? "can-run-analysis" : ""} ${unlimited ? "is-history-unlimited" : ""}" data-admin-email="${escapeHtml(email)}" data-seed-admin="${isSeedAdmin ? "true" : "false"}">
                     <div class="admin-user-main">
@@ -5586,8 +5731,8 @@ function renderAdminPage() {
                         <label class="admin-days-field">
                             <span>History window</span>
                             <div class="admin-days-input-wrap">
-                                <input type="number" min="1" step="1" data-admin-field="history_days" value="${escapeHtml(String(dayValue))}" ${unlimited ? "disabled" : ""}>
-                                <small>days</small>
+                                <input type="number" min="0" step="1" data-admin-field="history_days" value="${escapeHtml(String(dayValue))}" ${unlimited ? "disabled" : ""}>
+                                <small>days, 0 = blocked</small>
                             </div>
                         </label>
                     </div>
@@ -5638,7 +5783,42 @@ function syncAdminCardControls(card) {
     card.classList.toggle("is-history-unlimited", historyUnlimited);
     const roleBadge = card.querySelector(".admin-role-badge");
     if (roleBadge instanceof HTMLElement) {
-        roleBadge.textContent = isAdmin || isSeedAdmin ? "Admin" : canRunInput instanceof HTMLInputElement && canRunInput.checked ? "Can run" : "History only";
+        const historyWindow = daysInput instanceof HTMLInputElement ? Number(daysInput.value || 0) : 0;
+        const hasHistoryAccess = isAdmin || isSeedAdmin || historyUnlimited || historyWindow > 0;
+        roleBadge.textContent = isAdmin || isSeedAdmin ? "Admin" : canRunInput instanceof HTMLInputElement && canRunInput.checked ? "Can run" : hasHistoryAccess ? "History only" : "No history";
+    }
+}
+
+async function saveAdminHistoryAccessPolicy() {
+    if (!state.auth.isAdmin) {
+        openAuthRequiredAlert("Admin permission is required to update history access.");
+        return;
+    }
+    const toggle = elements.adminHistoryPublicReadToggle;
+    const nextValue = toggle instanceof HTMLInputElement ? toggle.checked : Boolean(state.admin.historyPublicRead);
+    state.admin.historyPolicySaving = true;
+    renderAdminPage();
+    try {
+        const response = await apiFetch("/api/admin/history-access", {
+            method: "PATCH",
+            headers: getAdminAuthHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ history_public_read: nextValue }),
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+        const payload = await response.json();
+        state.admin.historyPublicRead = Boolean(payload.history_public_read);
+        if (state.config?.history) {
+            state.config.history.public_read = state.admin.historyPublicRead;
+        }
+        state.admin.error = "";
+    } catch (error) {
+        state.admin.error = error instanceof Error ? error.message : String(error || "Could not save history access policy.");
+    } finally {
+        state.admin.historyPolicySaving = false;
+        renderAdminPage();
     }
 }
 
@@ -5664,6 +5844,10 @@ async function loadAdminUsers(force = false) {
         }
         const payload = await response.json();
         state.admin.users = payload.items || [];
+        state.admin.historyPublicRead = Boolean(payload.history_public_read ?? state.config?.history?.public_read ?? false);
+        if (state.config?.history) {
+            state.config.history.public_read = state.admin.historyPublicRead;
+        }
         state.admin.loaded = true;
     } catch (error) {
         state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
@@ -5686,7 +5870,7 @@ async function saveAdminUser(email) {
     const isAdmin = isAdminInput instanceof HTMLInputElement ? isAdminInput.checked : false;
     const canRunAnalysis = canRunInput instanceof HTMLInputElement ? canRunInput.checked : false;
     const unlimited = unlimitedInput instanceof HTMLInputElement ? unlimitedInput.checked : false;
-    const days = daysInput instanceof HTMLInputElement ? Number(daysInput.value || 7) : 7;
+    const days = daysInput instanceof HTMLInputElement ? Number(daysInput.value || 0) : 0;
     state.admin.savingEmail = email;
     renderAdminPage();
     try {
@@ -5696,7 +5880,7 @@ async function saveAdminUser(email) {
             body: JSON.stringify({
                 is_admin: isAdmin,
                 can_run_analysis: isAdmin || canRunAnalysis,
-                history_access_days: unlimited ? null : Math.max(1, days),
+                history_access_days: unlimited ? null : Math.max(0, Number.isFinite(days) ? days : 0),
                 history_access_unlimited: unlimited,
             }),
             cache: "no-store",
@@ -5722,6 +5906,10 @@ function switchPage(page) {
     }
     if (page === "history" && !state.auth.idToken && !state.auth.isAuthorized) {
         openAuthRequiredAlert();
+        return;
+    }
+    if (page === "history" && state.auth.isAuthorized && !canReadHistory()) {
+        openBackendIssueAlert("History access is disabled for this account.");
         return;
     }
     if (page === "admin" && !canOpenAdminPage()) {
@@ -6121,11 +6309,13 @@ function bindConfigInputListeners() {
 async function loadConfig() {
     let config = normalizeFrontendConfig();
     state.config = config;
+    state.admin.historyPublicRead = Boolean(config.history?.public_read ?? false);
     state.apiBaseUrl = normalizeApiBaseUrl(config.api_base_url || state.apiBaseUrl);
     const backendConfig = await loadBackendPublicConfig();
     if (backendConfig) {
         config = mergeBackendConfig(config, backendConfig);
         state.config = config;
+        state.admin.historyPublicRead = Boolean(config.history?.public_read ?? false);
     }
     initializeChartFromConfig(config);
 
@@ -6445,6 +6635,12 @@ elements.refreshAdminUsersButton.addEventListener("click", () => {
     state.admin.loaded = false;
     loadAdminUsers(true).catch((error) => {
         state.admin.error = error instanceof Error ? error.message : String(error || "Could not refresh users.");
+        renderAdminPage();
+    });
+});
+elements.saveAdminHistoryPolicyButton?.addEventListener("click", () => {
+    saveAdminHistoryAccessPolicy().catch((error) => {
+        state.admin.error = error instanceof Error ? error.message : String(error || "Could not save history access policy.");
         renderAdminPage();
     });
 });

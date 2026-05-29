@@ -886,6 +886,20 @@ class AnalysisService:
         )
 
         def on_endpoint_result(result: dict) -> None:
+            endpoint_title = str(result.get("title") or result.get("key") or "CoinGlass endpoint")
+            emit(
+                "agent_trace",
+                {
+                    "agent": "CoinGlass Data Orchestrator",
+                    "phase": "tool_call",
+                    "title": endpoint_title,
+                    "content": self._trim_text(
+                        self._format_coinglass_endpoint_call(result),
+                        self.settings.analysis_trace_char_limit,
+                    ),
+                },
+            )
+
             if result.get("status") == "ok":
                 summary = result.get("summary") or {}
                 emit_analysis_log(
@@ -897,6 +911,18 @@ class AnalysisService:
                     elapsed_ms=result.get("elapsed_ms"),
                     item_count=summary.get("item_count"),
                     rate_limit=result.get("rate_limit") or {},
+                )
+                emit(
+                    "agent_trace",
+                    {
+                        "agent": "CoinGlass Data Orchestrator",
+                        "phase": "tool_result",
+                        "title": endpoint_title,
+                        "content": self._trim_text(
+                            self._format_coinglass_endpoint_result(result),
+                            self.settings.analysis_trace_char_limit,
+                        ),
+                    },
                 )
                 return
 
@@ -912,6 +938,18 @@ class AnalysisService:
                 elapsed_ms=result.get("elapsed_ms"),
                 error=error,
                 rate_limit=result.get("rate_limit") or {},
+            )
+            emit(
+                "agent_trace",
+                {
+                    "agent": "CoinGlass Data Orchestrator",
+                    "phase": "tool_result",
+                    "title": endpoint_title,
+                    "content": self._trim_text(
+                        self._format_coinglass_endpoint_result(result),
+                        self.settings.analysis_trace_char_limit,
+                    ),
+                },
             )
             emit("warning", {"message": f"{title} unavailable from CoinGlass: {error}"})
 
@@ -1021,6 +1059,46 @@ class AnalysisService:
         return f"{name}({args})"
 
     @classmethod
+    def _format_coinglass_endpoint_call(cls, result: dict) -> str:
+        source = str(result.get("source") or result.get("path") or "CoinGlass endpoint")
+        package_label = str(result.get("package_label") or result.get("package") or "CoinGlass")
+        params = result.get("params") or {}
+        param_text = ""
+        if isinstance(params, dict) and params:
+            param_text = ", ".join(f"{key}={value}" for key, value in list(params.items())[:6])
+
+        lines = [f"Source: {source}", f"Package: {package_label}"]
+        if param_text:
+            lines.append(f"Input: {param_text}")
+        return "\n".join(lines)
+
+    @classmethod
+    def _format_coinglass_endpoint_result(cls, result: dict) -> str:
+        source = str(result.get("source") or result.get("path") or "CoinGlass endpoint")
+        status = str(result.get("status") or "unknown")
+        http_status = result.get("http_status")
+        elapsed_ms = result.get("elapsed_ms")
+        summary = result.get("summary") or {}
+        rate_limit = result.get("rate_limit") or {}
+
+        lines = [f"Source: {source}", f"Status: {status}"]
+        if http_status is not None:
+            lines.append(f"HTTP status: {http_status}")
+        if elapsed_ms is not None:
+            lines.append(f"Elapsed: {elapsed_ms}ms")
+        if isinstance(summary, dict) and summary:
+            item_count = summary.get("item_count")
+            if item_count is not None:
+                lines.append(f"Rows: {item_count}")
+            lines.append(f"Summary: {json.dumps(summary, ensure_ascii=False, sort_keys=True, default=str)}")
+        error = str(result.get("error") or "").strip()
+        if error:
+            lines.append(f"Error: {error}")
+        if isinstance(rate_limit, dict) and rate_limit:
+            lines.append(f"Rate limit: {json.dumps(rate_limit, ensure_ascii=False, sort_keys=True, default=str)}")
+        return "\n".join(lines)
+
+    @classmethod
     def _build_message_signature(cls, message: object) -> str:
         raw_signature = ""
         if hasattr(message, "id") and getattr(message, "id"):
@@ -1083,15 +1161,17 @@ class AnalysisService:
             if isinstance(message, AIMessage):
                 tool_calls = getattr(message, "tool_calls", []) or []
                 if tool_calls:
-                    emit(
-                        "agent_trace",
-                        {
-                            "agent": message_agent or "Analyst",
-                            "phase": "tool_call",
-                            "title": message_agent or "Tool call",
-                            "content": "\n".join(self._tool_call_summary(tool_call) for tool_call in tool_calls),
-                        },
-                    )
+                    for tool_call in tool_calls:
+                        tool_name = str(tool_call.get("name") or "tool")
+                        emit(
+                            "agent_trace",
+                            {
+                                "agent": message_agent or "Analyst",
+                                "phase": "tool_call",
+                                "title": tool_name,
+                                "content": self._tool_call_summary(tool_call),
+                            },
+                        )
                 content = self._trim_text(
                     self._normalize_message_content(getattr(message, "content", "")),
                     self.settings.analysis_trace_char_limit,

@@ -174,6 +174,13 @@ class TursoHistoryStore:
                     last_seen_at TEXT NOT NULL
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """,
                 "CREATE INDEX IF NOT EXISTS idx_analysis_runs_user_created ON analysis_runs(user_email, created_at DESC)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_runs_created ON analysis_runs(created_at DESC)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_runs_user_symbol_date ON analysis_runs(user_email, symbol, analysis_date DESC)",
@@ -260,6 +267,50 @@ class TursoHistoryStore:
             ],
         )
 
+    @staticmethod
+    def _normalize_history_access_days(value: object, default: int | None = None) -> int | None:
+        if value is None:
+            return default
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return default
+
+    def get_history_public_read(self, default_enabled: bool) -> bool:
+        if not self.configured:
+            return bool(default_enabled)
+        self.ensure_schema()
+        rows = self._query_rows(
+            """
+            SELECT value
+            FROM app_settings
+            WHERE key = ?
+            LIMIT 1
+            """,
+            ["history_public_read"],
+        )
+        if not rows:
+            return bool(default_enabled)
+        value = str(rows[0].get("value") or "").strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
+    def set_history_public_read(self, enabled: bool) -> bool:
+        if not self.configured:
+            return bool(enabled)
+        self.ensure_schema()
+        now = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        self._execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            ["history_public_read", "1" if enabled else "0", now],
+        )
+        return bool(enabled)
+
     def _format_user_access(
         self,
         row: dict | None,
@@ -273,7 +324,10 @@ class TursoHistoryStore:
         can_run_analysis = is_admin or bool(row.get("can_run_analysis") if row else False)
         history_access_unlimited = is_admin or bool(row.get("history_access_unlimited") if row else False)
         raw_days = row.get("history_access_days") if row else None
-        history_access_days = None if history_access_unlimited else raw_days or default_history_access_days
+        normalized_days = self._normalize_history_access_days(raw_days)
+        history_access_days = None if history_access_unlimited else (
+            normalized_days if normalized_days is not None else max(0, int(default_history_access_days))
+        )
         return {
             "email": normalized_email,
             "google_sub": row.get("google_sub") if row else None,
@@ -347,9 +401,9 @@ class TursoHistoryStore:
         if effective_history_unlimited:
             effective_days = None
         elif history_access_days is not None:
-            effective_days = max(1, int(history_access_days))
+            effective_days = self._normalize_history_access_days(history_access_days, 0)
         else:
-            effective_days = current.get("history_access_days") or default_history_access_days
+            effective_days = self._normalize_history_access_days(current.get("history_access_days"), default_history_access_days)
 
         now = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
         self._execute(
@@ -372,7 +426,10 @@ class TursoHistoryStore:
     def _history_cutoff(history_access_days: int | None) -> str | None:
         if history_access_days is None:
             return None
-        return (datetime.utcnow() - timedelta(days=max(1, int(history_access_days)))).replace(microsecond=0).isoformat() + "Z"
+        normalized_days = max(0, int(history_access_days))
+        if normalized_days == 0:
+            return (datetime.utcnow() + timedelta(days=365 * 200)).replace(microsecond=0).isoformat() + "Z"
+        return (datetime.utcnow() - timedelta(days=normalized_days)).replace(microsecond=0).isoformat() + "Z"
 
     def save_analysis(
         self,

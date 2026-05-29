@@ -11,7 +11,7 @@ from .analysis import AnalysisService
 from .auth import AuthService
 from .config import DEFAULT_ANALYSTS, RESEARCH_DEPTH_OPTIONS, SETTINGS, logger, resolve_minimax_settings
 from .history import TursoHistoryStore
-from .models import AdminUserAccessUpdate, AnalysisRequest, AuthSessionRequest, ChatRequest
+from .models import AdminHistoryAccessUpdate, AdminUserAccessUpdate, AnalysisRequest, AuthSessionRequest, ChatRequest
 
 
 history_store = TursoHistoryStore(SETTINGS.turso_database_url, SETTINGS.turso_auth_token, SETTINGS.history_page_size)
@@ -21,6 +21,9 @@ analysis_service = AnalysisService(SETTINGS, history_store)
 
 def create_app() -> FastAPI:
     app = FastAPI(title=SETTINGS.app_title, version=SETTINGS.app_version)
+
+    def current_history_public_read() -> bool:
+        return history_store.get_history_public_read(SETTINGS.history_public_read)
 
     def apply_api_response_headers(request: Request, response: Response) -> Response:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -120,7 +123,7 @@ def create_app() -> FastAPI:
             "history": {
                 "configured": history_store.configured,
                 "schema_ready": history_store._schema_ready,
-                "public_read": SETTINGS.history_public_read,
+                "public_read": current_history_public_read(),
                 "page_size": SETTINGS.history_page_size,
                 "default_access_days": SETTINGS.default_history_access_days,
             },
@@ -176,7 +179,7 @@ def create_app() -> FastAPI:
         max_limit = max(SETTINGS.history_page_size, 20)
         safe_limit = max(1, min(int(limit or SETTINGS.history_page_size), max_limit))
         offset = (safe_page - 1) * safe_limit
-        user = await auth_service.require_authorized_user(http_request)
+        user = await auth_service.require_history_reader(http_request)
         rows, total_count = await asyncio.gather(
             asyncio.to_thread(history_store.list_accessible_runs, user.get("history_access_days"), safe_limit + 1, offset),
             asyncio.to_thread(history_store.count_accessible_runs, user.get("history_access_days")),
@@ -198,7 +201,7 @@ def create_app() -> FastAPI:
         return {
             "items": items,
             "configured": True,
-            "public_read": False,
+            "public_read": current_history_public_read(),
             "page": safe_page,
             "limit": safe_limit,
             "has_more": len(rows) > safe_limit,
@@ -212,7 +215,7 @@ def create_app() -> FastAPI:
     async def get_analysis_history(run_id: str, http_request: Request) -> dict:
         if not history_store.configured:
             raise HTTPException(status_code=503, detail="Turso history database is not configured.")
-        user = await auth_service.require_authorized_user(http_request)
+        user = await auth_service.require_history_reader(http_request)
         result = await asyncio.to_thread(history_store.list_run_section_metas, run_id, user.get("history_access_days"))
         if result is None:
             raise HTTPException(status_code=404, detail="Analysis history item was not found.")
@@ -222,7 +225,7 @@ def create_app() -> FastAPI:
     async def list_analysis_history_sections(run_id: str, http_request: Request) -> dict:
         if not history_store.configured:
             raise HTTPException(status_code=503, detail="Turso history database is not configured.")
-        user = await auth_service.require_authorized_user(http_request)
+        user = await auth_service.require_history_reader(http_request)
         result = await asyncio.to_thread(history_store.list_run_section_metas, run_id, user.get("history_access_days"))
         if result is None:
             raise HTTPException(status_code=404, detail="Analysis history item was not found.")
@@ -232,7 +235,7 @@ def create_app() -> FastAPI:
     async def get_analysis_history_section(run_id: str, section_key: str, http_request: Request) -> dict:
         if not history_store.configured:
             raise HTTPException(status_code=503, detail="Turso history database is not configured.")
-        user = await auth_service.require_authorized_user(http_request)
+        user = await auth_service.require_history_reader(http_request)
         result = await asyncio.to_thread(history_store.get_run_section, run_id, section_key, user.get("history_access_days"))
         if result is None:
             raise HTTPException(status_code=404, detail="Analysis history section was not found.")
@@ -248,7 +251,18 @@ def create_app() -> FastAPI:
             SETTINGS.default_history_access_days,
             SETTINGS.admin_emails,
         )
-        return {"items": users}
+        return {
+            "items": users,
+            "history_public_read": current_history_public_read(),
+        }
+
+    @app.patch("/api/admin/history-access")
+    async def update_admin_history_access(payload: AdminHistoryAccessUpdate, http_request: Request) -> dict:
+        await auth_service.require_admin_user(http_request)
+        if not history_store.configured:
+            raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+        history_public_read = await asyncio.to_thread(history_store.set_history_public_read, payload.history_public_read)
+        return {"history_public_read": history_public_read}
 
     @app.patch("/api/admin/users/{email}")
     async def update_admin_user(email: str, payload: AdminUserAccessUpdate, http_request: Request) -> dict:

@@ -98,5 +98,9 @@ class AuthSessionRequest(BaseModel):
 class AdminUserAccessUpdate(BaseModel):
     is_admin: bool | None = None
     can_run_analysis: bool | None = None
-    history_access_days: int | None = Field(default=None, ge=1)
+    history_access_days: int | None = Field(default=None, ge=0)
     history_access_unlimited: bool = False
+
+
+class AdminHistoryAccessUpdate(BaseModel):
+    history_public_read: bool

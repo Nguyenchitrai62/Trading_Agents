@@ -174,17 +174,6 @@
                     </div>
                     <div id="toolTraceList" class="tool-trace-list" aria-live="polite"></div>
                 </section>
-
-                <section class="window log-window detail-trigger" data-detail-key="eventLog" tabindex="0" role="button" aria-label="Open Event Log detail">
-                    <div class="window-header">
-                        <div>
-                            <p class="window-kicker">Timeline</p>
-                            <h2>Event Log</h2>
-                        </div>
-                        <span id="eventLogStatusText" class="window-status">Recent SSE events</span>
-                    </div>
-                    <div id="eventLog" class="event-log"></div>
-                </section>
             </aside>
         </main>
 
@@ -253,6 +242,16 @@
                             </svg>
                         </button>
                     </div>
+                </div>
+                <div id="adminHistoryPolicyPanel" class="admin-global-panel admin-history-panel" aria-label="Global history access policy">
+                    <label class="admin-switch">
+                        <input id="adminHistoryPublicReadToggle" type="checkbox">
+                        <span>
+                            <strong>Non-admin can read History</strong>
+                            <small>When off, only admin can open History. Per-user History window still applies, and 0 blocks that user.</small>
+                        </span>
+                    </label>
+                    <button id="saveAdminHistoryPolicyButton" class="button secondary admin-save-button" type="button">Save policy</button>
                 </div>
                 <div id="adminUserList" class="admin-user-list" aria-live="polite"></div>
             </section>

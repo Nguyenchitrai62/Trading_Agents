@@ -134,10 +134,26 @@ class AuthService:
         }
         return self._hydrate_user_permissions(user)
 
+    def _history_public_read_enabled(self) -> bool:
+        if not self.history_store.configured:
+            return bool(self.settings.history_public_read)
+        try:
+            return bool(self.history_store.get_history_public_read(self.settings.history_public_read))
+        except Exception:
+            logger.warning("Could not load global history-read policy from history database.", exc_info=True)
+            return bool(self.settings.history_public_read)
+
+    @staticmethod
+    def _has_personal_history_access(is_admin: bool, history_access_days: int | None, history_access_unlimited: bool) -> bool:
+        if is_admin or history_access_unlimited:
+            return True
+        return history_access_days is not None and int(history_access_days) > 0
+
     def _hydrate_user_permissions(self, user: dict) -> dict:
         email = str(user.get("email") or "").strip().lower()
         is_admin = email in self.settings.admin_emails
         can_run_analysis = is_admin
+        history_access_unlimited = is_admin
         history_access_days: int | None = None if is_admin else self.settings.default_history_access_days
         if email and self.history_store.configured:
             try:
@@ -148,10 +164,16 @@ class AuthService:
                 )
                 is_admin = bool(access.get("is_admin"))
                 can_run_analysis = bool(access.get("can_run_analysis"))
+                history_access_unlimited = bool(access.get("history_access_unlimited", False)) or is_admin
                 history_access_days = access.get("history_access_days")
             except Exception:
                 logger.warning("Could not load user access settings from history database.", exc_info=True)
         can_run_analysis = can_run_analysis or is_admin
+        history_access_unlimited = history_access_unlimited or is_admin
+        can_read_history = is_admin or (
+            self._history_public_read_enabled()
+            and self._has_personal_history_access(is_admin, history_access_days, history_access_unlimited)
+        )
         user.update(
             {
                 "email": email,
@@ -160,7 +182,8 @@ class AuthService:
                 "role": "admin" if is_admin else "runner" if can_run_analysis else "user",
                 "can_run_analysis": can_run_analysis,
                 "history_access_days": history_access_days,
-                "history_access_unlimited": history_access_days is None,
+                "history_access_unlimited": history_access_unlimited,
+                "can_read_history": can_read_history,
             }
         )
         return user
@@ -206,6 +229,7 @@ class AuthService:
             "authorized": True,
             "is_admin": bool(user.get("is_admin", False)),
             "can_run_analysis": bool(user.get("can_run_analysis", False)),
+            "can_read_history": bool(user.get("can_read_history", False)),
             "history_access_days": user.get("history_access_days"),
             "history_access_unlimited": bool(user.get("history_access_unlimited", user.get("history_access_days") is None)),
             "iat": issued_at,
@@ -328,6 +352,12 @@ class AuthService:
         user = await self.require_authorized_user(request)
         if not user.get("can_run_analysis"):
             raise HTTPException(status_code=403, detail="Run analysis permission is required.")
+        return user
+
+    async def require_history_reader(self, request: Request) -> dict:
+        user = await self.require_authorized_user(request)
+        if not user.get("can_read_history"):
+            raise HTTPException(status_code=403, detail="History access is disabled for this account.")
         return user
 
     async def require_admin_user(self, request: Request) -> dict:
