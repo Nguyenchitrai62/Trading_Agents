@@ -10,7 +10,7 @@ See: https://github.com/TauricResearch/TradingAgents/issues/557
 
 import warnings as _warnings
 
-from tradingagents.agents.analysts.sentiment_analyst import (  # noqa: F401
+from tradingagents.agents.analysts.social_analyst import (  # noqa: F401
     create_sentiment_analyst,
     create_social_media_analyst,
 )
