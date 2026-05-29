@@ -4436,6 +4436,56 @@ function setHistoryPage(nextPage) {
     triggerHistoryListReload("Could not change history page.");
 }
 
+let historyTableLayoutFrame = 0;
+
+function resetHistoryTableLayoutMetrics() {
+    if (!(elements.historyList instanceof HTMLElement)) {
+        return;
+    }
+    elements.historyList.style.removeProperty("--history-table-head-height");
+    elements.historyList.style.removeProperty("--history-table-row-height");
+}
+
+function applyHistoryTableLayoutMetrics() {
+    if (!(elements.historyList instanceof HTMLElement)) {
+        return;
+    }
+    if (elements.historyList.offsetParent === null || elements.historyList.clientHeight <= 0) {
+        return;
+    }
+    const shell = elements.historyList.querySelector(".history-table-shell");
+    const wrap = elements.historyList.querySelector(".history-table-wrap");
+    const toolbar = elements.historyList.querySelector(".history-table-toolbar");
+    const footer = elements.historyList.querySelector(".history-table-footer");
+    const table = elements.historyList.querySelector(".history-table");
+    const headRow = table?.querySelector("thead tr");
+    if (!(shell instanceof HTMLElement) || !(wrap instanceof HTMLElement) || !(toolbar instanceof HTMLElement) || !(footer instanceof HTMLElement) || !(table instanceof HTMLElement) || !(headRow instanceof HTMLTableRowElement)) {
+        resetHistoryTableLayoutMetrics();
+        return;
+    }
+
+    const shellStyles = window.getComputedStyle(shell);
+    const shellGap = Number.parseFloat(shellStyles.rowGap || shellStyles.gap || "0") || 0;
+    const listHeight = elements.historyList.clientHeight;
+    const occupiedHeight = toolbar.offsetHeight + footer.offsetHeight + (shellGap * 2);
+    const wrapHeight = Math.max(0, listHeight - occupiedHeight);
+    const headerHeight = Math.max(1, headRow.getBoundingClientRect().height || 0);
+    const rowHeight = Math.max(1, (wrapHeight - headerHeight) / HISTORY_PAGE_SIZE);
+
+    elements.historyList.style.setProperty("--history-table-head-height", `${headerHeight}px`);
+    elements.historyList.style.setProperty("--history-table-row-height", `${rowHeight}px`);
+}
+
+function scheduleHistoryTableLayoutMetrics() {
+    if (historyTableLayoutFrame) {
+        window.cancelAnimationFrame(historyTableLayoutFrame);
+    }
+    historyTableLayoutFrame = window.requestAnimationFrame(() => {
+        historyTableLayoutFrame = 0;
+        applyHistoryTableLayoutMetrics();
+    });
+}
+
 function renderHistoryPage() {
     if (!(elements.historyList instanceof HTMLElement) || !(elements.historyDetail instanceof HTMLElement)) {
         return;
@@ -4446,6 +4496,7 @@ function renderHistoryPage() {
     if (!canReadHistory()) {
         elements.historyStatusText.textContent = "Sign in required";
         elements.historyList.innerHTML = '<div class="history-empty">Sign in with Google to view saved analyses.</div>';
+        resetHistoryTableLayoutMetrics();
         elements.historyDetailTitle.textContent = "Analysis Detail";
         elements.historyDetail.innerHTML = '<div class="history-empty">History is available after sign-in.</div>';
         return;
@@ -4453,12 +4504,15 @@ function renderHistoryPage() {
     if (history.loading) {
         elements.historyStatusText.textContent = "Loading history";
         elements.historyList.innerHTML = '<div class="history-empty">Loading saved analyses...</div>';
+        resetHistoryTableLayoutMetrics();
     } else if (history.error) {
         elements.historyStatusText.textContent = "History issue";
         elements.historyList.innerHTML = `<div class="history-empty">${escapeHtml(history.error)}</div>`;
+        resetHistoryTableLayoutMetrics();
     } else if (!history.items.length) {
         elements.historyStatusText.textContent = history.loaded ? "No saved analyses" : "Waiting";
         elements.historyList.innerHTML = '<div class="history-empty">No saved analyses yet.</div>';
+        resetHistoryTableLayoutMetrics();
     } else {
         const totalCount = Math.max(0, Number(history.totalCount || history.items.length || 0));
         const totalPages = Math.max(1, Number(history.totalPages || 1));
@@ -4539,6 +4593,7 @@ function renderHistoryPage() {
                 </div>
             </div>
         `;
+        scheduleHistoryTableLayoutMetrics();
     }
 
     if (history.detailLoading) {
@@ -5401,6 +5456,12 @@ function switchPage(page) {
         renderChatPage();
     }
 }
+
+window.addEventListener("resize", () => {
+    if (state.page === "history") {
+        scheduleHistoryTableLayoutMetrics();
+    }
+});
 
 function openDetailFromTrigger(trigger) {
     const section = trigger.dataset.detailSection;
