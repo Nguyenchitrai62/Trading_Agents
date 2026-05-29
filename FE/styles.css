@@ -4905,6 +4905,8 @@ body.is-running .window-status {
 .history-list-window {
     align-self: stretch;
     height: 100%;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     width: fit-content;
     max-width: 100%;
     justify-self: start;
@@ -4928,9 +4930,10 @@ body.is-running .window-status {
 
 .history-list {
     display: grid;
-    align-content: start;
+    align-content: stretch;
     gap: 12px;
     padding-right: 2px;
+    flex: 1 1 auto;
     height: 100%;
     overflow: hidden;
     width: fit-content;
@@ -5163,9 +5166,10 @@ body.is-running .window-status {
 
 .history-table-wrap {
     display: flex;
-    align-items: flex-start;
+    align-items: stretch;
     justify-content: flex-start;
     min-width: 0;
+    min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
     border: 1px solid var(--line);
