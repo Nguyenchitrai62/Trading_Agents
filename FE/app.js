@@ -390,7 +390,6 @@ function createEmptyHistoryState() {
         active: null,
         detailLoading: false,
         cache: {},
-        prefetchToken: 0,
     };
 }
 
@@ -4326,29 +4325,6 @@ async function ensureHistorySectionMarkdown(historyId, sectionKey, options = {})
     return entry.sectionRequests[sectionKey];
 }
 
-async function prefetchHistorySections(historyId) {
-    const entry = syncHistoryActiveEntry(historyId);
-    if (!entry || !entry.sections.length) {
-        return;
-    }
-    state.history.prefetchToken += 1;
-    const token = state.history.prefetchToken;
-    if (token !== state.history.prefetchToken || state.history.activeId !== historyId) {
-        return;
-    }
-
-    const pendingLoads = entry.sections
-        .map((section) => section?.section_key || "")
-        .filter((sectionKey) => sectionKey && !Object.prototype.hasOwnProperty.call(entry.sectionMarkdown || {}, sectionKey))
-        .map((sectionKey) => ensureHistorySectionMarkdown(historyId, sectionKey, { silent: true }));
-
-    if (!pendingLoads.length) {
-        return;
-    }
-
-    await Promise.allSettled(pendingLoads);
-}
-
 function buildHistoryPaginationItems(totalPages = 1, currentPage = 1) {
     const safeTotalPages = Math.max(1, Number(totalPages || 1));
     const safeCurrentPage = Math.min(Math.max(1, Number(currentPage || 1)), safeTotalPages);
@@ -4823,7 +4799,7 @@ function renderHistoryPage() {
             <span>${escapeHtml(formatHistoryTimestamp(item.created_at))}</span>
         </div>
         <div class="history-flow-note">
-            Flow appears immediately. Markdown loads in the background; green dots mean ready.
+            Flow appears immediately. Click any block to load only that saved markdown.
         </div>
         <div class="history-diagram-wrap">
             <div class="history-diagram history-diagram--count-${stages.length}">
@@ -4915,7 +4891,6 @@ async function loadHistoryDetail(historyId) {
         state.history.active = cachedEntry;
         state.history.detailLoading = false;
         renderHistoryPage();
-        prefetchHistorySections(historyId).catch(() => {});
         return;
     }
     state.history.active = cachedEntry;
@@ -4937,9 +4912,6 @@ async function loadHistoryDetail(historyId) {
     } finally {
         state.history.detailLoading = false;
         renderHistoryPage();
-        if (state.history.activeId === historyId && state.history.active?.sections?.length) {
-            prefetchHistorySections(historyId).catch(() => {});
-        }
     }
 }
 
