@@ -1218,6 +1218,10 @@ class AnalysisService:
                     "```",
                 ])
 
+            table_limit_warning = summary.get("table_limit_warning")
+            if table_limit_warning:
+                lines.extend(["", f"> **Warning:** {table_limit_warning}"])
+
         error = str(result.get("error") or "").strip()
         if error:
             lines.extend(["", f"> Error: {error}"])

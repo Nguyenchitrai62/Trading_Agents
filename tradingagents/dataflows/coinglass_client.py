@@ -849,16 +849,16 @@ def _compact_json_value(value: object, max_depth: int = 4, max_items: int = 5) -
     if max_depth <= 0:
         return _safe_scalar(value)
     if isinstance(value, dict):
-        items = list(value.items())[:max_items]
+        items = list(value.items())
         compact = {str(key): _compact_json_value(val, max_depth - 1, max_items) for key, val in items}
-        if len(value) > max_items:
-            compact["..."] = f"{len(value) - max_items} more key(s)"
         return compact
     if isinstance(value, list):
-        compact_list = [_compact_json_value(item, max_depth - 1, max_items) for item in value[:max_items]]
-        if len(value) > max_items:
-            compact_list.append(f"... {len(value) - max_items} more item(s)")
-        return compact_list
+        if not value:
+            return []
+        # If list of dicts with 'exchange', render as readable string for table
+        if all(isinstance(item, dict) and 'exchange' in item for item in value):
+            return ", ".join(f"{item.get('exchange')}: {item.get('fundingrate', item.get('funding_rate', ''))}" for item in value)
+        return [_compact_json_value(item, max_depth - 1, max_items) for item in value]
     return _safe_scalar(value)
 
 
@@ -934,8 +934,13 @@ def _summarize_parallel_scalar_lists(
             "max": round(max(numeric_values), 8),
         }
 
-    sample_items = series_rows[:sample_row_limit] if row_count > recent_row_limit else []
-    latest_items = series_rows[-recent_row_limit:]
+    warning = None
+    capped = False
+    if row_count > sample_row_limit:
+        warning = f"Table too long (>{sample_row_limit} rows), only showing first {sample_row_limit} rows."
+        capped = True
+    sample_items = series_rows[:sample_row_limit] if capped else []
+    latest_items = series_rows[-recent_row_limit:] if capped else series_rows
 
     summary: dict[str, Any] = {
         "primary_list_key": raw_columns[0],
@@ -946,6 +951,8 @@ def _summarize_parallel_scalar_lists(
         "sample_title": "Earliest rows",
         "latest_title": "Most recent rows",
     }
+    if warning:
+        summary["table_limit_warning"] = warning
     if numeric_summary:
         summary["numeric_summary"] = numeric_summary
     return summary

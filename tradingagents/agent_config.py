@@ -113,8 +113,8 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "coinglass_owner_analyst": "fundamentals",
     "coinglass_owner_agent_label": "Flow Analyst",
     "coinglass_prompt_char_limit": 4800,
-    "coinglass_preview_sample_rows": 3,
-    "coinglass_preview_recent_rows": 8,
+    "coinglass_preview_sample_rows": 50,
+    "coinglass_preview_recent_rows": 50,
     "coinglass_packages_by_role": {
         "market_analyst": (
             "derivatives_positioning",
