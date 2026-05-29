@@ -4509,6 +4509,7 @@ function renderHistoryPage() {
                     <table class="history-table">
                         <thead>
                             <tr>
+                                <th scope="col">#</th>
                                 <th scope="col">Symbol</th>
                                 <th scope="col">Signals</th>
                                 <th scope="col">Created at</th>
@@ -4520,8 +4521,9 @@ function renderHistoryPage() {
                         <tbody>
                             ${history.items
                                 .map(
-                                    (item) => `
+                                    (item, index) => `
                                         <tr class="history-table-row ${item.id === history.activeId ? "is-active" : ""}" role="button" tabindex="0" data-history-row-id="${escapeHtml(item.id)}" aria-label="Open saved analysis for ${escapeHtml(item.symbol || "analysis")}">
+                                            <td>${escapeHtml(String(startIndex + index))}</td>
                                             <td>${escapeHtml(item.symbol || "-")}</td>
                                             <td>${escapeHtml(item.signal || "Completed")}</td>
                                             <td>${escapeHtml(formatHistoryTimestamp(item.created_at))}</td>
@@ -4537,15 +4539,18 @@ function renderHistoryPage() {
                 </div>
                 <div class="history-table-footer">
                     <div class="history-table-footer-meta">
-                        <label class="history-table-control">
+                        <label class="history-table-control history-table-control--rows">
                             <span>Rows per page</span>
-                            <select data-history-limit-select>
-                                ${pageSizeOptions
-                                    .map(
-                                        (pageSize) => `<option value="${pageSize}" ${pageSize === currentLimit ? "selected" : ""}>${pageSize}</option>`,
-                                    )
-                                    .join("")}
-                            </select>
+                            <span class="history-table-select-wrap">
+                                <select data-history-limit-select aria-label="Rows per page">
+                                    ${pageSizeOptions
+                                        .map(
+                                            (pageSize) => `<option value="${pageSize}" ${pageSize === currentLimit ? "selected" : ""}>${pageSize}</option>`,
+                                        )
+                                        .join("")}
+                                </select>
+                                <span class="history-table-select-icon" aria-hidden="true">⌄</span>
+                            </span>
                         </label>
                         <span class="history-table-footer-copy">Page ${escapeHtml(String(currentPage))} of ${escapeHtml(String(totalPages))}</span>
                     </div>
