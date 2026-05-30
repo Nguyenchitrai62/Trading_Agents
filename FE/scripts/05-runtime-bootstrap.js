@@ -333,6 +333,7 @@ function handleServerEvent(event, data) {
         state.run.endpointSummaries = data.endpoint_summaries || state.run.endpointSummaries || [];
         state.run.evidenceCount = Number(data.evidence_count || state.run.evidenceCount || 0);
         state.run.sourceArtifactCount = Number(data.source_artifact_count || state.run.sourceArtifactCount || 0);
+        state.run.sourceArtifactGroups = data.source_artifact_groups || state.run.sourceArtifactGroups || {};
         state.run.structured = {
             ...(state.run.structured || {}),
             ...(data.structured || {}),
@@ -959,6 +960,44 @@ elements.detailModal.addEventListener("click", (event) => {
     const target = event.target;
     if (target instanceof HTMLElement && target.dataset.closeDetail === "true") {
         closeDetailModal();
+        return;
+    }
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const sourceButton = target.closest("[data-source-detail-kind]");
+    if (!(sourceButton instanceof HTMLElement)) {
+        return;
+    }
+    const detailKind = sourceButton.dataset.sourceDetailKind || "";
+    if (detailKind === "trace") {
+        const traceId = sourceButton.dataset.sourceDetailId || "";
+        const entry = getTraceEntryById(traceId);
+        if (entry) {
+            openDetailModal({
+                type: "trace",
+                traceId,
+                title: `${entry.agent || "Agent"} - ${formatTracePhaseLabel(entry.phase)}`,
+                subtitle: entry.title || "Trace detail",
+                mode: "markdown",
+            });
+        }
+        return;
+    }
+    if (detailKind === "saved") {
+        openSavedSourceArtifactDetail(
+            sourceButton.dataset.sourceDetailRunId || "",
+            sourceButton.dataset.sourceDetailSectionKey || sourceButton.dataset.sourceDetailId || "",
+        ).catch((error) => {
+            openDetailModal({
+                type: "source-artifact",
+                title: "Source Artifact",
+                subtitle: "Load failed",
+                content: "",
+                fallback: error instanceof Error ? error.message : String(error || "Could not load source artifact."),
+                mode: "markdown",
+            });
+        });
     }
 });
 elements.alertModal.addEventListener("click", (event) => {

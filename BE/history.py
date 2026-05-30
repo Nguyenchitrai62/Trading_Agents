@@ -168,6 +168,7 @@ class TursoHistoryStore:
                     flow_group TEXT,
                     source_kind TEXT,
                     source_key TEXT,
+                    summary TEXT,
                     payload_json TEXT,
                     display_order INTEGER NOT NULL,
                     markdown TEXT NOT NULL,
@@ -238,6 +239,7 @@ class TursoHistoryStore:
                 "flow_group": "TEXT",
                 "source_kind": "TEXT",
                 "source_key": "TEXT",
+                "summary": "TEXT",
                 "payload_json": "TEXT",
             }
             for column_name, column_def in section_column_defaults.items():
@@ -257,6 +259,8 @@ class TursoHistoryStore:
             if migration_statements:
                 self._execute_many(migration_statements)
             self._execute("CREATE INDEX IF NOT EXISTS idx_analysis_sections_run_stage ON analysis_sections(run_id, flow_stage, flow_group)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_analysis_sections_run_key ON analysis_sections(run_id, section_key)")
+            self._execute("CREATE INDEX IF NOT EXISTS idx_analysis_sections_run_artifact_group ON analysis_sections(run_id, artifact_type, flow_group, display_order)")
             self._execute(
                 """
                 UPDATE analysis_runs
@@ -552,9 +556,9 @@ class TursoHistoryStore:
                     """
                     INSERT INTO analysis_sections (
                         id, run_id, section_key, title, agent, team, artifact_type,
-                        flow_stage, flow_group, source_kind, source_key, payload_json,
+                        flow_stage, flow_group, source_kind, source_key, summary, payload_json,
                         display_order, markdown, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         section_id,
@@ -568,6 +572,7 @@ class TursoHistoryStore:
                         section.get("flow_group"),
                         section.get("source_kind"),
                         section.get("source_key"),
+                        section.get("summary"),
                         payload_json,
                         index,
                         markdown,
@@ -710,7 +715,7 @@ class TursoHistoryStore:
             f"""
             SELECT
                 s.run_id, s.section_key, s.title, s.agent, s.team,
-                s.artifact_type, s.flow_stage, s.flow_group, s.source_kind, s.source_key,
+                s.artifact_type, s.flow_stage, s.flow_group, s.source_kind, s.source_key, s.summary,
                 s.created_at
             FROM analysis_sections s
             INNER JOIN analysis_runs r ON r.id = s.run_id
@@ -736,6 +741,7 @@ class TursoHistoryStore:
                 "flow_group": row.get("flow_group"),
                 "source_kind": row.get("source_kind"),
                 "source_key": row.get("source_key"),
+                "summary": row.get("summary"),
                 "created_at": row.get("created_at"),
             })
         return grouped
@@ -783,7 +789,7 @@ class TursoHistoryStore:
             return None
         sections = self._query_rows(
             """
-            SELECT section_key, title, agent, team, artifact_type, flow_stage, flow_group, source_kind, source_key, created_at
+            SELECT section_key, title, agent, team, artifact_type, flow_stage, flow_group, source_kind, source_key, summary, created_at
             FROM analysis_sections
             WHERE run_id = ?
             ORDER BY display_order ASC
@@ -799,7 +805,7 @@ class TursoHistoryStore:
         sections = self._query_rows(
             """
             SELECT section_key, title, agent, team, artifact_type, flow_stage, flow_group,
-                source_kind, source_key, payload_json, markdown, created_at
+                source_kind, source_key, summary, payload_json, markdown, created_at
             FROM analysis_sections
             WHERE run_id = ? AND section_key = ?
             LIMIT 1
@@ -809,6 +815,100 @@ class TursoHistoryStore:
         if not sections:
             return None
         return {"item": item, "section": sections[0]}
+
+    def get_final_decision_markdown(self, run_id: str, history_access_days: int | None) -> dict | None:
+        item = self.get_accessible_run_meta(run_id, history_access_days)
+        if item is None:
+            return None
+        rows = self._query_rows(
+            """
+            SELECT section_key, title, agent, team, markdown, created_at
+            FROM analysis_sections
+            WHERE run_id = ?
+              AND section_key IN ('final_trade_decision', 'verification_report')
+            ORDER BY CASE section_key
+                WHEN 'final_trade_decision' THEN 0
+                WHEN 'verification_report' THEN 1
+                ELSE 2
+            END
+            """,
+            [run_id],
+        )
+        if not rows:
+            return None
+        markdown_blocks = []
+        for row in rows:
+            markdown = str(row.get("markdown") or "").strip()
+            if not markdown:
+                continue
+            title = str(row.get("title") or row.get("section_key") or "Section").strip()
+            markdown_blocks.append(f"# {title}\n\n{markdown}")
+        if not markdown_blocks:
+            return None
+        return {
+            "item": item,
+            "section": {
+                "section_key": "final_decision",
+                "title": "Final Decision",
+                "agent": "Portfolio Manager",
+                "team": "Portfolio Management",
+                "markdown": "\n\n---\n\n".join(markdown_blocks),
+                "created_at": rows[0].get("created_at"),
+            },
+        }
+
+    def list_source_artifacts(
+        self,
+        run_id: str,
+        history_access_days: int | None,
+        flow_group: str | None = None,
+        source_kind: str | None = None,
+    ) -> dict | None:
+        item = self.get_accessible_run_meta(run_id, history_access_days)
+        if item is None:
+            return None
+
+        where = ["run_id = ?", "artifact_type = 'source'"]
+        args: list[object] = [run_id]
+        normalized_flow_group = str(flow_group or "").strip()
+        if normalized_flow_group:
+            where.append("flow_group = ?")
+            args.append(normalized_flow_group)
+        normalized_source_kind = str(source_kind or "").strip()
+        if normalized_source_kind:
+            where.append("source_kind = ?")
+            args.append(normalized_source_kind)
+        rows = self._query_rows(
+            f"""
+            SELECT section_key, title, agent, team, artifact_type, flow_stage,
+                flow_group, source_kind, source_key, summary, created_at
+            FROM analysis_sections
+            WHERE {" AND ".join(where)}
+            ORDER BY display_order ASC
+            """,
+            args,
+        )
+        return {"item": item, "artifacts": rows}
+
+    def get_source_artifact(self, run_id: str, section_key: str, history_access_days: int | None) -> dict | None:
+        item = self.get_accessible_run_meta(run_id, history_access_days)
+        if item is None:
+            return None
+        rows = self._query_rows(
+            """
+            SELECT section_key, title, agent, team, artifact_type, flow_stage,
+                flow_group, source_kind, source_key, summary, payload_json, markdown, created_at
+            FROM analysis_sections
+            WHERE run_id = ?
+              AND section_key = ?
+              AND artifact_type = 'source'
+            LIMIT 1
+            """,
+            [run_id, section_key],
+        )
+        if not rows:
+            return None
+        return {"item": item, "artifact": rows[0]}
 
     def get_run(self, run_id: str, user_email: str) -> dict | None:
         self.ensure_schema()
@@ -827,7 +927,7 @@ class TursoHistoryStore:
         sections = self._query_rows(
             """
             SELECT section_key, title, agent, team, artifact_type, flow_stage, flow_group,
-                source_kind, source_key, payload_json, markdown, created_at
+                source_kind, source_key, summary, payload_json, markdown, created_at
             FROM analysis_sections
             WHERE run_id = ?
             ORDER BY display_order ASC
@@ -853,7 +953,7 @@ class TursoHistoryStore:
         sections = self._query_rows(
             """
             SELECT section_key, title, agent, team, artifact_type, flow_stage, flow_group,
-                source_kind, source_key, payload_json, markdown, created_at
+                source_kind, source_key, summary, payload_json, markdown, created_at
             FROM analysis_sections
             WHERE run_id = ?
             ORDER BY display_order ASC
@@ -875,6 +975,7 @@ def _history_section(
     flow_group: str | None = None,
     source_kind: str | None = None,
     source_key: str | None = None,
+    summary: str | None = None,
     payload_json: object = None,
 ) -> dict | None:
     markdown_text = str(markdown or "").strip()
@@ -891,6 +992,7 @@ def _history_section(
         "flow_group": flow_group,
         "source_kind": source_kind,
         "source_key": source_key,
+        "summary": summary,
         "payload_json": payload_json,
     }
 

@@ -12,6 +12,14 @@
     grid-template-columns: minmax(0, 0.3fr) minmax(0, 0.7fr);
 }
 
+.history-page[data-history-layout="table"] {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.history-page[data-history-layout="table"] .history-detail-window {
+    display: none;
+}
+
 .history-list-window,
 .history-detail-window,
 .chart-window {
@@ -27,6 +35,13 @@
 .history-page[data-history-layout="split"] .history-list,
 .history-page[data-history-layout="split"] .history-table-shell {
     width: auto;
+}
+
+.history-page[data-history-layout="table"] .history-list-window,
+.history-page[data-history-layout="table"] .history-list,
+.history-page[data-history-layout="table"] .history-table-shell {
+    width: 100%;
+    justify-self: stretch;
 }
 
 .history-list-window {

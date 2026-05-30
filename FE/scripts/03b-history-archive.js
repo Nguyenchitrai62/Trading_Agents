@@ -71,6 +71,28 @@ function upsertHistoryArchiveEntry(item = {}, sections = null) {
     return cache[historyId];
 }
 
+function cacheHistoryItem(item = {}) {
+    const historyId = String(item?.id || "").trim();
+    if (!historyId) {
+        return null;
+    }
+    const cache = state.history.cache || (state.history.cache = {});
+    const existing = cache[historyId] || {};
+    cache[historyId] = {
+        ...existing,
+        item: {
+            ...(existing.item || {}),
+            ...item,
+        },
+        sections: Array.isArray(existing.sections) ? existing.sections : [],
+        sectionMarkdown: existing.sectionMarkdown || {},
+        activeSectionKey: existing.activeSectionKey || "",
+        sectionLoadingKeys: Array.isArray(existing.sectionLoadingKeys) ? existing.sectionLoadingKeys : [],
+        sectionRequests: existing.sectionRequests || {},
+    };
+    return cache[historyId];
+}
+
 function syncHistoryActiveEntry(historyId = "") {
     const entry = getHistoryArchiveEntry(historyId);
     if (!entry) {
@@ -509,7 +531,7 @@ function renderHistoryPage() {
     }
     const history = state.history;
     if (elements.historyPage instanceof HTMLElement) {
-        elements.historyPage.dataset.historyLayout = history.loading || !history.loaded ? "split" : "fit";
+        elements.historyPage.dataset.historyLayout = "table";
     }
     setElementLoadingState(elements.historyList, history.loading, "Loading history");
     setElementLoadingState(elements.historyDetail, history.detailLoading, "Loading detail");
@@ -566,7 +588,7 @@ function renderHistoryPage() {
                         <strong>${escapeHtml(String(totalCount))} archived runs</strong>
                         <span>${totalCount ? `Showing ${escapeHtml(String(startIndex))}-${escapeHtml(String(endIndex))}` : "No records"}</span>
                     </div>
-                    <span class="history-table-hint">Select a row to open the archived flow.</span>
+                    <span class="history-table-hint">Select a row to open the final decision markdown.</span>
                 </div>
                 <div class="history-table-wrap">
                     <table class="history-table">
@@ -619,152 +641,9 @@ function renderHistoryPage() {
         scheduleHistoryTableLayoutMetrics();
     }
 
-    if (history.detailLoading) {
-        elements.historyDetailTitle.textContent = "Analysis Detail";
-        elements.historyStatusText.textContent = "Loading detail";
-        elements.historyDetail.innerHTML = '<div class="history-empty">Loading markdown sections...</div>';
-        return;
-    }
-    if (!history.active) {
-        elements.historyDetailTitle.textContent = "Analysis Detail";
-        elements.historyStatusText.textContent = history.loaded ? "No history selected" : "Waiting";
-        elements.historyDetail.innerHTML = '<div class="history-empty">Select a saved analysis.</div>';
-        return;
-    }
-
-    const item = history.active.item || {};
-    const sections = history.active.sections || [];
-    elements.historyDetailTitle.textContent = `Analysis Detail - ${item.symbol || "Analysis"} - ${item.analysis_date || ""}`.trim();
-
-    const sectionMarkdown = history.active.sectionMarkdown || {};
-    const activeSectionKey = history.active.activeSectionKey || "";
-    const loadingKeys = Array.isArray(history.active.sectionLoadingKeys) ? history.active.sectionLoadingKeys : [];
-    const loadedCount = sections.filter((section) => Object.prototype.hasOwnProperty.call(sectionMarkdown, section.section_key || "")).length;
-    const isSectionLoading = Boolean(loadingKeys.length);
-    const diagram = buildHistoryDiagramModel(sections);
-    const diagramOptions = {
-        activeSectionKey,
-        sectionMarkdown,
-        loadingKeys,
-    };
-    const stages = [];
-    const sourceMarkup = renderHistoryDiagramSourcesGroup(diagram, diagramOptions);
-    if (sourceMarkup) {
-        stages.push({
-            key: "sources",
-            markup: sourceMarkup,
-        });
-    }
-    if (diagram.evidence) {
-        stages.push({
-            key: "evidence",
-            markup: renderHistoryDiagramSingleGroup("Evidence Extractor", "evidence", diagram.evidence, diagramOptions),
-        });
-    }
-    if (diagram.inputs.length) {
-        stages.push({
-            key: "signals",
-            markup: renderHistoryDiagramSignalsGroup(diagram.inputs, diagramOptions),
-        });
-    }
-    if (diagram.evidence) {
-        stages.push({
-            key: "ledger",
-            markup: renderHistoryDiagramSingleGroup("Evidence Ledger", "evidence", diagram.evidence, diagramOptions),
-        });
-    }
-    if (diagram.researchNodes.length) {
-        stages.push({
-            key: "research",
-            markup: renderHistoryDiagramResearchGroup(diagram.researchNodes, diagramOptions),
-        });
-    }
-    if (diagram.investmentPlan) {
-        stages.push({
-            key: "plan",
-            markup: renderHistoryDiagramSingleGroup("Plan", "plan", diagram.investmentPlan, diagramOptions),
-        });
-    }
-    if (diagram.investmentExtractor) {
-        stages.push({
-            key: "investment-extractor",
-            markup: renderHistoryDiagramSingleGroup("Investment Extractor", "evidence", diagram.investmentExtractor, diagramOptions),
-        });
-    }
-    if (diagram.trader) {
-        stages.push({
-            key: "trader",
-            markup: renderHistoryDiagramSingleGroup("Trader", "trader", diagram.trader, diagramOptions),
-        });
-    }
-    if (diagram.traderExtractor) {
-        stages.push({
-            key: "trader-extractor",
-            markup: renderHistoryDiagramSingleGroup("Trader Extractor", "evidence", diagram.traderExtractor, diagramOptions),
-        });
-    }
-    if (diagram.riskNodes.length) {
-        stages.push({
-            key: "risk",
-            markup: renderHistoryDiagramClusterGroup("Risk", "risk", diagram.riskNodes, diagramOptions),
-        });
-    }
-    if (diagram.manager) {
-        stages.push({
-            key: "portfolio",
-            markup: renderHistoryDiagramSingleGroup("Manager", "portfolio", diagram.manager, diagramOptions),
-        });
-    }
-    if (diagram.decisionExtractor) {
-        stages.push({
-            key: "decision-extractor",
-            markup: renderHistoryDiagramSingleGroup("Decision Extractor", "evidence", diagram.decisionExtractor, diagramOptions),
-        });
-    }
-    if (diagram.verifier) {
-        stages.push({
-            key: "verifier",
-            markup: renderHistoryDiagramSingleGroup("Verifier", "verifier", diagram.verifier, diagramOptions),
-        });
-    }
-    if (diagram.verifierStructured) {
-        stages.push({
-            key: "verifier-payload",
-            markup: renderHistoryDiagramSingleGroup("Verifier Payload", "verifier", diagram.verifierStructured, diagramOptions),
-        });
-    }
-    if (diagram.persistence) {
-        stages.push({
-            key: "persistence",
-            markup: renderHistoryDiagramSingleGroup("Persistence", "verifier", diagram.persistence, diagramOptions),
-        });
-    }
-    elements.historyStatusText.textContent = isSectionLoading
-        ? `Loading markdown ${loadedCount}/${sections.length}`
-        : `${sections.length} block${sections.length === 1 ? "" : "s"}`;
-    elements.historyDetail.innerHTML = `
-        <div class="history-detail-meta">
-            <span>${escapeHtml(item.signal || "Completed")}</span>
-            <span>${escapeHtml(item.research_depth || "-")}</span>
-            <span>${escapeHtml(String(item.lookback_days || "-"))}d</span>
-            <span>${escapeHtml(formatHistoryDateTime(item.created_at))}</span>
-        </div>
-        <div class="history-flow-note">
-            Flow appears immediately. Click any block to load only that saved markdown.
-        </div>
-        <div class="history-diagram-wrap">
-            <div class="history-diagram history-diagram--vertical history-diagram--count-${stages.length}">
-                ${stages.length
-                    ? stages
-                        .map((stage, index) => {
-                            return `<div class="history-diagram-stage-slot history-diagram-stage-slot--${index} history-diagram-stage-slot--${stage.key}">${stage.markup}</div>${index < stages.length - 1 ? renderHistoryVerticalConnector() : ""}`;
-                        })
-                        .join("")
-                    : '<div class="history-empty">No saved flow sections are available for this analysis.</div>'}
-            </div>
-            ${renderHistoryDiagramExtras(diagram.extras, diagramOptions)}
-        </div>
-    `;
+    elements.historyStatusText.textContent = history.loaded ? "Select a row" : "Waiting";
+    elements.historyDetailTitle.textContent = "Final Decision";
+    elements.historyDetail.innerHTML = '<div class="history-empty">Select a saved analysis row to open the final decision.</div>';
 }
 
 async function loadHistoryList(force = false) {
@@ -797,11 +676,10 @@ async function loadHistoryList(force = false) {
         }
         const payload = await response.json();
         state.history.items = (payload.items || []).map((item) => {
-            const entry = upsertHistoryArchiveEntry(item, item.sections || []);
+            const entry = cacheHistoryItem(item);
             return entry
                 ? {
                     ...entry.item,
-                    sections: entry.sections,
                 }
                 : item;
         });
@@ -811,9 +689,7 @@ async function loadHistoryList(force = false) {
         state.history.totalCount = Math.max(0, Number(payload.total_count || 0));
         state.history.totalPages = Math.max(1, Number(payload.total_pages || 1));
         state.history.loaded = true;
-        if (state.history.activeId) {
-            syncHistoryActiveEntry(state.history.activeId);
-        }
+        state.history.active = state.history.activeId ? getHistoryArchiveEntry(state.history.activeId) : null;
     } catch (error) {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history.");
     } finally {
@@ -841,21 +717,12 @@ async function loadHistoryDetail(historyId) {
     state.history.activeId = historyId;
     state.history.error = "";
     const cachedItem = state.history.items.find((item) => item.id === historyId) || getHistoryArchiveEntry(historyId)?.item || { id: historyId };
-    const cachedEntry = upsertHistoryArchiveEntry(
-        cachedItem,
-        cachedItem.sections || getHistoryArchiveEntry(historyId)?.sections || [],
-    );
-    if (cachedEntry && cachedEntry.sections.length) {
-        state.history.active = cachedEntry;
-        state.history.detailLoading = false;
-        renderHistoryPage();
-        return;
-    }
+    const cachedEntry = cacheHistoryItem(cachedItem);
     state.history.active = cachedEntry;
     state.history.detailLoading = true;
     renderHistoryPage();
     try {
-        const response = await apiFetch(`/api/history/${encodeURIComponent(historyId)}/sections`, {
+        const response = await apiFetch(`/api/history/${encodeURIComponent(historyId)}/final-decision`, {
             headers: getAuthHeaders(),
             cache: "no-store",
         });
@@ -863,7 +730,16 @@ async function loadHistoryDetail(historyId) {
             throw new Error(await readResponseError(response));
         }
         const payload = await response.json();
-        state.history.active = upsertHistoryArchiveEntry(payload.item || { id: historyId }, payload.sections || []);
+        const item = payload.item || cachedItem || { id: historyId };
+        state.history.active = cacheHistoryItem(item);
+        state.history.error = "";
+        openDetailModal({
+            type: "history-final-decision",
+            title: `Final Decision - ${item.symbol || "Analysis"}`,
+            subtitle: [item.analysis_date, item.signal].filter(Boolean).join(" - ") || "History",
+            content: payload.section?.markdown || "",
+            mode: "markdown",
+        });
         state.history.error = "";
     } catch (error) {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history detail.");

@@ -521,6 +521,7 @@ class AnalysisService:
         title: object,
         trace_id: object,
         content: object,
+        call_content: object = "",
     ) -> dict | None:
         classification = cls._classify_tool_source(agent=agent, title=title)
         if classification is None:
@@ -531,12 +532,14 @@ class AnalysisService:
         agent_label = str(agent or "Tool Runner").strip() or "Tool Runner"
         tool_name = str(title or "tool").strip() or "tool"
         source_key = str(trace_id or tool_name).strip() or tool_name
+        call_text = str(call_content or "").strip()
         fingerprint = hashlib.sha1(
             json.dumps(
                 {
                     "agent": agent_label,
                     "title": tool_name,
                     "trace_id": source_key,
+                    "call": call_text,
                     "content": raw_content,
                 },
                 ensure_ascii=False,
@@ -554,6 +557,11 @@ class AnalysisService:
                 f"- Trace ID: {source_key}",
                 f"- Captured at: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
                 "",
+                "## Tool call",
+                "```text",
+                call_text or f"{tool_name}()",
+                "```",
+                "",
                 "## Result",
                 raw_content,
             ]
@@ -569,10 +577,12 @@ class AnalysisService:
             "flow_group": classification["flow_group"],
             "source_kind": classification["source_kind"],
             "source_key": source_key,
+            "summary": call_text or source_key,
             "payload_json": {
                 "agent": agent_label,
                 "tool": tool_name,
                 "trace_id": source_key,
+                "call": call_text,
                 "content": raw_content,
             },
         }
@@ -616,6 +626,7 @@ class AnalysisService:
             "flow_group": "coinglass_data",
             "source_kind": "coinglass",
             "source_key": endpoint_key,
+            "summary": str(result.get("source") or endpoint_key),
             "payload_json": {
                 "endpoint": endpoint_key,
                 "title": result.get("title"),
@@ -1605,6 +1616,7 @@ class AnalysisService:
         emit: Callable[[str, dict], None],
         telemetry: AnalysisTelemetry | None = None,
         trace_sink: Callable[..., None] | None = None,
+        trace_call_sink: Callable[..., None] | None = None,
     ) -> None:
         for message in messages:
             signature = self._build_message_signature(message)
@@ -1656,6 +1668,14 @@ class AnalysisService:
                     for tool_call in tool_calls:
                         tool_name = str(tool_call.get("name") or "tool")
                         trace_id = str(tool_call.get("id") or tool_name)
+                        call_summary = self._tool_call_summary(tool_call)
+                        if trace_call_sink is not None:
+                            trace_call_sink(
+                                agent=message_agent or "Analyst",
+                                title=tool_name,
+                                trace_id=trace_id,
+                                content=call_summary,
+                            )
                         if telemetry is not None:
                             telemetry.record_tool_trace("tool_call", tool_name)
                         emit(
@@ -1665,7 +1685,7 @@ class AnalysisService:
                                 "phase": "tool_call",
                                 "title": tool_name,
                                 "trace_id": trace_id,
-                                "content": self._tool_call_summary(tool_call),
+                                "content": call_summary,
                             },
                         )
                 content = self._trim_text(
@@ -2001,6 +2021,13 @@ class AnalysisService:
         telemetry_callback = AnalysisTelemetryCallback(telemetry)
         source_artifacts: list[dict] = []
         seen_source_artifacts: set[str] = set()
+        pending_tool_calls: dict[str, str] = {}
+
+        def source_trace_key(agent: object, title: object, trace_id: object) -> str:
+            return "|".join(
+                str(part or "").strip().lower()
+                for part in (agent, title, trace_id)
+            )
 
         def record_source_artifact(artifact: dict) -> None:
             section_key = str(artifact.get("section_key") or "").strip()
@@ -2012,12 +2039,17 @@ class AnalysisService:
             seen_source_artifacts.add(section_key)
             source_artifacts.append(artifact)
 
+        def record_tool_call_artifact_input(*, agent: object, title: object, trace_id: object, content: object) -> None:
+            pending_tool_calls[source_trace_key(agent, title, trace_id)] = str(content or "").strip()
+
         def record_tool_source_artifact(*, agent: object, title: object, trace_id: object, content: object) -> None:
+            call_content = pending_tool_calls.get(source_trace_key(agent, title, trace_id), "")
             artifact = self._build_tool_source_artifact(
                 agent=agent,
                 title=title,
                 trace_id=trace_id,
                 content=content,
+                call_content=call_content,
             )
             if artifact:
                 record_source_artifact(artifact)
@@ -2158,6 +2190,13 @@ class AnalysisService:
                 return
             phase = str(trace.get("phase") or "analysis")
             telemetry.record_tool_trace(phase, trace.get("title") or trace.get("agent") or "Analysis")
+            if phase == "tool_call":
+                record_tool_call_artifact_input(
+                    agent=trace.get("agent") or "Analyst",
+                    title=trace.get("title") or "tool",
+                    trace_id=trace.get("trace_id") or trace.get("tool_call_id") or trace.get("title") or "tool",
+                    content=trace.get("content") or "",
+                )
             if phase == "tool_result":
                 record_tool_source_artifact(
                     agent=trace.get("agent") or "Analyst",
@@ -2308,6 +2347,7 @@ class AnalysisService:
                         emit,
                         telemetry,
                         trace_sink=record_tool_source_artifact,
+                        trace_call_sink=record_tool_call_artifact_input,
                     )
                     if final_state.get("messages"):
                         final_state["messages"] = []
@@ -2346,6 +2386,10 @@ class AnalysisService:
             elapsed_seconds = round(time.time() - started_at, 2)
             history_id = None
             final_state["flow_artifacts"] = list(source_artifacts)
+            source_artifact_groups: dict[str, int] = {}
+            for artifact in source_artifacts:
+                group_key = str(artifact.get("flow_group") or "other")
+                source_artifact_groups[group_key] = source_artifact_groups.get(group_key, 0) + 1
             history_sections = build_history_sections(final_state)
             if self.history_store.configured:
                 try:
@@ -2407,6 +2451,7 @@ class AnalysisService:
                     "history_id": history_id,
                     "evidence_count": len(final_state.get("evidence_items") or []),
                     "source_artifact_count": len(source_artifacts),
+                    "source_artifact_groups": source_artifact_groups,
                     "endpoint_summaries": final_state.get("endpoint_summaries") or endpoint_summaries,
                     "structured": {
                         "investment_plan": final_state.get("investment_plan_structured") or {},
@@ -2444,6 +2489,7 @@ class AnalysisService:
             seen_message_signatures.clear()
             source_artifacts.clear()
             seen_source_artifacts.clear()
+            pending_tool_calls.clear()
             gc.collect()
 
     async def generate_analysis_stream(

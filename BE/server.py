@@ -189,18 +189,6 @@ def create_app() -> FastAPI:
             asyncio.to_thread(history_store.count_accessible_runs, user.get("history_access_days")),
         )
         items = rows[:safe_limit]
-        section_metas = await asyncio.to_thread(
-            history_store.list_run_section_metas_bulk,
-            [str(item.get("id") or "") for item in items],
-            user.get("history_access_days"),
-        )
-        items = [
-            {
-                **item,
-                "sections": section_metas.get(str(item.get("id") or ""), []),
-            }
-            for item in items
-        ]
         total_pages = max(1, (int(total_count) + safe_limit - 1) // safe_limit) if total_count else 1
         return {
             "items": items,
@@ -223,6 +211,47 @@ def create_app() -> FastAPI:
         result = await asyncio.to_thread(history_store.list_run_section_metas, run_id, user.get("history_access_days"))
         if result is None:
             raise HTTPException(status_code=404, detail="Analysis history item was not found.")
+        return result
+
+    @app.get("/api/history/{run_id}/final-decision")
+    async def get_analysis_history_final_decision(run_id: str, http_request: Request) -> dict:
+        if not history_store.configured:
+            raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+        user = await auth_service.require_history_reader(http_request)
+        result = await asyncio.to_thread(history_store.get_final_decision_markdown, run_id, user.get("history_access_days"))
+        if result is None:
+            raise HTTPException(status_code=404, detail="Final decision markdown was not found for this run.")
+        return result
+
+    @app.get("/api/history/{run_id}/artifacts")
+    async def list_analysis_history_artifacts(
+        run_id: str,
+        http_request: Request,
+        flow_group: str | None = None,
+        source_kind: str | None = None,
+    ) -> dict:
+        if not history_store.configured:
+            raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+        user = await auth_service.require_history_reader(http_request)
+        result = await asyncio.to_thread(
+            history_store.list_source_artifacts,
+            run_id,
+            user.get("history_access_days"),
+            flow_group,
+            source_kind,
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Analysis history item was not found.")
+        return result
+
+    @app.get("/api/history/{run_id}/artifacts/{section_key}")
+    async def get_analysis_history_artifact(run_id: str, section_key: str, http_request: Request) -> dict:
+        if not history_store.configured:
+            raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+        user = await auth_service.require_history_reader(http_request)
+        result = await asyncio.to_thread(history_store.get_source_artifact, run_id, section_key, user.get("history_access_days"))
+        if result is None:
+            raise HTTPException(status_code=404, detail="Source artifact was not found for this run.")
         return result
 
     @app.get("/api/history/{run_id}/sections")

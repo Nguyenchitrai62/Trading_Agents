@@ -1467,6 +1467,85 @@ button.flow-section-item:focus-visible {
     border-color: rgba(101, 208, 173, 0.28);
 }
 
+.source-table-preview {
+    display: block;
+}
+
+.source-artifact-table-shell {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+}
+
+.source-artifact-table-wrap {
+    overflow: auto;
+    border: 1px solid rgba(139, 178, 160, 0.14);
+    border-radius: 10px;
+}
+
+.source-artifact-table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+}
+
+.source-artifact-table th,
+.source-artifact-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    text-align: left;
+    vertical-align: top;
+}
+
+.source-artifact-table th {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.source-artifact-table tr:last-child td {
+    border-bottom: 0;
+}
+
+.source-artifact-open {
+    appearance: none;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--secondary);
+    font: inherit;
+    font-weight: 800;
+    text-align: left;
+    cursor: pointer;
+}
+
+.source-artifact-open:hover,
+.source-artifact-open:focus-visible {
+    color: #f4fbff;
+    text-decoration: underline;
+    outline: none;
+}
+
+.source-artifact-note,
+.source-artifact-empty {
+    padding: 10px 11px;
+    border: 1px solid rgba(139, 178, 160, 0.14);
+    border-radius: 10px;
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.035);
+    font-size: 0.8rem;
+}
+
+.source-artifact-note-warning {
+    border-color: rgba(239, 191, 102, 0.24);
+    color: #f4ddad;
+    background: rgba(239, 191, 102, 0.08);
+}
+
 .flow-warning-list {
     display: grid;
     gap: 6px;

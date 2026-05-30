@@ -338,6 +338,14 @@ function getLiveEvidenceCount() {
     return Number(state.run.evidenceCount || state.run.evidenceItems?.length || 0);
 }
 
+const SOURCE_ARTIFACT_GROUPS = {
+    ccxt: { flowGroup: "ccxt_market_data", title: "CCXT Market Data" },
+    coinglass: { flowGroup: "coinglass_data", title: "CoinGlass Data" },
+    news: { flowGroup: "news_data", title: "News Data" },
+    social: { flowGroup: "social_web_data", title: "Social / Web Data" },
+    flow: { flowGroup: "flow_data", title: "Flow Data" },
+};
+
 function getLiveSourceArtifactCount() {
     if (state.run.complete?.source_artifact_count !== undefined && state.run.complete?.source_artifact_count !== null) {
         return Number(state.run.complete.source_artifact_count) || 0;
@@ -378,6 +386,138 @@ function getLiveSourceTraceEntries(groupKey = "") {
         }
         return false;
     });
+}
+
+function requestSavedSourceArtifacts(groupKey = "") {
+    const config = SOURCE_ARTIFACT_GROUPS[groupKey];
+    const historyId = state.run.complete?.history_id;
+    if (!config || !historyId || !canReadHistory()) {
+        return;
+    }
+    state.run.sourceArtifactLists = state.run.sourceArtifactLists || {};
+    state.run.sourceArtifactLoading = state.run.sourceArtifactLoading || {};
+    state.run.sourceArtifactErrors = state.run.sourceArtifactErrors || {};
+    if (Array.isArray(state.run.sourceArtifactLists[groupKey]) || state.run.sourceArtifactLoading[groupKey]) {
+        return;
+    }
+    state.run.sourceArtifactLoading[groupKey] = true;
+    state.run.sourceArtifactErrors[groupKey] = "";
+    apiFetch(`/api/history/${encodeURIComponent(historyId)}/artifacts?flow_group=${encodeURIComponent(config.flowGroup)}`, {
+        headers: getAuthHeaders(),
+        cache: "no-store",
+    })
+        .then(async (response) => {
+            if (!response.ok) {
+                throw new Error(await readResponseError(response));
+            }
+            return response.json();
+        })
+        .then((payload) => {
+            state.run.sourceArtifactLists[groupKey] = Array.isArray(payload.artifacts) ? payload.artifacts : [];
+            state.run.sourceArtifactErrors[groupKey] = "";
+        })
+        .catch((error) => {
+            state.run.sourceArtifactErrors[groupKey] = error instanceof Error ? error.message : String(error || "Could not load source artifacts.");
+        })
+        .finally(() => {
+            state.run.sourceArtifactLoading[groupKey] = false;
+            renderActiveDetail();
+            renderReportGrid();
+        });
+}
+
+function buildSourceArtifactRows(groupKey = "") {
+    requestSavedSourceArtifacts(groupKey);
+    const savedRows = (state.run.sourceArtifactLists?.[groupKey] || []).map((item) => ({
+        kind: "saved",
+        id: item.section_key || "",
+        runId: state.run.complete?.history_id || "",
+        sectionKey: item.section_key || "",
+        title: item.title || item.source_key || "Source artifact",
+        agent: item.agent || "-",
+        sourceKind: item.source_kind || item.artifact_type || "-",
+        sourceKey: item.source_key || "-",
+        query: item.summary || item.source_key || "-",
+        result: item.created_at ? `Saved ${formatHistoryTimestamp(item.created_at)}` : "Saved artifact",
+    }));
+    if (savedRows.length) {
+        return savedRows;
+    }
+    return getLiveSourceTraceEntries(groupKey).map((entry) => ({
+        kind: "trace",
+        id: entry.id || "",
+        traceId: entry.id || "",
+        title: entry.title || "Tool",
+        agent: entry.agent || "-",
+        sourceKind: entry.phase || "tool_trace",
+        sourceKey: entry.traceId || "-",
+        query: compactText(stripMarkdownToPlainText(entry.toolCallContent || ""), 180) || "-",
+        result: compactText(stripMarkdownToPlainText(entry.toolResultContent || entry.content || ""), 220) || "-",
+    }));
+}
+
+function renderSourceArtifactTable(rows = [], fallback = "No source artifacts are available yet.", groupKey = "") {
+    if (!rows.length) {
+        return `<div class="source-artifact-empty">${escapeHtml(fallback)}</div>`;
+    }
+    const loading = Boolean(state.run.sourceArtifactLoading?.[groupKey]);
+    const error = state.run.sourceArtifactErrors?.[groupKey] || "";
+    return `
+        <div class="source-artifact-table-shell">
+            ${loading ? '<div class="source-artifact-note">Loading saved artifacts...</div>' : ""}
+            ${error ? `<div class="source-artifact-note source-artifact-note-warning">${escapeHtml(error)}</div>` : ""}
+            <div class="source-artifact-table-wrap">
+                <table class="source-artifact-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Source</th>
+                            <th scope="col">Agent</th>
+                            <th scope="col">Kind</th>
+                            <th scope="col">Query / Endpoint</th>
+                            <th scope="col">Result</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows.map((row) => `
+                            <tr>
+                                <td>
+                                    <button class="source-artifact-open" type="button"
+                                        data-source-detail-kind="${escapeHtml(row.kind)}"
+                                        data-source-detail-id="${escapeHtml(row.id)}"
+                                        data-source-detail-run-id="${escapeHtml(row.runId || "")}"
+                                        data-source-detail-section-key="${escapeHtml(row.sectionKey || "")}">
+                                        ${escapeHtml(row.title || "Source")}
+                                    </button>
+                                </td>
+                                <td>${escapeHtml(row.agent || "-")}</td>
+                                <td>${escapeHtml(row.sourceKind || "-")}</td>
+                                <td>${escapeHtml(row.query || row.sourceKey || "-")}</td>
+                                <td>${escapeHtml(row.result || "-")}</td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function setSourceArtifactTablePreview(element, rows = [], fallback = "", groupKey = "") {
+    element.innerHTML = renderSourceArtifactTable(rows, fallback, groupKey);
+    element.classList.remove("compact-preview");
+    element.classList.toggle("is-empty", !rows.length);
+}
+
+function getSourceArtifactDetailContent(groupKey = "", fallback = "") {
+    const rows = buildSourceArtifactRows(groupKey);
+    return {
+        mode: "source-table",
+        rows,
+        groupKey,
+        fallback: state.run.sourceArtifactLoading?.[groupKey] && !rows.length
+            ? "Loading saved source artifacts..."
+            : fallback,
+    };
 }
 
 function formatLiveSourceTraceMarkdown(groupKey = "", title = "Source Data") {
@@ -444,11 +584,15 @@ function buildLiveFlowNodes() {
     };
     const evidenceReady = getLiveEvidenceCount() > 0;
     const endpointReady = Boolean(state.run.endpointSummaries?.length);
-    const ccxtReady = getLiveSourceTraceEntries("ccxt").length > 0;
-    const coinglassReady = endpointReady || getLiveSourceTraceEntries("coinglass").length > 0;
-    const newsSourceReady = getLiveSourceTraceEntries("news").length > 0;
-    const socialSourceReady = getLiveSourceTraceEntries("social").length > 0;
-    const flowSourceReady = getLiveSourceTraceEntries("flow").length > 0;
+    const savedGroupReady = (groupKey) => {
+        const flowGroup = SOURCE_ARTIFACT_GROUPS[groupKey]?.flowGroup || "";
+        return Number(state.run.sourceArtifactGroups?.[flowGroup] || 0) > 0;
+    };
+    const ccxtReady = getLiveSourceTraceEntries("ccxt").length > 0 || savedGroupReady("ccxt");
+    const coinglassReady = endpointReady || getLiveSourceTraceEntries("coinglass").length > 0 || savedGroupReady("coinglass");
+    const newsSourceReady = getLiveSourceTraceEntries("news").length > 0 || savedGroupReady("news");
+    const socialSourceReady = getLiveSourceTraceEntries("social").length > 0 || savedGroupReady("social");
+    const flowSourceReady = getLiveSourceTraceEntries("flow").length > 0 || savedGroupReady("flow");
     const analystNodes = [
         ["market", "market_report", "Market Analyst"],
         ["social", "sentiment_report", "Social Analyst"],
@@ -1204,6 +1348,13 @@ function getDetailContent(detail) {
         };
     }
 
+    if (detail?.type === "source-artifact" || detail?.type === "history-final-decision") {
+        return {
+            content: detail.content || "",
+            fallback: detail.fallback || "No saved markdown was returned.",
+        };
+    }
+
     switch (detail?.key) {
         case "endpointSummaries":
             return {
@@ -1211,30 +1362,15 @@ function getDetailContent(detail) {
                 fallback: "Endpoint summaries are not available for this run yet.",
             };
         case "liveCcxtData":
-            return {
-                content: formatLiveSourceTraceMarkdown("ccxt", "CCXT Market Data"),
-                fallback: "CCXT market data tool results have not appeared in the live trace yet.",
-            };
+            return getSourceArtifactDetailContent("ccxt", "CCXT market data tool results have not appeared yet.");
         case "liveCoinGlassData":
-            return {
-                content: formatLiveSourceTraceMarkdown("coinglass", "CoinGlass Data") || formatEndpointSummariesMarkdown(state.run.endpointSummaries),
-                fallback: "CoinGlass endpoint results are not available for this run yet.",
-            };
+            return getSourceArtifactDetailContent("coinglass", "CoinGlass endpoint results are not available for this run yet.");
         case "liveNewsData":
-            return {
-                content: formatLiveSourceTraceMarkdown("news", "News Data"),
-                fallback: "News source results have not appeared in the live trace yet.",
-            };
+            return getSourceArtifactDetailContent("news", "News source results have not appeared yet.");
         case "liveSocialData":
-            return {
-                content: formatLiveSourceTraceMarkdown("social", "Social / Web Data"),
-                fallback: "Social or web source results have not appeared in the live trace yet.",
-            };
+            return getSourceArtifactDetailContent("social", "Social or web source results have not appeared yet.");
         case "liveFlowData":
-            return {
-                content: formatLiveSourceTraceMarkdown("flow", "Flow Data"),
-                fallback: "Flow source results have not appeared in the live trace yet.",
-            };
+            return getSourceArtifactDetailContent("flow", "Flow source results have not appeared yet.");
         case "evidenceExtractor":
         case "evidenceLedger":
             return {
@@ -1458,17 +1594,22 @@ function renderActiveDetail() {
         return;
     }
 
-    const meta = detail.type === "report" || detail.type === "trace" || detail.type === "history-section" ? detail : DETAIL_PANEL_META[detail.key] || {};
-    const { content, fallback, toolResult, traceEntry } = getDetailContent(detail);
-    const mode = toolResult ? "tool-result" : detail.mode || meta.mode || "markdown";
+    const directMetaTypes = ["report", "trace", "history-section", "source-artifact", "history-final-decision"];
+    const meta = directMetaTypes.includes(detail.type) ? detail : DETAIL_PANEL_META[detail.key] || {};
+    const detailContent = getDetailContent(detail);
+    const { content, fallback, toolResult, traceEntry } = detailContent;
+    const mode = detailContent.mode || (toolResult ? "tool-result" : detail.mode || meta.mode || "markdown");
     elements.detailTitle.textContent = meta.title || "Panel Detail";
     elements.detailSubtitle.textContent = meta.subtitle || "Analysis detail";
     elements.detailBody.classList.toggle("plain-log", mode === "text");
     elements.detailBody.classList.toggle("markdown-preview", mode === "markdown");
     elements.detailBody.classList.toggle("tool-result-preview", mode === "tool-result");
+    elements.detailBody.classList.toggle("source-table-preview", mode === "source-table");
 
     if (mode === "text") {
         elements.detailBody.textContent = content || fallback;
+    } else if (mode === "source-table") {
+        setSourceArtifactTablePreview(elements.detailBody, detailContent.rows || [], fallback, detailContent.groupKey || "");
     } else if (mode === "tool-result") {
         setToolResultPreview(elements.detailBody, toolResult, traceEntry, fallback);
     } else {
@@ -1480,6 +1621,39 @@ function openDetailModal(detail) {
     state.activeDetail = detail;
     showModal(elements.detailModal);
     renderActiveDetail();
+}
+
+async function openSavedSourceArtifactDetail(runId = "", sectionKey = "") {
+    const safeRunId = String(runId || "").trim();
+    const safeSectionKey = String(sectionKey || "").trim();
+    if (!safeRunId || !safeSectionKey) {
+        return;
+    }
+    openDetailModal({
+        type: "source-artifact",
+        title: "Source Artifact",
+        subtitle: "Loading saved source detail",
+        content: "",
+        fallback: "Loading saved source artifact...",
+        mode: "markdown",
+    });
+    const response = await apiFetch(`/api/history/${encodeURIComponent(safeRunId)}/artifacts/${encodeURIComponent(safeSectionKey)}`, {
+        headers: getAuthHeaders(),
+        cache: "no-store",
+    });
+    if (!response.ok) {
+        throw new Error(await readResponseError(response));
+    }
+    const payload = await response.json();
+    const artifact = payload.artifact || {};
+    openDetailModal({
+        type: "source-artifact",
+        title: artifact.title || "Source Artifact",
+        subtitle: [artifact.agent, artifact.source_kind || artifact.flow_group].filter(Boolean).join(" - ") || "Saved source detail",
+        content: artifact.markdown || "",
+        fallback: "This artifact has no markdown content.",
+        mode: "markdown",
+    });
 }
 
 function closeDetailModal() {
