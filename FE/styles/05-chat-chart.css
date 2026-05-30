@@ -1219,6 +1219,71 @@
     height: 100%;
 }
 
+.live-flow-board {
+    gap: 12px;
+}
+
+.live-flow-board-topline {
+    align-items: flex-start;
+}
+
+.live-flow-board-status {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.live-flow-board-status strong {
+    color: #f6fbf8;
+    font-size: 1rem;
+    line-height: 1.2;
+}
+
+.live-flow-board-summary {
+    display: grid;
+    gap: 10px;
+    justify-items: end;
+    text-align: right;
+}
+
+.live-flow-board-summary > div {
+    display: grid;
+    gap: 4px;
+}
+
+.live-flow-board-summary span {
+    color: #91b6a7;
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.live-flow-board-summary strong {
+    color: #f6fbf8;
+    font-size: 0.86rem;
+    line-height: 1.28;
+    overflow-wrap: anywhere;
+}
+
+.live-flow-metric-grid {
+    margin-top: 2px;
+}
+
+.live-flow-diagram-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-right: 2px;
+}
+
+.live-flow-diagram {
+    align-items: flex-start;
+}
+
+.live-flow-board .history-diagram-node.is-disabled {
+    cursor: default;
+    opacity: 0.68;
+}
+
 .live-focus-actions {
     display: flex;
     align-items: center;
@@ -1600,6 +1665,15 @@ button.flow-section-item:focus-visible {
     .flow-metric-grid,
     .flow-section-list {
         grid-template-columns: 1fr;
+    }
+
+    .live-flow-board-topline {
+        flex-direction: column;
+    }
+
+    .live-flow-board-summary {
+        justify-items: start;
+        text-align: left;
     }
 }
 

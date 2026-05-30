@@ -541,40 +541,6 @@ function formatLiveSourceTraceMarkdown(groupKey = "", title = "Source Data") {
         .join("\n\n");
 }
 
-function renderLiveFlowLeaf(node = {}) {
-    const isReady = Boolean(node.ready);
-    const detail = isReady ? node.detail : null;
-    const dataset = detail ? buildDetailDataset(detail) : "";
-    const tag = detail ? "button" : "span";
-    const typeAttr = detail ? ' type="button"' : "";
-    const classes = [
-        "flow-section-item",
-        "live-flow-node",
-        node.tone ? `live-flow-node-${node.tone}` : "",
-        isReady ? "is-ready detail-trigger" : "is-pending is-disabled",
-    ].filter(Boolean).join(" ");
-    return `
-        <${tag}${typeAttr} class="${classes}" ${dataset} title="${escapeHtml(node.title || "Flow block")}">
-            <span class="flow-section-dot" aria-hidden="true"></span>
-            <span>${escapeHtml(node.title || "Flow")}</span>
-        </${tag}>
-    `;
-}
-
-function renderLiveFlowNode(node = {}) {
-    if (Array.isArray(node.nodes)) {
-        return `
-            <div class="live-flow-group live-flow-group-${escapeHtml(node.tone || "neutral")}">
-                <span class="live-flow-group-title">${escapeHtml(node.title || "Flow Stage")}</span>
-                <div class="live-flow-group-grid">
-                    ${node.nodes.map(renderLiveFlowLeaf).join("")}
-                </div>
-            </div>
-        `;
-    }
-    return renderLiveFlowLeaf(node);
-}
-
 function buildLiveFlowNodes() {
     const selectedAnalysts = new Set(state.run.meta?.selected_analysts || ["market", "social", "news", "fundamentals"]);
     const hasSection = (key) => Boolean(String(state.run.sections?.[key] || "").trim());
@@ -797,19 +763,7 @@ function buildLiveFlowNodes() {
     ];
 }
 
-function renderLiveAgentFlow() {
-    const nodes = buildLiveFlowNodes();
-    return nodes
-        .map((node, index) => `
-            <div class="live-flow-stage">
-                ${renderLiveFlowNode(node)}
-                ${index < nodes.length - 1 ? '<span class="live-flow-connector" aria-hidden="true"></span>' : ""}
-            </div>
-        `)
-        .join("");
-}
-
-function renderFlowInspectorMarkup() {
+function buildLiveFlowBoardState() {
     const complete = state.run.complete || {};
     const telemetry = complete.telemetry || {};
     const signal = complete.signal || (state.run.cancelled ? "Stopped" : state.isBusy ? "Running" : "Pending");
@@ -819,37 +773,294 @@ function renderFlowInspectorMarkup() {
     const latestTool = [...state.run.traceFeed].reverse().find((item) => isToolTracePhase(item.phase));
     const currentFocus = state.run.status?.current_agent || "Waiting";
     const latestOutput = state.run.latestReportTitle || complete.signal || state.run.cancelled?.message || latestTool?.title || "-";
+    const tone = state.run.cancelled ? "warning" : state.isBusy ? "progress" : state.run.complete ? "completed" : "idle";
+
+    return {
+        complete,
+        telemetry,
+        signal,
+        verdict,
+        verificationAction,
+        warningItems,
+        latestTool,
+        currentFocus,
+        latestOutput,
+        tone,
+    };
+}
+
+function getLiveFlowIconKey(node = {}) {
+    if (node.iconKey) {
+        return node.iconKey;
+    }
+
+    const title = String(node.title || "").toLowerCase();
+    const tone = String(node.tone || "").toLowerCase();
+
+    if (tone === "signal") {
+        if (title.includes("social")) {
+            return "social";
+        }
+        if (title.includes("news")) {
+            return "news";
+        }
+        if (title.includes("flow")) {
+            return "fund";
+        }
+        if (title.includes("coinglass") || title.includes("evidence")) {
+            return "evidence";
+        }
+        return "market";
+    }
+    if (tone === "evidence") {
+        return "evidence";
+    }
+    if (tone === "bull") {
+        return "bull";
+    }
+    if (tone === "bear") {
+        return "bear";
+    }
+    if (tone === "debate") {
+        return "debate";
+    }
+    if (tone === "plan") {
+        return "plan";
+    }
+    if (tone === "trader") {
+        return "trade";
+    }
+    if (tone === "aggressive") {
+        return "aggressive";
+    }
+    if (tone === "neutral") {
+        return "neutral";
+    }
+    if (tone === "conservative") {
+        return "conservative";
+    }
+    if (tone === "risk") {
+        return "review";
+    }
+    if (tone === "decision") {
+        return "decision";
+    }
+    if (tone === "review") {
+        return "verify";
+    }
+    return "default";
+}
+
+function renderLiveFlowDiagramIcon(iconKey = "default") {
+    return HISTORY_DIAGRAM_ICONS[iconKey] || HISTORY_DIAGRAM_ICONS.default;
+}
+
+function renderLiveFlowCurveWire(paths = [], className = "", viewBox = "0 0 100 100") {
+    if (!paths.length) {
+        return "";
+    }
+    const wireMarkup = paths
+        .map((path, index) => {
+            const delay = (index * 0.18).toFixed(2);
+            return `
+                <path class="history-diagram-curve-base" d="${path}" pathLength="1"></path>
+                <path class="history-diagram-curve-glow" d="${path}" pathLength="1"></path>
+                <path class="history-diagram-curve-pulse" d="${path}" pathLength="1" style="--flow-delay: ${delay}s"></path>
+                <path class="history-diagram-curve-pulse history-diagram-curve-pulse--late" d="${path}" pathLength="1" style="--flow-delay: ${(Number(delay) + 1.15).toFixed(2)}s"></path>
+            `;
+        })
+        .join("");
+    return `
+        <div class="history-diagram-curve-wire ${className}" aria-hidden="true">
+            <svg viewBox="${viewBox}" preserveAspectRatio="none" focusable="false">
+                ${wireMarkup}
+            </svg>
+        </div>
+    `;
+}
+
+function renderLiveFlowLeaf(node = {}, layout = {}) {
+    const isReady = Boolean(node.ready);
+    const detail = isReady ? node.detail : null;
+    const dataset = detail ? buildDetailDataset(detail) : "";
+    const tag = detail ? "button" : "span";
+    const typeAttr = detail ? ' type="button"' : "";
+    const currentAgent = String(state.run.status?.current_agent || "");
+    const isActive = Boolean(isReady && currentAgent && currentAgent === node.title);
+    const titleText = node.title || layout.shortTitle || "Flow block";
+    const classes = [
+        "history-diagram-node",
+        node.tone ? `history-diagram-node--${node.tone}` : "",
+        layout.compact ? "history-diagram-node--compact" : "",
+        layout.output ? "history-diagram-node--output" : "",
+        isReady ? "is-ready detail-trigger" : "is-pending is-disabled",
+        isActive ? "is-active" : "",
+        layout.loading ? "is-loading" : "",
+    ].filter(Boolean).join(" ");
+    return `
+        <${tag}${typeAttr} class="${classes}" ${dataset} title="${escapeHtml(titleText)}" aria-label="${escapeHtml(detail ? `Open ${titleText} detail` : titleText)}"${!isReady ? ' aria-disabled="true"' : ""}>
+            <span class="history-diagram-node-head">
+                <span class="history-diagram-node-icon" aria-hidden="true">${renderLiveFlowDiagramIcon(getLiveFlowIconKey(node))}</span>
+                <strong>${escapeHtml(layout.shortTitle || titleText)}</strong>
+                <span class="history-diagram-node-dot" aria-hidden="true"></span>
+            </span>
+        </${tag}>
+    `;
+}
+
+function renderLiveFlowNode(node = {}, layout = {}) {
+    if (!Array.isArray(node.nodes)) {
+        return renderLiveFlowLeaf(node, layout);
+    }
+
+    const title = node.title || "Flow Stage";
+    const groupTone = String(node.tone || "neutral");
+    if (title === "Parallel endpoint summaries") {
+        return `
+            <section class="history-diagram-group history-diagram-group--sources live-flow-group live-flow-group--sources">
+                <span class="history-diagram-label">Parallel endpoint summaries</span>
+                <div class="history-diagram-source-grid">
+                    ${node.nodes
+                        .map((child) => {
+                            const shortTitle = child.title || "Source";
+                            const columnKey = String(shortTitle || groupTone).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+                            return `
+                                <div class="history-diagram-source-column history-diagram-source-column--${columnKey}">
+                                    <span class="history-diagram-source-label">${escapeHtml(shortTitle)}</span>
+                                    <div class="history-diagram-source-list">
+                                        ${renderLiveFlowLeaf(child, { compact: true, shortTitle })}
+                                    </div>
+                                </div>
+                            `;
+                        })
+                        .join("")}
+                </div>
+            </section>
+        `;
+    }
+
+    if (title === "Analysts") {
+        return `
+            <section class="history-diagram-group history-diagram-group--signals live-flow-group live-flow-group--signals">
+                <span class="history-diagram-label">Analysts</span>
+                <div class="history-diagram-signal-grid">
+                    ${node.nodes
+                        .map((child) => `
+                            <div class="history-diagram-signal-lane">
+                                ${renderLiveFlowLeaf(child, { compact: true })}
+                            </div>
+                        `)
+                        .join("")}
+                </div>
+            </section>
+        `;
+    }
+
+    if (title === "Research Chamber") {
+        return `
+            <section class="history-diagram-group history-diagram-group--research live-flow-group live-flow-group--research">
+                <span class="history-diagram-label">Research Chamber</span>
+                <div class="history-diagram-cluster history-diagram-cluster--research">
+                    <div class="history-diagram-cluster-grid history-diagram-cluster-grid--research">
+                        ${node.nodes.map((child) => renderLiveFlowLeaf(child, { compact: true })).join("")}
+                    </div>
+                </div>
+            </section>
+        `;
+    }
+
+    if (title === "Risk Room") {
+        return `
+            <section class="history-diagram-group history-diagram-group--risk live-flow-group live-flow-group--risk">
+                <span class="history-diagram-label">Risk Room</span>
+                <div class="history-diagram-cluster history-diagram-cluster--risk">
+                    <div class="history-diagram-cluster-grid history-diagram-cluster-grid--risk">
+                        ${node.nodes.map((child) => renderLiveFlowLeaf(child, { compact: true })).join("")}
+                    </div>
+                </div>
+            </section>
+        `;
+    }
 
     return `
-        <div class="flow-inspector-header">
-            <span>Flow Snapshot</span>
-            <strong>${escapeHtml(signal)}</strong>
-        </div>
-        <div class="flow-metric-grid">
-            ${renderFlowMetric("Verdict", verdict, verdict === "Revise" || verdict === "Caution" ? "warning" : "")}
-            ${renderFlowMetric("Action", verificationAction, verdict === "Revise" || verdict === "Caution" ? "warning" : "")}
-            ${renderFlowMetric("Sources", getLiveSourceArtifactCount() || "-")}
-            ${renderFlowMetric("Evidence", getLiveEvidenceCount() || "-")}
-            ${renderFlowMetric("Web Search", telemetry.web_search_calls ?? "-")}
-            ${renderFlowMetric("Model Calls", telemetry.model_calls ?? "-")}
-            ${renderFlowMetric("Tool Events", telemetry.tool_calls ?? "-")}
-        </div>
-        <div class="flow-latest">
-            <span>Current Focus</span>
-            <strong>${escapeHtml(currentFocus)}</strong>
-        </div>
-        <div class="flow-latest">
-            <span>Latest Output</span>
-            <strong>${escapeHtml(latestOutput)}</strong>
-        </div>
-        <div class="flow-section-list live-agent-flow" aria-label="Agent flow">
-            ${renderLiveAgentFlow()}
-        </div>
-        ${
-            warningItems.length
-                ? `<div class="flow-warning-list">${warningItems.map((warning) => `<span>${escapeHtml(compactText(warning, 96))}</span>`).join("")}</div>`
-                : ""
-        }
+        <section class="history-diagram-group history-diagram-group--${escapeHtml(groupTone)} live-flow-group live-flow-group--${escapeHtml(groupTone)}">
+            <span class="history-diagram-label">${escapeHtml(title)}</span>
+            <div class="history-diagram-extra">
+                <div class="history-diagram-extra-grid">
+                    ${node.nodes.map((child) => renderLiveFlowLeaf(child, { compact: true })).join("")}
+                </div>
+            </div>
+        </section>
+    `;
+}
+
+function renderLiveFlowStageConnector(fromStage = null, toStage = null) {
+    if (!fromStage || !toStage) {
+        return "";
+    }
+    return renderLiveFlowCurveWire(
+        [HISTORY_STAGE_WIRE_PATH],
+        `history-diagram-stage-link history-diagram-stage-link--${String(fromStage.title || fromStage.tone || "stage").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-to-${String(toStage.title || toStage.tone || "stage").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+        "0 0 100 100",
+    );
+}
+
+function renderLiveAgentFlow() {
+    const nodes = buildLiveFlowNodes();
+    const rendered = nodes
+        .map((node, index) => {
+            const stage = `
+                <div class="history-diagram-stage-slot live-flow-stage-slot live-flow-stage-slot--${escapeHtml(String(node.tone || "neutral"))}">
+                    <div class="history-diagram-stage live-flow-stage">
+                        ${renderLiveFlowNode(node)}
+                    </div>
+                </div>
+            `;
+            const connector = index < nodes.length - 1 ? renderLiveFlowStageConnector(node, nodes[index + 1]) : "";
+            return `${stage}${connector}`;
+        })
+        .join("");
+
+    return rendered || '<div class="history-diagram-empty">Live flow will appear after the stream starts.</div>';
+}
+
+function renderFlowInspectorMarkup() {
+    const board = buildLiveFlowBoardState();
+
+    return `
+        <article class="live-focus-card live-focus-card-expanded live-flow-board live-tone-${board.tone}">
+            <div class="live-focus-topline live-flow-board-topline">
+                <div class="live-flow-board-status">
+                    <span class="live-chip live-chip-${board.tone}">Live flow</span>
+                    <strong>${escapeHtml(board.signal)}</strong>
+                </div>
+                <div class="live-flow-board-summary">
+                    <div>
+                        <span>Current focus</span>
+                        <strong>${escapeHtml(board.currentFocus)}</strong>
+                    </div>
+                    <div>
+                        <span>Latest output</span>
+                        <strong>${escapeHtml(board.latestOutput)}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="flow-metric-grid live-flow-metric-grid">
+                ${renderFlowMetric("Verdict", board.verdict, board.verdict === "Revise" || board.verdict === "Caution" ? "warning" : "")}
+                ${renderFlowMetric("Action", board.verificationAction, board.verdict === "Revise" || board.verdict === "Caution" ? "warning" : "")}
+                ${renderFlowMetric("Sources", getLiveSourceArtifactCount() || "-")}
+                ${renderFlowMetric("Evidence", getLiveEvidenceCount() || "-")}
+                ${renderFlowMetric("Web Search", board.telemetry.web_search_calls ?? "-")}
+                ${renderFlowMetric("Model Calls", board.telemetry.model_calls ?? "-")}
+                ${renderFlowMetric("Tool Events", board.telemetry.tool_calls ?? "-")}
+            </div>
+            <div class="history-diagram-wrap live-flow-diagram-wrap" aria-label="Live flow diagram">
+                <div class="history-diagram live-flow-diagram">
+                    ${renderLiveAgentFlow()}
+                </div>
+            </div>
+            ${board.warningItems.length ? `<div class="flow-warning-list">${board.warningItems.map((warning) => `<span>${escapeHtml(compactText(warning, 96))}</span>`).join("")}</div>` : ""}
+        </article>
     `;
 }
 
@@ -876,84 +1087,18 @@ function applyDetailAttributes(element, detail) {
 }
 
 function renderReportGrid() {
-    const focus = getCurrentLivePanel();
-    const focusId = getFocusIdentity(focus);
-    const hasInspector = Boolean(elements.reportGrid.querySelector(".flow-inspector"));
-    let card = elements.reportGrid.querySelector(".live-focus-card");
-    if (!(card instanceof HTMLElement) || !hasInspector || card.dataset.focusId !== focusId) {
-        elements.reportGrid.innerHTML = `
-            <div class="live-layout live-layout-with-inspector">
-                <article class="live-focus-card live-focus-card-expanded">
-                    <div class="live-focus-topline">
-                        <span class="live-chip"></span>
-                        <div class="live-focus-actions">
-                            <span class="live-focus-status"></span>
-                            <button class="live-detail-button detail-trigger hidden" type="button">Open</button>
-                        </div>
-                    </div>
-                    <h3 class="live-focus-title"></h3>
-                    <div class="live-focus-body markdown-preview"></div>
-                </article>
-                <aside class="flow-inspector" aria-label="Flow snapshot"></aside>
-            </div>
-        `;
-        card = elements.reportGrid.querySelector(".live-focus-card");
-    }
-
-    if (!(card instanceof HTMLElement)) {
+    if (!(elements.reportGrid instanceof HTMLElement)) {
         return;
     }
 
-    const liveChip = card.querySelector(".live-chip");
-    const liveStatus = card.querySelector(".live-focus-status");
-    const detailButton = card.querySelector(".live-detail-button");
-    const liveTitle = card.querySelector(".live-focus-title");
-    const liveBody = card.querySelector(".live-focus-body");
-    const inspector = elements.reportGrid.querySelector(".flow-inspector");
-    const tone = focus.tone || "idle";
-    const bodyMarkup = formatBlock(focus.content, focus.fallback);
-    const bodyFingerprint = `${focusId}:${focus.content || ""}:${focus.fallback}`;
-
-    card.dataset.focusId = focusId;
-    card.className = `live-focus-card live-focus-card-expanded live-tone-${tone}`;
-    const isAwaitingFocus = state.isBusy && !String(focus.content || "").trim();
-    setElementLoadingState(card, isAwaitingFocus, state.run.status?.current_agent ? `Waiting ${getCompactAgentLabel(state.run.status.current_agent)}` : "Streaming");
-    card.removeAttribute("tabindex");
-    card.removeAttribute("role");
-    card.setAttribute("aria-label", focus.title);
-    clearDetailAttributes(card);
-
-    if (liveChip instanceof HTMLElement) {
-        liveChip.className = `live-chip live-chip-${tone}`;
-        liveChip.textContent = focus.badge || "Live";
-    }
-    if (liveStatus instanceof HTMLElement) {
-        liveStatus.textContent = focus.subtitle || "";
-    }
-    if (detailButton instanceof HTMLElement) {
-        detailButton.classList.toggle("hidden", !focus.detail);
-        detailButton.removeAttribute("aria-label");
-        applyDetailAttributes(detailButton, focus.detail);
-        if (focus.detail) {
-            detailButton.setAttribute("aria-label", `Open ${focus.title} detail`);
-        }
-    }
-    if (liveTitle instanceof HTMLElement) {
-        liveTitle.textContent = focus.title;
-    }
-    if (liveBody instanceof HTMLElement && liveBody.dataset.fingerprint !== bodyFingerprint) {
-        preserveScrollPosition(liveBody, () => {
-            liveBody.innerHTML = bodyMarkup;
-            liveBody.classList.toggle("is-empty", !focus.content);
-            liveBody.dataset.fingerprint = bodyFingerprint;
-        });
-    }
-    if (inspector instanceof HTMLElement) {
-        inspector.innerHTML = renderFlowInspectorMarkup();
-    }
+    elements.reportGrid.innerHTML = `
+        <div class="live-layout live-layout-single">
+            ${renderFlowInspectorMarkup()}
+        </div>
+    `;
 
     elements.activeReportText.textContent = state.run.cancelled?.message
-        || (state.isBusy ? "Live markdown stream" : state.run.complete?.signal || "Awaiting live stream");
+        || (state.isBusy ? "Live flow diagram" : state.run.complete?.signal || "Waiting for live stream");
 }
 
 function getLogEntryKey(item, index) {

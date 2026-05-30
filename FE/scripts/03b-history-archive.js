@@ -34,6 +34,14 @@ function formatHistoryElapsedSeconds(value) {
     return `${minutes}m ${String(remainingSeconds).padStart(2, "0")}s`;
 }
 
+function formatHistoryPrice(value) {
+    const price = Number(value);
+    if (!Number.isFinite(price)) {
+        return "-";
+    }
+    return price.toLocaleString(undefined, { maximumFractionDigits: 8 });
+}
+
 function getHistoryArchiveEntry(historyId = "") {
     if (!historyId) {
         return null;
@@ -588,7 +596,7 @@ function renderHistoryPage() {
                         <strong>${escapeHtml(String(totalCount))} archived runs</strong>
                         <span>${totalCount ? `Showing ${escapeHtml(String(startIndex))}-${escapeHtml(String(endIndex))}` : "No records"}</span>
                     </div>
-                    <span class="history-table-hint">Select a row to open the final decision markdown.</span>
+                    <span class="history-table-hint">Select a row to open the final decision markdown and structured trade levels.</span>
                 </div>
                 <div class="history-table-wrap">
                     <table class="history-table">
@@ -596,7 +604,12 @@ function renderHistoryPage() {
                             <tr>
                                 <th scope="col">#</th>
                                 <th scope="col">Symbol</th>
-                                <th scope="col">Signals</th>
+                                <th scope="col">Signal</th>
+                                <th scope="col">Current price</th>
+                                <th scope="col">Primary limit</th>
+                                <th scope="col">Secondary limit</th>
+                                <th scope="col">Stop loss</th>
+                                <th scope="col">Take profit</th>
                                 <th scope="col">Created at</th>
                                 <th scope="col">Research depth</th>
                                 <th scope="col">Lookback day</th>
@@ -611,6 +624,11 @@ function renderHistoryPage() {
                                             <td>${escapeHtml(String(startIndex + index))}</td>
                                             <td>${escapeHtml(item.symbol || "-")}</td>
                                             <td>${escapeHtml(item.signal || "Completed")}</td>
+                                            <td>${escapeHtml(formatHistoryPrice(item.current_price))}</td>
+                                            <td>${escapeHtml(formatHistoryPrice(item.primary_limit_price))}</td>
+                                            <td>${escapeHtml(formatHistoryPrice(item.secondary_limit_price))}</td>
+                                            <td>${escapeHtml(formatHistoryPrice(item.stop_loss))}</td>
+                                            <td>${escapeHtml(formatHistoryPrice(item.take_profit))}</td>
                                             <td>${escapeHtml(formatHistoryDateTime(item.created_at))}</td>
                                             <td>${escapeHtml(item.research_depth || "-")}</td>
                                             <td>${escapeHtml(String(item.lookback_days || "-"))}</td>

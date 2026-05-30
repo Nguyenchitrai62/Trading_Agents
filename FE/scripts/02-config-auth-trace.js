@@ -1534,10 +1534,10 @@ function getCurrentLivePanel() {
 
     if (!currentAgent) {
         return {
-            title: "Awaiting analysis",
+            title: "Live flow",
             subtitle: "No active agent",
             content: "",
-            fallback: "Run analysis to start the live frontend stream.",
+            fallback: "Run analysis to start the live flow diagram.",
             detail: null,
             tone: "idle",
             badge: "Ready",
