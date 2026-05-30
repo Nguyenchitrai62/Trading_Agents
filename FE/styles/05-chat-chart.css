@@ -1389,6 +1389,38 @@ button.flow-section-item:focus-visible {
     color: rgba(217, 232, 223, 0.55);
 }
 
+.flow-section-item.is-disabled {
+    cursor: default;
+    border-style: dashed;
+    opacity: 0.68;
+}
+
+.live-agent-flow {
+    grid-template-columns: 1fr;
+}
+
+.live-flow-node {
+    min-height: 34px;
+}
+
+.live-flow-node-evidence.is-ready {
+    border-color: rgba(156, 200, 255, 0.24);
+    background: rgba(156, 200, 255, 0.07);
+}
+
+.live-flow-node-debate.is-ready,
+.live-flow-node-risk.is-ready {
+    border-style: dashed;
+    border-color: rgba(156, 200, 255, 0.26);
+}
+
+.live-flow-node-plan.is-ready,
+.live-flow-node-trader.is-ready,
+.live-flow-node-decision.is-ready,
+.live-flow-node-review.is-ready {
+    border-color: rgba(101, 208, 173, 0.28);
+}
+
 .flow-warning-list {
     display: grid;
     gap: 6px;

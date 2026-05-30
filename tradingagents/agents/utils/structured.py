@@ -1,19 +1,9 @@
-"""Shared helpers for invoking an agent with structured output and a graceful fallback.
+"""Shared helpers for extraction calls with structured output.
 
-The Portfolio Manager, Trader, and Research Manager all follow the same
-canonical pattern:
-
-1. At agent creation, wrap the LLM with ``with_structured_output(Schema)``
-   so the model returns a typed Pydantic instance. If the provider does
-   not support structured output (rare; mostly older Ollama models), the
-   wrap is skipped and the agent uses free-text generation instead.
-2. At invocation, run the structured call and render the result back to
-   markdown. If the structured call itself fails for any reason
-   (malformed JSON from a weak model, transient provider issue), fall
-   back to a plain ``llm.invoke`` so the pipeline never blocks.
-
-Centralising the pattern here keeps the agent factories small and ensures
-all three agents log the same warnings when fallback fires.
+Agent-facing reasoning remains prose-first. These helpers are used by the
+downstream extractor calls that convert prose handoffs into typed Pydantic
+payloads for DB/FE usage. If a provider cannot bind structured output, callers
+can skip extraction or fall back to free text without blocking the pipeline.
 """
 
 from __future__ import annotations

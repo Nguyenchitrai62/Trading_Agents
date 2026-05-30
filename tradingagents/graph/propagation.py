@@ -24,6 +24,7 @@ class Propagator:
         coinglass_context: str = "",
         coinglass_package_contexts: dict[str, str] | None = None,
         coinglass_evidence_items: list[dict[str, Any]] | None = None,
+        endpoint_summaries: list[dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         """Create the initial state for the agent graph."""
         return {
@@ -34,6 +35,7 @@ class Propagator:
             "past_context": past_context,
             "coinglass_context": coinglass_context,
             "coinglass_package_contexts": coinglass_package_contexts or {},
+            "endpoint_summaries": list(endpoint_summaries or []),
             "investment_debate_state": InvestDebateState(
                 {
                     "bull_history": "",

@@ -10,6 +10,7 @@ import requests
 
 from .config import SECTION_META, SETTINGS
 from .models import AnalysisRequest
+from tradingagents.agents.utils.decision import compatibility_decision_fields
 from tradingagents.agents.utils.evidence import evidence_items_to_markdown
 
 
@@ -547,6 +548,7 @@ class TursoHistoryStore:
         verification_payload = verification_payload or {}
         if decision_payload or verification_payload or current_price is not None:
             decision_signal = str(decision_payload.get("signal") or signal or "").strip()
+            decision_fields = compatibility_decision_fields(decision_payload)
             statements.append(
                 (
                     """
@@ -578,12 +580,12 @@ class TursoHistoryStore:
                         symbol,
                         request.analysis_date,
                         decision_signal,
-                        self._coerce_float(decision_payload.get("primary_limit_price")),
-                        self._coerce_float(decision_payload.get("secondary_limit_price")),
-                        self._coerce_float(decision_payload.get("stop_loss")),
-                        self._coerce_float(decision_payload.get("take_profit")),
-                        decision_payload.get("position_sizing"),
-                        decision_payload.get("time_horizon"),
+                        self._coerce_float(decision_fields.get("primary_limit_price")),
+                        self._coerce_float(decision_fields.get("secondary_limit_price")),
+                        self._coerce_float(decision_fields.get("stop_loss")),
+                        self._coerce_float(decision_fields.get("take_profit")),
+                        decision_fields.get("position_sizing"),
+                        decision_fields.get("time_horizon"),
                         verification_payload.get("verdict"),
                         verification_payload.get("recommended_action"),
                         self._coerce_float(current_price),

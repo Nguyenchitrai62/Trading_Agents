@@ -1,16 +1,9 @@
-"""Portfolio Manager: synthesises the risk-analyst debate into the final signal.
-
-Uses LangChain's ``with_structured_output`` so the LLM produces a typed
-``PortfolioDecision`` directly, in a single call.  The result is rendered
-back to markdown for storage in ``final_trade_decision`` so memory log,
-CLI display, and saved reports continue to consume the same shape they do
-today.  When a provider does not expose structured output, the agent falls
-back gracefully to free-text generation.
-"""
+"""Portfolio Manager: prose-first final signal plus structured extraction."""
 
 from __future__ import annotations
 
 from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
+from tradingagents.agents.utils.decision import validate_portfolio_decision
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_coinglass_context_instruction,
@@ -18,10 +11,17 @@ from tradingagents.agents.utils.agent_utils import (
     get_language_instruction,
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
+from tradingagents.agents.utils.market_price import fetch_current_binance_spot_price
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext_result,
+    resolve_structured_base_llm,
 )
+from tradingagents.agents.utils.rating import parse_rating
+from tradingagents.llm_clients.base_client import normalize_content
+
+
+_SIGNALS = ("Market Buy", "Limit Buy", "Hold", "Limit Sell", "Market Sell")
 
 
 def _format_structured_context(
@@ -42,8 +42,54 @@ def _format_structured_context(
     return "\n".join(parts) if parts else fallback_markdown
 
 
+def _normalize_response_text(response: object) -> str:
+    normalized = normalize_content(response)
+    content = getattr(normalized, "content", "")
+    if isinstance(content, str):
+        return content.strip()
+    if content is None:
+        return ""
+    return str(content).strip()
+
+
+def _force_signal_first_line(text: str) -> str:
+    body = str(text or "").strip()
+    signal = parse_rating(body, default="Hold")
+    lines = [line.strip() for line in body.splitlines()]
+    first = lines[0] if lines else ""
+    if first in _SIGNALS:
+        rest = "\n".join(lines[1:]).strip()
+        return f"{first}\n\n{rest}".strip()
+    return f"{signal}\n\n{body}".strip()
+
+
+def _extract_structured_decision(
+    structured_llm,
+    plain_llm,
+    *,
+    extraction_prompt: str,
+    current_price: float | None,
+) -> tuple[dict, list[str]]:
+    if structured_llm is None:
+        return {}, []
+
+    _rendered, parsed_decision = invoke_structured_or_freetext_result(
+        structured_llm,
+        plain_llm,
+        extraction_prompt,
+        render_pm_decision,
+        "Decision Extractor",
+    )
+    if parsed_decision is None:
+        return {}, []
+
+    payload = parsed_decision.model_dump(mode="json")
+    validation_errors = validate_portfolio_decision(payload, current_price=current_price)
+    return payload, validation_errors
+
+
 def create_portfolio_manager(llm):
-    structured_llm = bind_structured(llm, PortfolioDecision, "Portfolio Manager")
+    structured_llm = bind_structured(llm, PortfolioDecision, "Decision Extractor")
 
     def portfolio_manager_node(state) -> dict:
         instrument_context = build_instrument_context(state["company_of_interest"])
@@ -87,7 +133,7 @@ def create_portfolio_manager(llm):
             else ""
         )
 
-        prompt = f"""As the Portfolio Manager, synthesize the risk analysts' debate and deliver the final trading signal.
+        prompt = f"""As the Portfolio Manager, synthesize the risk analysts' debate and deliver the final trading signal as readable prose.
 
 {instrument_context}
 
@@ -112,7 +158,9 @@ def create_portfolio_manager(llm):
     - If you choose **Hold**, explain what confirmation, catalyst, or price zone would be needed before placing an order.
     - When the setup is actionable, include stop-loss, take-profit, and position sizing.
     - For **Limit Sell** or **Market Sell**, do not include a new short thesis or an upside take-profit ladder. Use **Position Sizing** to say how much of the current long to trim or exit, and only use **Stop Loss** if you explicitly keep a remaining long tranche.
-    - If structured output is unavailable and you must answer in free text, still use these exact markdown headers: **Signal**, **Execution Summary**, **Market Context**, **Investment Thesis**, **Primary Limit Price**, **Secondary Limit Price**, **Stop Loss**, **Take Profit**, **Position Sizing**, **Time Horizon**.
+    - The first line of your answer must be exactly one signal and nothing else:
+      Market Buy, Limit Buy, Hold, Limit Sell, or Market Sell.
+    - After the first line, write a concise prose explanation for a human reader. Do not output JSON.
 
 **Context:**
 - Research Manager's investment plan:\n{research_plan_context}
@@ -127,14 +175,70 @@ def create_portfolio_manager(llm):
 
 Be decisive and ground every conclusion in specific evidence from the analysts.{get_language_instruction()}"""
 
-        final_trade_decision, parsed_decision = invoke_structured_or_freetext_result(
+        base_llm = resolve_structured_base_llm(llm)
+        final_trade_decision = _force_signal_first_line(_normalize_response_text(base_llm.invoke(prompt)))
+        current_price = fetch_current_binance_spot_price(state.get("company_of_interest") or "")
+
+        extraction_prompt = f"""Extract a structured order plan from the Portfolio Manager prose.
+
+Use only facts explicitly present in the prose and context. Do not invent missing prices.
+Use signal-specific limit fields:
+- primary_limit_buy_price / secondary_limit_buy_price only for Limit Buy.
+- primary_limit_sell_price / secondary_limit_sell_price only for Limit Sell.
+- Sell signals are long-only reduction or exit plans, never new short exposure.
+- Sell signals must not contain buy ladders or upside take-profit ladders.
+
+Current reference price: {current_price if current_price is not None else "unavailable"}
+
+Portfolio Manager prose:
+{final_trade_decision}
+
+Research Manager handoff:
+{research_plan_context}
+
+Trader handoff:
+{trader_plan_context}
+"""
+
+        structured_payload, validation_errors = _extract_structured_decision(
             structured_llm,
             llm,
-            prompt,
-            render_pm_decision,
-            "Portfolio Manager",
+            extraction_prompt=extraction_prompt,
+            current_price=current_price,
         )
-        structured_payload = parsed_decision.model_dump(mode="json") if parsed_decision is not None else {}
+        if validation_errors and structured_payload:
+            repair_prompt = f"""Repair the structured extraction only. Do not change the Portfolio Manager prose.
+
+Validation errors:
+{chr(10).join(f"- {error}" for error in validation_errors)}
+
+Current reference price: {current_price if current_price is not None else "unavailable"}
+
+Previous structured extraction:
+{structured_payload}
+
+Original Portfolio Manager prose:
+{final_trade_decision}
+
+Return a corrected structured extraction using the PortfolioDecision schema. If the prose does not support a safe numeric field, leave it empty.
+"""
+            repaired_payload, repaired_errors = _extract_structured_decision(
+                structured_llm,
+                llm,
+                extraction_prompt=repair_prompt,
+                current_price=current_price,
+            )
+            if repaired_payload and not repaired_errors:
+                structured_payload = repaired_payload
+                validation_errors = []
+            else:
+                validation_errors = repaired_errors or validation_errors
+
+        if structured_payload:
+            structured_payload["decision_validation_status"] = "invalid" if validation_errors else "valid"
+            structured_payload["decision_validation_errors"] = validation_errors
+            if current_price is not None:
+                structured_payload["current_price"] = current_price
 
         new_risk_debate_state = {
             "judge_decision": final_trade_decision,

@@ -6,14 +6,14 @@ downstream agents read as context.  Structured output is layered onto the
 three decision-making agents (Research Manager, Trader, Portfolio Manager)
 so that:
 
-- Their outputs follow consistent section headers across runs and providers
+- Their extracted handoffs follow consistent fields across runs and providers
 - Each provider's native structured-output mode is used (json_schema for
   OpenAI/xAI, response_schema for Gemini, tool-use for Anthropic)
 - Schema field descriptions become the model's output instructions, freeing
   the prompt body to focus on context and the rating-scale guidance
-- A render helper turns the parsed Pydantic instance back into the same
-  markdown shape the rest of the system already consumes, so display,
-  memory log, and saved reports keep working unchanged
+- Render helpers can turn parsed Pydantic instances back into readable
+  markdown when a fallback display is needed, but agent-facing reasoning stays
+  prose-first.
 """
 
 from __future__ import annotations
@@ -293,12 +293,11 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
 
 
 class PortfolioDecision(BaseModel):
-    """Structured output produced by the Portfolio Manager.
+    """Structured extraction of the prose Portfolio Manager decision.
 
-    The model fills every field as part of its primary LLM call; no separate
-    extraction pass is required. Field descriptions double as the model's
-    output instructions, so the prompt body only needs to convey context and
-    the rating-scale guidance.
+    The Portfolio Manager first writes a readable final decision. This schema
+    is used by the downstream extraction call so DB/FE consumers get stable
+    fields without forcing the manager's reasoning itself into JSON.
     """
 
     signal: ExecutionSignal = Field(
@@ -337,21 +336,35 @@ class PortfolioDecision(BaseModel):
             "incorporate them; otherwise rely solely on the current analysis."
         ),
     )
-    primary_limit_price: Optional[float] = Field(
+    primary_limit_buy_price: Optional[float] = Field(
         default=None,
         description=(
-            "Primary limit order price in the instrument's quote currency. "
-            "Required when the signal is Limit Buy or Limit Sell. Leave empty "
-            "for Market Buy, Market Sell, or Hold. For Limit Sell, this should be "
-            "the concrete better-exit level for the current long position."
+            "Primary buy limit price in the instrument's quote currency. "
+            "Required only when the signal is Limit Buy. Leave empty for Market "
+            "Buy, Hold, Limit Sell, and Market Sell."
         ),
     )
-    secondary_limit_price: Optional[float] = Field(
+    secondary_limit_buy_price: Optional[float] = Field(
         default=None,
         description=(
-            "Optional second ladder price for scaling into or out of the position. "
-            "Use when the plan should stage two limit orders, such as buying at "
-            "70,000 and 69,000."
+            "Optional second buy limit price for scaling into a long position. "
+            "Use only when the signal is Limit Buy."
+        ),
+    )
+    primary_limit_sell_price: Optional[float] = Field(
+        default=None,
+        description=(
+            "Primary sell limit price in the instrument's quote currency. "
+            "Required only when the signal is Limit Sell. In this long-only "
+            "workflow, it is a better exit/reduction level for current long "
+            "inventory, never a new short entry."
+        ),
+    )
+    secondary_limit_sell_price: Optional[float] = Field(
+        default=None,
+        description=(
+            "Optional second sell limit price for staging a long-position exit "
+            "or reduction. Use only when the signal is Limit Sell."
         ),
     )
     stop_loss: Optional[float] = Field(
@@ -381,47 +394,43 @@ class PortfolioDecision(BaseModel):
 
     @model_validator(mode="after")
     def normalize_signal_specific_fields(self) -> "PortfolioDecision":
-        if self.signal in {ExecutionSignal.MARKET_BUY, ExecutionSignal.MARKET_SELL, ExecutionSignal.HOLD}:
-            self.primary_limit_price = None
-            self.secondary_limit_price = None
-        if self.signal in {ExecutionSignal.LIMIT_SELL, ExecutionSignal.MARKET_SELL}:
+        if self.signal != ExecutionSignal.LIMIT_BUY:
+            self.primary_limit_buy_price = None
+            self.secondary_limit_buy_price = None
+        if self.signal != ExecutionSignal.LIMIT_SELL:
+            self.primary_limit_sell_price = None
+            self.secondary_limit_sell_price = None
+        if self.signal in {ExecutionSignal.LIMIT_SELL, ExecutionSignal.MARKET_SELL, ExecutionSignal.HOLD}:
             self.take_profit = None
+        if self.signal == ExecutionSignal.HOLD:
+            self.stop_loss = None
         return self
-
-    @model_validator(mode="after")
-    def validate_limit_signal_prices(self) -> "PortfolioDecision":
-        if self.signal in {ExecutionSignal.LIMIT_BUY, ExecutionSignal.LIMIT_SELL} and self.primary_limit_price is None:
-            raise ValueError("Limit Buy and Limit Sell decisions must include primary_limit_price.")
-        return self
-
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
-    """Render a PortfolioDecision back to the markdown shape the rest of the system expects.
-
-    Memory log, CLI display, and saved report files all read this markdown,
-    so the rendered output preserves stable section headers (``**Signal**``,
-    ``**Execution Summary**``, ``**Market Context**``, ``**Investment Thesis**``)
-    that downstream parsers and report writers can rely on.
-    """
+    """Render extracted PortfolioDecision fields to readable markdown."""
     parts = [
-        f"**Signal**: {decision.signal.value}",
+        decision.signal.value,
         "",
-        f"**Execution Summary**: {decision.execution_summary}",
+        f"**Execution Summary:** {decision.execution_summary}",
         "",
-        f"**Market Context**: {decision.market_context}",
+        f"**Market Context:** {decision.market_context}",
         "",
-        f"**Investment Thesis**: {decision.investment_thesis}",
+        f"**Investment Thesis:** {decision.investment_thesis}",
     ]
-    if decision.primary_limit_price is not None:
-        parts.extend(["", f"**Primary Limit Price**: {decision.primary_limit_price}"])
-    if decision.secondary_limit_price is not None:
-        parts.extend(["", f"**Secondary Limit Price**: {decision.secondary_limit_price}"])
+    if decision.primary_limit_buy_price is not None:
+        parts.extend(["", f"**Primary Limit Buy Price:** {decision.primary_limit_buy_price}"])
+    if decision.secondary_limit_buy_price is not None:
+        parts.extend(["", f"**Secondary Limit Buy Price:** {decision.secondary_limit_buy_price}"])
+    if decision.primary_limit_sell_price is not None:
+        parts.extend(["", f"**Primary Limit Sell Price:** {decision.primary_limit_sell_price}"])
+    if decision.secondary_limit_sell_price is not None:
+        parts.extend(["", f"**Secondary Limit Sell Price:** {decision.secondary_limit_sell_price}"])
     if decision.stop_loss is not None:
-        parts.extend(["", f"**Stop Loss**: {decision.stop_loss}"])
+        parts.extend(["", f"**Stop Loss:** {decision.stop_loss}"])
     if decision.take_profit is not None:
-        parts.extend(["", f"**Take Profit**: {decision.take_profit}"])
+        parts.extend(["", f"**Take Profit:** {decision.take_profit}"])
     if decision.position_sizing:
-        parts.extend(["", f"**Position Sizing**: {decision.position_sizing}"])
+        parts.extend(["", f"**Position Sizing:** {decision.position_sizing}"])
     if decision.time_horizon:
-        parts.extend(["", f"**Time Horizon**: {decision.time_horizon}"])
+        parts.extend(["", f"**Time Horizon:** {decision.time_horizon}"])
     return "\n".join(parts)

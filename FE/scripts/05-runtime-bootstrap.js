@@ -259,6 +259,32 @@ function handleServerEvent(event, data) {
         return;
     }
 
+    if (event === "endpoint_summary") {
+        const items = Array.isArray(data.items) ? data.items : data.summary ? [data.summary] : [];
+        state.run.endpointSummaries = items;
+        pushStreamFeed({
+            title: "Endpoint summaries",
+            content: compactText(`${items.length} endpoint summaries prepared for analyst prompts.`),
+            tone: "progress",
+        });
+        renderAll();
+        return;
+    }
+
+    if (event === "evidence_update") {
+        const items = Array.isArray(data.items) ? data.items : [];
+        state.run.evidenceItems = [...(state.run.evidenceItems || []), ...items];
+        state.run.evidenceCount = Number(data.count || state.run.evidenceItems.length || 0);
+        state.run.sections.structured_evidence = formatEvidenceItemsMarkdown(state.run.evidenceItems);
+        pushStreamFeed({
+            title: "Evidence Extractor",
+            content: compactText(`${state.run.evidenceCount} structured evidence item(s) captured.`),
+            tone: "live",
+        });
+        renderAll();
+        return;
+    }
+
     if (event === "warning") {
         state.run.warnings.unshift(data.message || "Unknown warning");
         pushStreamFeed({
@@ -304,6 +330,12 @@ function handleServerEvent(event, data) {
         state.run.sections = { ...state.run.sections, ...(data.sections_patch || data.sections || {}) };
         state.run.research = mergeStatePatch(state.run.research, data.research_patch || data.research || {});
         state.run.risk = mergeStatePatch(state.run.risk, data.risk_patch || data.risk || {});
+        state.run.endpointSummaries = data.endpoint_summaries || state.run.endpointSummaries || [];
+        state.run.evidenceCount = Number(data.evidence_count || state.run.evidenceCount || 0);
+        state.run.structured = {
+            ...(state.run.structured || {}),
+            ...(data.structured || {}),
+        };
         state.run.status = data.status || state.run.status;
         pushStreamFeed({
             title: "Final Decision",

@@ -306,6 +306,7 @@ function renderConfigPreview() {
 function getFlowSectionOrder() {
     return [
         ...(HISTORY_FLOW_SECTION_ORDER.inputs || []),
+        ...(HISTORY_FLOW_SECTION_ORDER.evidence || []),
         ...(HISTORY_FLOW_SECTION_ORDER.research || []),
         ...(HISTORY_FLOW_SECTION_ORDER.trading || []),
         ...(HISTORY_FLOW_SECTION_ORDER.risk || []),
@@ -328,39 +329,179 @@ function renderFlowMetric(label, value, tone = "") {
     `;
 }
 
-function renderFlowSectionList() {
-    return getFlowSectionOrder()
-        .map((sectionKey) => {
-            const hasContent = Boolean(String(state.run.sections?.[sectionKey] || "").trim());
-            const title = getFlowSectionTitle(sectionKey);
-            const baseClass = `flow-section-item ${hasContent ? "is-ready detail-trigger" : "is-pending"}`;
-            const dataset = hasContent
-                ? `data-detail-section="${escapeHtml(sectionKey)}" data-detail-title="${escapeHtml(title)}" data-detail-subtitle="Agent report"`
-                : "";
-            const tag = hasContent ? "button" : "span";
-            const typeAttr = hasContent ? ' type="button"' : "";
-            return `
-                <${tag}${typeAttr} class="${baseClass}" ${dataset}>
-                    <span class="flow-section-dot" aria-hidden="true"></span>
-                    <span>${escapeHtml(title)}</span>
-                </${tag}>
-            `;
-        })
-        .join("");
+function getLiveEvidenceCount() {
+    const completeCount = state.run.complete?.evidence_count;
+    if (completeCount !== undefined && completeCount !== null) {
+        return Number(completeCount) || 0;
+    }
+    return Number(state.run.evidenceCount || state.run.evidenceItems?.length || 0);
+}
+
+function renderLiveFlowNode(node = {}) {
+    const isReady = Boolean(node.ready);
+    const detail = isReady ? node.detail : null;
+    const dataset = detail ? buildDetailDataset(detail) : "";
+    const tag = detail ? "button" : "span";
+    const typeAttr = detail ? ' type="button"' : "";
+    const classes = [
+        "flow-section-item",
+        "live-flow-node",
+        node.tone ? `live-flow-node-${node.tone}` : "",
+        isReady ? "is-ready detail-trigger" : "is-pending is-disabled",
+    ].filter(Boolean).join(" ");
+    return `
+        <${tag}${typeAttr} class="${classes}" ${dataset} title="${escapeHtml(node.title || "Flow block")}">
+            <span class="flow-section-dot" aria-hidden="true"></span>
+            <span>${escapeHtml(node.title || "Flow")}</span>
+        </${tag}>
+    `;
+}
+
+function buildLiveFlowNodes() {
+    const selectedAnalysts = new Set(state.run.meta?.selected_analysts || ["market", "social", "news", "fundamentals"]);
+    const hasSection = (key) => Boolean(String(state.run.sections?.[key] || "").trim());
+    const hasStructuredPayload = (key) => {
+        const payload = state.run.structured?.[key];
+        return Boolean(payload && typeof payload === "object" && Object.keys(payload).length);
+    };
+    const evidenceReady = getLiveEvidenceCount() > 0;
+    const endpointReady = Boolean(state.run.endpointSummaries?.length);
+    const analystNodes = [
+        ["market", "market_report", "Market Analyst"],
+        ["social", "sentiment_report", "Social Analyst"],
+        ["news", "news_report", "News Analyst"],
+        ["fundamentals", "flow_report", "Flow Analyst"],
+    ]
+        .filter(([analystKey, sectionKey]) => selectedAnalysts.has(analystKey) || hasSection(sectionKey))
+        .map(([_analystKey, sectionKey, title]) => ({
+            title,
+            ready: hasSection(sectionKey),
+            tone: "signal",
+            detail: {
+                type: "report",
+                section: sectionKey,
+                title,
+                subtitle: "Analyst report",
+            },
+        }));
+
+    return [
+        {
+            title: "Endpoint Summaries",
+            ready: endpointReady,
+            tone: "evidence",
+            detail: { key: "endpointSummaries" },
+        },
+        {
+            title: "Evidence Extractor",
+            ready: evidenceReady,
+            tone: "evidence",
+            detail: { key: "evidenceExtractor" },
+        },
+        ...analystNodes,
+        {
+            title: "Evidence Ledger",
+            ready: evidenceReady,
+            tone: "evidence",
+            detail: { key: "evidenceLedger" },
+        },
+        {
+            title: "Bull / Bear / Debate",
+            ready: Boolean(state.run.research?.history || state.run.research?.bull_history || state.run.research?.bear_history),
+            tone: "debate",
+            detail: { key: "researchDebate" },
+        },
+        {
+            title: "Research Manager",
+            ready: hasSection("investment_plan"),
+            tone: "plan",
+            detail: {
+                type: "report",
+                section: "investment_plan",
+                title: "Research Manager",
+                subtitle: "Investment plan",
+            },
+        },
+        ...(hasStructuredPayload("investment_plan") ? [{
+            title: "Investment Extractor",
+            ready: true,
+            tone: "evidence",
+            detail: { key: "investmentExtractor" },
+        }] : []),
+        {
+            title: "Trader",
+            ready: hasSection("trader_investment_plan"),
+            tone: "trader",
+            detail: {
+                type: "report",
+                section: "trader_investment_plan",
+                title: "Trader",
+                subtitle: "Transaction proposal",
+            },
+        },
+        ...(hasStructuredPayload("trader_investment_plan") ? [{
+            title: "Trader Extractor",
+            ready: true,
+            tone: "evidence",
+            detail: { key: "traderExtractor" },
+        }] : []),
+        {
+            title: "Risk Debate",
+            ready: Boolean(state.run.risk?.history),
+            tone: "risk",
+            detail: { key: "riskDebate" },
+        },
+        {
+            title: "Portfolio Manager",
+            ready: hasSection("final_trade_decision"),
+            tone: "decision",
+            detail: {
+                type: "report",
+                section: "final_trade_decision",
+                title: "Portfolio Manager",
+                subtitle: "Final decision",
+            },
+        },
+        ...(hasStructuredPayload("final_trade_decision") ? [{
+            title: "Decision Extractor",
+            ready: true,
+            tone: "evidence",
+            detail: { key: "decisionExtractor" },
+        }] : []),
+        {
+            title: "Verifier",
+            ready: hasSection("verification_report"),
+            tone: "review",
+            detail: {
+                type: "report",
+                section: "verification_report",
+                title: "Verifier",
+                subtitle: "Decision audit",
+            },
+        },
+        ...(hasStructuredPayload("verification_report") ? [{
+            title: "Verifier Payload",
+            ready: true,
+            tone: "evidence",
+            detail: { key: "verifierStructured" },
+        }] : []),
+    ];
+}
+
+function renderLiveAgentFlow() {
+    return buildLiveFlowNodes().map(renderLiveFlowNode).join("");
 }
 
 function renderFlowInspectorMarkup() {
-    const meta = state.run.meta || getConfigSnapshot() || {};
-    const progress = state.run.status?.progress || { completed: 0, total: 0, percent: 0 };
     const complete = state.run.complete || {};
     const telemetry = complete.telemetry || {};
-    const completedSections = getFlowSectionOrder().filter((key) => String(state.run.sections?.[key] || "").trim()).length;
-    const totalSections = getFlowSectionOrder().length;
-    const progressText = progress.total ? `${progress.completed}/${progress.total}` : state.run.complete ? "Done" : "-";
     const signal = complete.signal || (state.run.cancelled ? "Stopped" : state.isBusy ? "Running" : "Pending");
     const verdict = complete.verification_verdict || "-";
+    const verificationAction = complete.verification_action || "-";
     const warningItems = state.run.warnings.slice(0, 2);
     const latestTool = [...state.run.traceFeed].reverse().find((item) => isToolTracePhase(item.phase));
+    const currentFocus = state.run.status?.current_agent || "Waiting";
+    const latestOutput = state.run.latestReportTitle || complete.signal || state.run.cancelled?.message || latestTool?.title || "-";
 
     return `
         <div class="flow-inspector-header">
@@ -368,21 +509,23 @@ function renderFlowInspectorMarkup() {
             <strong>${escapeHtml(signal)}</strong>
         </div>
         <div class="flow-metric-grid">
-            ${renderFlowMetric("Progress", progressText, state.isBusy ? "live" : "")}
-            ${renderFlowMetric("Reports", `${completedSections}/${totalSections}`)}
-            ${renderFlowMetric("Depth", getAnalysisDepthLabel(meta))}
             ${renderFlowMetric("Verdict", verdict, verdict === "Revise" || verdict === "Caution" ? "warning" : "")}
-            ${renderFlowMetric("Evidence", complete.evidence_count ?? "-")}
+            ${renderFlowMetric("Action", verificationAction, verdict === "Revise" || verdict === "Caution" ? "warning" : "")}
+            ${renderFlowMetric("Evidence", getLiveEvidenceCount() || "-")}
             ${renderFlowMetric("Web Search", telemetry.web_search_calls ?? "-")}
             ${renderFlowMetric("Model Calls", telemetry.model_calls ?? "-")}
             ${renderFlowMetric("Tool Events", telemetry.tool_calls ?? "-")}
         </div>
         <div class="flow-latest">
-            <span>Current</span>
-            <strong>${escapeHtml(state.run.status?.current_agent || state.run.latestReportTitle || latestTool?.title || "-")}</strong>
+            <span>Current Focus</span>
+            <strong>${escapeHtml(currentFocus)}</strong>
         </div>
-        <div class="flow-section-list" aria-label="Completed report sections">
-            ${renderFlowSectionList()}
+        <div class="flow-latest">
+            <span>Latest Output</span>
+            <strong>${escapeHtml(latestOutput)}</strong>
+        </div>
+        <div class="flow-section-list live-agent-flow" aria-label="Agent flow">
+            ${renderLiveAgentFlow()}
         </div>
         ${
             warningItems.length
@@ -758,6 +901,96 @@ function renderSmartNotes() {
     elements.smartNotes.innerHTML = notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("");
 }
 
+function markdownCell(value = "") {
+    return String(value ?? "")
+        .replace(/\|/g, "\\|")
+        .replace(/\r?\n/g, " ")
+        .trim();
+}
+
+function formatEvidenceItemsMarkdown(items = []) {
+    const evidenceItems = Array.isArray(items) ? items.filter((item) => item && typeof item === "object") : [];
+    if (!evidenceItems.length) {
+        return "";
+    }
+    const rows = [
+        "| Agent | Direction | Confidence | Metric | Value | Timestamp | Source | Claim |",
+        "| --- | --- | ---: | --- | --- | --- | --- | --- |",
+    ];
+    evidenceItems.forEach((item) => {
+        const confidence = Number(item.confidence ?? 0);
+        rows.push(`| ${[
+            item.agent_label || item.agent || "",
+            item.direction || "",
+            Number.isFinite(confidence) ? confidence.toFixed(2) : "",
+            item.metric || "",
+            item.value || "",
+            item.timestamp || "",
+            item.source || "",
+            item.claim || "",
+        ].map(markdownCell).join(" | ")} |`);
+    });
+    return rows.join("\n");
+}
+
+function formatEndpointSummariesMarkdown(items = []) {
+    const summaries = Array.isArray(items) ? items.filter((item) => item && typeof item === "object") : [];
+    if (!summaries.length) {
+        return "";
+    }
+    return summaries.map((item) => {
+        const metrics = item.key_metrics && typeof item.key_metrics === "object"
+            ? Object.entries(item.key_metrics).map(([key, value]) => `- ${key}: ${value}`).join("\n")
+            : "";
+        const bullets = (item.summary_bullets || []).map((value) => `- ${value}`).join("\n");
+        const caveats = (item.caveats || []).map((value) => `- ${value}`).join("\n");
+        return [
+            `### ${item.title || item.endpoint_name || "Endpoint"}`,
+            `- **Direction:** ${item.direction || "-"}`,
+            `- **Confidence:** ${item.confidence ?? "-"}`,
+            `- **Source:** ${item.source || "-"}`,
+            `- **Timestamp:** ${item.timestamp || "-"}`,
+            metrics ? `\n**Key Metrics**\n${metrics}` : "",
+            bullets ? `\n**Facts**\n${bullets}` : "",
+            caveats ? `\n**Caveats**\n${caveats}` : "",
+        ].filter(Boolean).join("\n");
+    }).join("\n\n");
+}
+
+function formatStructuredPayloadMarkdown(payload = {}, title = "Structured Payload") {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) || Object.keys(payload).length === 0) {
+        return "";
+    }
+    const rows = [
+        "| Field | Value |",
+        "| --- | --- |",
+        ...Object.entries(payload).map(([key, value]) => {
+            const rendered = typeof value === "object" && value !== null
+                ? JSON.stringify(value, null, 2)
+                : value;
+            return `| ${markdownCell(key)} | ${markdownCell(rendered)} |`;
+        }),
+    ];
+    return [`### ${title}`, rows.join("\n")].join("\n\n");
+}
+
+function formatResearchDebateMarkdown(research = {}) {
+    return [
+        research.bull_history ? `## Bull Researcher\n\n${research.bull_history}` : "",
+        research.bear_history ? `## Bear Researcher\n\n${research.bear_history}` : "",
+        research.history ? `## Debate\n\n${research.history}` : "",
+    ].filter(Boolean).join("\n\n");
+}
+
+function formatRiskDebateMarkdown(risk = {}) {
+    return [
+        risk.aggressive_history ? `## Aggressive Analyst\n\n${risk.aggressive_history}` : "",
+        risk.neutral_history ? `## Neutral Analyst\n\n${risk.neutral_history}` : "",
+        risk.conservative_history ? `## Conservative Analyst\n\n${risk.conservative_history}` : "",
+        risk.history ? `## Debate\n\n${risk.history}` : "",
+    ].filter(Boolean).join("\n\n");
+}
+
 function getDetailContent(detail) {
     const research = state.run.research || {};
     const risk = state.run.risk || {};
@@ -798,6 +1031,47 @@ function getDetailContent(detail) {
     }
 
     switch (detail?.key) {
+        case "endpointSummaries":
+            return {
+                content: formatEndpointSummariesMarkdown(state.run.endpointSummaries),
+                fallback: "Endpoint summaries are not available for this run yet.",
+            };
+        case "evidenceExtractor":
+        case "evidenceLedger":
+            return {
+                content: state.run.sections.structured_evidence || formatEvidenceItemsMarkdown(state.run.evidenceItems),
+                fallback: "Structured evidence is not available for this run yet.",
+            };
+        case "researchDebate":
+            return {
+                content: formatResearchDebateMarkdown(research),
+                fallback: "The research debate has not produced content yet.",
+            };
+        case "riskDebate":
+            return {
+                content: formatRiskDebateMarkdown(risk),
+                fallback: "The risk debate has not produced content yet.",
+            };
+        case "investmentExtractor":
+            return {
+                content: formatStructuredPayloadMarkdown(state.run.structured?.investment_plan, "Investment Plan Extractor"),
+                fallback: "Structured investment plan is not available for this run yet.",
+            };
+        case "traderExtractor":
+            return {
+                content: formatStructuredPayloadMarkdown(state.run.structured?.trader_investment_plan, "Trader Plan Extractor"),
+                fallback: "Structured trader plan is not available for this run yet.",
+            };
+        case "decisionExtractor":
+            return {
+                content: formatStructuredPayloadMarkdown(state.run.structured?.final_trade_decision, "Decision Extractor"),
+                fallback: "Structured final decision is not available for this run yet.",
+            };
+        case "verifierStructured":
+            return {
+                content: formatStructuredPayloadMarkdown(state.run.structured?.verification_report, "Verifier Payload"),
+                fallback: "Structured verification is not available for this run yet.",
+            };
         case "bullResearch":
             return { content: research.bull_history || "", fallback: "The Bull Researcher has not responded yet." };
         case "bearResearch":

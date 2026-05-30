@@ -97,3 +97,6 @@ class AgentState(MessagesState):
     coinglass_package_contexts: Annotated[
         dict[str, str], "CoinGlass context split by internal package for the configured analyst path"
     ]
+    endpoint_summaries: Annotated[
+        list[dict[str, Any]], "Compressed endpoint summaries generated before analyst prompts"
+    ]

@@ -1,10 +1,9 @@
-"""Extract the final execution signal from the Portfolio Manager's decision.
+"""Extract the final execution signal from the Portfolio Manager's prose.
 
-The Portfolio Manager produces a typed ``PortfolioDecision`` via structured
-output and renders it to markdown that carries a stable ``**Signal**: X``
-header (see :func:`tradingagents.agents.schemas.render_pm_decision`). The
-deterministic heuristic in :mod:`tradingagents.agents.utils.rating` is more
-than sufficient to extract that signal; no extra LLM call is needed.
+The Portfolio Manager emits readable prose with the first line constrained to
+one actionable signal. The deterministic heuristic in
+:mod:`tradingagents.agents.utils.rating` is sufficient to extract that signal;
+no extra LLM call is needed here.
 
 This module exists for backwards compatibility with callers that expect a
 ``SignalProcessor.process_signal(text)`` interface.

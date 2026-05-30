@@ -224,11 +224,13 @@ function buildHistoryDiagramModel(sections = []) {
     const knownKeys = new Set(Object.values(HISTORY_FLOW_SECTION_ORDER).flat());
     return {
         inputs: HISTORY_FLOW_SECTION_ORDER.inputs.map((key) => sectionsByKey.get(key)).filter(Boolean),
+        evidence: sectionsByKey.get("structured_evidence") || null,
         researchNodes: ["bull_research", "research_debate", "bear_research"].map((key) => sectionsByKey.get(key)).filter(Boolean),
         investmentPlan: sectionsByKey.get("investment_plan") || null,
         trader: sectionsByKey.get("trader_investment_plan") || null,
         riskNodes: ["aggressive_risk", "neutral_risk", "conservative_risk", "risk_debate"].map((key) => sectionsByKey.get(key)).filter(Boolean),
         manager: sectionsByKey.get("final_trade_decision") || null,
+        verifier: sectionsByKey.get("verification_report") || null,
         extras: sections.filter((section) => !knownKeys.has(section.section_key)),
     };
 }
@@ -322,7 +324,7 @@ function renderHistoryStageConnector(fromStage = null, toStage = null) {
     if (!fromStage || !toStage) {
         return "";
     }
-    if (fromStage.key === "signals" && toStage.key === "research") {
+    if (fromStage.key === "signals") {
         return renderHistoryCurveWire(
             HISTORY_SIGNAL_WIRE_PATHS.slice(0, Math.max(1, fromStage.wireCount || 0)),
             "history-diagram-stage-link history-diagram-stage-link--signals",
@@ -597,6 +599,12 @@ function renderHistoryPage() {
             wireCount: diagram.inputs.length,
         });
     }
+    if (diagram.evidence) {
+        stages.push({
+            key: "evidence",
+            markup: renderHistoryDiagramSingleGroup("Evidence Extractor", "evidence", diagram.evidence, diagramOptions),
+        });
+    }
     if (diagram.researchNodes.length) {
         stages.push({
             key: "research",
@@ -625,6 +633,12 @@ function renderHistoryPage() {
         stages.push({
             key: "portfolio",
             markup: renderHistoryDiagramSingleGroup("Manager", "portfolio", diagram.manager, diagramOptions),
+        });
+    }
+    if (diagram.verifier) {
+        stages.push({
+            key: "verifier",
+            markup: renderHistoryDiagramSingleGroup("Verifier", "verifier", diagram.verifier, diagramOptions),
         });
     }
     elements.historyStatusText.textContent = isSectionLoading

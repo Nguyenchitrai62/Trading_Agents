@@ -17,7 +17,19 @@ from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext_result,
+    resolve_structured_base_llm,
 )
+from tradingagents.llm_clients.base_client import normalize_content
+
+
+def _response_text(response: object) -> str:
+    normalized = normalize_content(response)
+    content = getattr(normalized, "content", "")
+    if isinstance(content, str):
+        return content.strip()
+    if content is None:
+        return ""
+    return str(content).strip()
 
 
 def _format_research_plan_context(structured_plan: dict, fallback_markdown: str) -> str:
@@ -40,7 +52,7 @@ def _format_research_plan_context(structured_plan: dict, fallback_markdown: str)
 
 
 def create_trader(llm):
-    structured_llm = bind_structured(llm, TraderProposal, "Trader")
+    structured_llm = bind_structured(llm, TraderProposal, "Trader Plan Extractor")
 
     def trader_node(state, name):
         company_name = state["company_of_interest"]
@@ -64,7 +76,8 @@ def create_trader(llm):
                 "content": (
                     "You are a trading agent analyzing market data to make investment decisions. "
                     "Based on your analysis, provide a specific recommendation to buy, sell, or hold. "
-                    "Anchor your reasoning in the analysts' reports and the research plan."
+                    "Anchor your reasoning in the analysts' reports and the research plan. "
+                    "Write readable prose for a human trader and do not output JSON."
                     + get_language_instruction()
                 ),
             },
@@ -83,13 +96,28 @@ def create_trader(llm):
             },
         ]
 
-        trader_plan, parsed_proposal = invoke_structured_or_freetext_result(
-            structured_llm,
-            llm,
-            messages,
-            render_trader_proposal,
-            "Trader",
-        )
+        base_llm = resolve_structured_base_llm(llm)
+        trader_plan = _response_text(base_llm.invoke(messages))
+
+        extraction_prompt = f"""Extract the Trader prose into the TraderProposal schema.
+
+Use only the action, reasoning, entry price, stop loss, and position sizing explicitly supported by the prose. Do not invent missing prices.
+
+Trader prose:
+{trader_plan}
+
+Research Manager handoff:
+{investment_plan_context}
+"""
+        parsed_proposal = None
+        if structured_llm is not None:
+            _rendered_proposal, parsed_proposal = invoke_structured_or_freetext_result(
+                structured_llm,
+                llm,
+                extraction_prompt,
+                render_trader_proposal,
+                "Trader Plan Extractor",
+            )
         structured_payload = parsed_proposal.model_dump(mode="json") if parsed_proposal is not None else {}
 
         return {

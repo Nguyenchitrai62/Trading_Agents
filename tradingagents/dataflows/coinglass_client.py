@@ -12,6 +12,8 @@ from urllib.parse import urljoin
 
 import requests
 
+from tradingagents.dataflows.endpoint_summary import format_endpoint_summaries_for_prompt
+
 
 DEFAULT_COINGLASS_BASE_URL = "https://open-api-v4.coinglass.com"
 DEFAULT_EXCHANGE_LIST = "Binance,OKX,Bybit"
@@ -484,6 +486,13 @@ def build_coinglass_prompt_context(
         ),
         "Use this prefetched source as current market evidence. If an endpoint failed, state the data gap instead of filling it in.",
     ]
+    endpoint_summary_block = format_endpoint_summaries_for_prompt(
+        snapshot.get("endpoint_summaries") or [],
+        focus_packages=selected_packages,
+    )
+    if endpoint_summary_block:
+        lines.append("")
+        lines.append(endpoint_summary_block)
 
     for package in selected_packages:
         section = _build_coinglass_package_section(snapshot, package)
@@ -676,6 +685,12 @@ def _build_coinglass_package_section(snapshot: dict[str, Any], package: str) -> 
         f"## {label}",
         f"Package health: {ok_count}/{len(results)} endpoints. Agent use: {PACKAGE_AGENT_HINTS.get(package, 'general analysis')}.",
     ]
+    endpoint_summary_block = format_endpoint_summaries_for_prompt(
+        snapshot.get("endpoint_summaries") or [],
+        focus_packages=(package,),
+    )
+    if endpoint_summary_block:
+        lines.append(endpoint_summary_block)
     for result in results:
         lines.append(_format_coinglass_prompt_result_line(result))
     return "\n".join(line for line in lines if line).strip()

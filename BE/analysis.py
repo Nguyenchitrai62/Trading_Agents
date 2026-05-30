@@ -28,6 +28,11 @@ from tradingagents.dataflows.coinglass_client import (
     build_coinglass_prompt_context,
     fetch_high_value_snapshot,
 )
+from tradingagents.dataflows.endpoint_summary import (
+    build_endpoint_summaries,
+    endpoint_summaries_to_evidence_items,
+    format_endpoint_summaries_for_prompt,
+)
 
 try:
     from tradingagents.agent_config import DEFAULT_CONFIG as TRADINGAGENTS_DEFAULT_CONFIG
@@ -172,6 +177,7 @@ STATE_UPDATE_KEYS = {
     "sentiment_report",
     "news_report",
     "evidence_items",
+    "endpoint_summaries",
     "investment_plan",
     "investment_plan_structured",
     "trader_investment_plan",
@@ -933,10 +939,10 @@ class AnalysisService:
         emit: Callable[[str, dict], None],
         emit_analysis_log: Callable[..., None],
         ensure_not_cancelled: Callable[[], None],
-    ) -> tuple[str, dict[str, str], list[dict]]:
+    ) -> tuple[str, dict[str, str], list[dict], list[dict]]:
         if not self.settings.coinglass_enabled:
             emit_analysis_log("CoinGlass prefetch is disabled by configuration.", "coinglass", "warning")
-            return "", {}, []
+            return "", {}, [], []
 
         if not self.settings.coinglass_api_key:
             message = (
@@ -945,7 +951,7 @@ class AnalysisService:
             )
             emit_analysis_log(message, "coinglass", "warning")
             emit("warning", {"message": message})
-            return "", {}, []
+            return "", {}, [], []
 
         emit_analysis_log(
             "Prefetching CoinGlass high-value market context.",
@@ -1031,6 +1037,42 @@ class AnalysisService:
             on_endpoint_result=on_endpoint_result,
             cancel_check=ensure_not_cancelled,
         )
+        endpoint_summary_cache: dict[str, dict] = {}
+        endpoint_summaries = build_endpoint_summaries(
+            snapshot.get("results") or [],
+            symbol=symbol,
+            analysis_date=analysis_date,
+            max_workers=self.settings.coinglass_concurrency_limit,
+            cache=endpoint_summary_cache,
+        )
+        snapshot["endpoint_summaries"] = endpoint_summaries
+        if endpoint_summaries:
+            emit_analysis_log(
+                "CoinGlass endpoint summaries ready.",
+                "coinglass",
+                summary_count=len(endpoint_summaries),
+                cache_entries=len(endpoint_summary_cache),
+            )
+            emit(
+                "endpoint_summary",
+                {
+                    "items": endpoint_summaries,
+                    "count": len(endpoint_summaries),
+                },
+            )
+            emit(
+                "agent_trace",
+                {
+                    "agent": owner_agent_label,
+                    "phase": "analysis",
+                    "title": "Endpoint summaries",
+                    "trace_id": "coinglass:endpoint_summaries",
+                    "content": self._trim_text(
+                        format_endpoint_summaries_for_prompt(endpoint_summaries),
+                        self.settings.analysis_trace_char_limit,
+                    ),
+                },
+            )
         prompt_context = build_coinglass_prompt_context(
             snapshot,
             char_limit=self.settings.coinglass_context_char_limit,
@@ -1044,6 +1086,14 @@ class AnalysisService:
             analysis_date,
             owner_agent_key=owner_agent_key,
             owner_agent_label=owner_agent_label,
+        )
+        evidence_items.extend(
+            endpoint_summaries_to_evidence_items(
+                endpoint_summaries,
+                owner_agent_key=owner_agent_key,
+                owner_agent_label=owner_agent_label,
+                analysis_date=analysis_date,
+            )
         )
 
         emit_analysis_log(
@@ -1074,7 +1124,7 @@ class AnalysisService:
                     "count": len(evidence_items),
                 },
             )
-        return prompt_context, package_contexts, evidence_items
+        return prompt_context, package_contexts, evidence_items, endpoint_summaries
 
     @staticmethod
     def extract_runtime_snapshot(state: dict) -> dict:
@@ -1083,6 +1133,7 @@ class AnalysisService:
         return {
             "sections": {key: (state.get(key) or "") for key in SECTION_META},
             "evidence_items": list(state.get("evidence_items") or []),
+            "endpoint_summaries": list(state.get("endpoint_summaries") or []),
             "investment": {
                 "history": investment_state.get("history", "") or "",
                 "bull_history": investment_state.get("bull_history", "") or "",
@@ -1884,7 +1935,7 @@ class AnalysisService:
             )
 
         ensure_not_cancelled()
-        coinglass_context, coinglass_package_contexts, coinglass_evidence_items = self.fetch_coinglass_context(
+        coinglass_context, coinglass_package_contexts, coinglass_evidence_items, endpoint_summaries = self.fetch_coinglass_context(
             symbol=symbol,
             analysis_date=request.analysis_date,
             owner_agent_key=str(config.get("coinglass_owner_analyst") or ""),
@@ -2005,7 +2056,9 @@ class AnalysisService:
                 coinglass_context=coinglass_context,
                 coinglass_package_contexts=coinglass_package_contexts,
                 coinglass_evidence_items=coinglass_evidence_items,
+                endpoint_summaries=endpoint_summaries,
             )
+            previous_snapshot = self.extract_runtime_snapshot(init_state)
             args = graph.propagator.get_graph_args()
             args["stream_mode"] = "updates"
             if config.get("checkpoint_enabled"):
@@ -2137,6 +2190,13 @@ class AnalysisService:
                     "verification_action": verification_action,
                     "history_id": history_id,
                     "evidence_count": len(final_state.get("evidence_items") or []),
+                    "endpoint_summaries": final_state.get("endpoint_summaries") or endpoint_summaries,
+                    "structured": {
+                        "investment_plan": final_state.get("investment_plan_structured") or {},
+                        "trader_investment_plan": final_state.get("trader_investment_plan_structured") or {},
+                        "final_trade_decision": final_state.get("final_trade_decision_structured") or {},
+                        "verification_report": final_state.get("verification_report_structured") or {},
+                    },
                     "telemetry": telemetry.snapshot(),
                     "sections_patch": completed_sections_patch,
                     "research_patch": completed_research_patch,

@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from typing import Optional
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
-
 from langchain_core.messages import AIMessage
 
 from tradingagents.agents.schemas import (
@@ -21,59 +15,17 @@ from tradingagents.agents.utils.agent_utils import (
     get_coinglass_packages_for_role,
     get_language_instruction,
 )
+from tradingagents.agents.utils.decision import (
+    active_limit_prices,
+    coerce_float,
+    validate_portfolio_decision,
+)
 from tradingagents.agents.utils.evidence import format_evidence_ledger
+from tradingagents.agents.utils.market_price import fetch_current_binance_spot_price
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext_result,
 )
-
-
-_BINANCE_TICKER_PRICE_URL = "https://api.binance.com/api/v3/ticker/price"
-_BINANCE_USER_AGENT = "tradingagents/0.2"
-
-
-def _normalize_binance_symbol(symbol: str) -> tuple[str, str]:
-    normalized = str(symbol or "").strip().upper().replace(" ", "")
-    if not normalized:
-        raise ValueError("symbol is required")
-    if "/" in normalized:
-        base, quote = normalized.split("/", 1)
-    elif "-" in normalized:
-        base, quote = normalized.split("-", 1)
-    else:
-        raise ValueError("Crypto symbol must include base and quote assets.")
-    if quote == "USD":
-        quote = "USDT"
-    market_symbol = f"{base}/{quote}"
-    api_symbol = f"{base}{quote}"
-    return api_symbol, market_symbol
-
-
-def _fetch_current_price(symbol: str) -> Optional[float]:
-    try:
-        api_symbol, _market_symbol = _normalize_binance_symbol(symbol)
-    except ValueError:
-        return None
-
-    url = f"{_BINANCE_TICKER_PRICE_URL}?{urlencode({'symbol': api_symbol})}"
-    request = Request(url, headers={"User-Agent": _BINANCE_USER_AGENT})
-    try:
-        with urlopen(request, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError):
-        return None
-
-    try:
-        return float(payload.get("price"))
-    except (TypeError, ValueError):
-        return None
-
-
-def _coerce_float(value: object) -> Optional[float]:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _format_structured_context(payload: dict, fallback: str, fields: list[tuple[str, str]]) -> str:
@@ -96,15 +48,14 @@ def _format_list(items: list[str], *, default: str) -> str:
 def _build_deterministic_summary(state: dict) -> dict[str, object]:
     decision = state.get("final_trade_decision_structured") or {}
     signal = str(decision.get("signal") or "").strip()
-    current_price = _fetch_current_price(state.get("company_of_interest") or "")
+    current_price = fetch_current_binance_spot_price(state.get("company_of_interest") or "")
     findings: list[str] = []
     warnings: list[str] = []
     blockers: list[str] = []
 
-    primary = _coerce_float(decision.get("primary_limit_price"))
-    secondary = _coerce_float(decision.get("secondary_limit_price"))
-    stop_loss = _coerce_float(decision.get("stop_loss"))
-    take_profit = _coerce_float(decision.get("take_profit"))
+    primary, secondary = active_limit_prices(decision)
+    stop_loss = coerce_float(decision.get("stop_loss"))
+    take_profit = coerce_float(decision.get("take_profit"))
 
     if current_price is None:
         warnings.append("Current Binance spot price could not be resolved, so price-relation checks are partial.")
@@ -113,11 +64,15 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
 
     if not signal:
         blockers.append("Structured portfolio signal is missing, so deterministic verification cannot confirm order logic.")
-    elif signal == "Limit Buy":
+    else:
+        for validation_error in validate_portfolio_decision(decision, current_price=current_price):
+            blockers.append(validation_error)
+
+    if signal == "Limit Buy":
         if primary is None:
             blockers.append("Limit Buy is missing a primary limit price.")
-        if current_price is not None and primary is not None and primary >= current_price:
-            blockers.append("Limit Buy primary limit price is not below current spot price.")
+        if current_price is not None and primary is not None and primary > current_price:
+            blockers.append("Limit Buy primary limit price is above current spot price without breakout confirmation.")
         if secondary is not None and primary is not None and secondary > primary:
             warnings.append("Secondary Limit Buy is above the primary limit; scale-in ladders usually step lower.")
         reference_entry = min(value for value in (primary, secondary) if value is not None) if primary is not None or secondary is not None else None
@@ -140,8 +95,8 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
     elif signal == "Limit Sell":
         if primary is None:
             blockers.append("Limit Sell is missing a primary limit price.")
-        if current_price is not None and primary is not None and primary <= current_price:
-            blockers.append("Limit Sell primary limit price is not above current spot price.")
+        if current_price is not None and primary is not None and primary < current_price:
+            blockers.append("Limit Sell primary limit price is below current spot price.")
         if secondary is not None and primary is not None and secondary < primary:
             warnings.append("Secondary Limit Sell is below the primary limit; staged exits usually step higher.")
         if take_profit is not None:
@@ -210,12 +165,16 @@ def create_verifier(llm):
                 ("Execution Summary", "execution_summary"),
                 ("Market Context", "market_context"),
                 ("Investment Thesis", "investment_thesis"),
-                ("Primary Limit Price", "primary_limit_price"),
-                ("Secondary Limit Price", "secondary_limit_price"),
+                ("Primary Limit Buy Price", "primary_limit_buy_price"),
+                ("Secondary Limit Buy Price", "secondary_limit_buy_price"),
+                ("Primary Limit Sell Price", "primary_limit_sell_price"),
+                ("Secondary Limit Sell Price", "secondary_limit_sell_price"),
                 ("Stop Loss", "stop_loss"),
                 ("Take Profit", "take_profit"),
                 ("Position Sizing", "position_sizing"),
                 ("Time Horizon", "time_horizon"),
+                ("Validation Status", "decision_validation_status"),
+                ("Validation Errors", "decision_validation_errors"),
             ],
         )
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=24)
