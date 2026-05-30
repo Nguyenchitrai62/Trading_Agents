@@ -997,12 +997,13 @@
 }
 
 .config-modal-card {
+    width: min(920px, calc(100vw - 28px));
     max-height: calc(100vh - 28px);
     overflow: hidden;
 }
 
 #configForm.compact-config-form {
-    gap: 10px 12px;
+    gap: 12px 10px;
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
         "primary"
@@ -1012,7 +1013,7 @@
 }
 
 #configForm .compact-grid-primary {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 #configForm .compact-grid-secondary {
@@ -1068,12 +1069,12 @@
 }
 
 #configForm.compact-config-form {
-    grid-template-columns: minmax(0, 1.42fr) minmax(280px, 0.78fr);
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-        "primary preview"
-        "secondary preview"
-        "choices preview"
-        "actions actions";
+        "primary"
+        "secondary"
+        "choices"
+        "actions";
     gap: 14px 16px;
 }
 
@@ -1087,12 +1088,12 @@
 
 #configForm .compact-grid-primary {
     grid-area: primary;
-    grid-template-columns: minmax(170px, 1.15fr) minmax(160px, 1fr) minmax(132px, 0.72fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 #configForm .compact-grid-secondary {
     grid-area: secondary;
-    grid-template-columns: minmax(150px, 0.92fr) minmax(180px, 1fr) minmax(180px, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 #configForm .compact-config-choices {
@@ -1103,6 +1104,26 @@
 #configForm .modal-actions {
     grid-area: actions;
     grid-column: 1 / -1;
+    justify-content: center;
+    width: 100%;
+    flex-wrap: wrap;
+    margin-top: 0;
+}
+
+#configForm .modal-actions .button {
+    min-width: 170px;
+}
+
+#configForm .modal-actions .button.secondary {
+    background: rgba(18, 30, 46, 0.88);
+    color: var(--ink);
+    border: 1px solid rgba(115, 142, 178, 0.24);
+}
+
+#configForm .modal-actions .button.primary {
+    background: linear-gradient(135deg, var(--secondary) 0%, #82d8ff 100%);
+    color: #04111b;
+    box-shadow: 0 10px 24px rgba(88, 166, 255, 0.16);
 }
 
 #configPreview.compact-config-preview {
@@ -1405,12 +1426,7 @@ button.flow-section-item:focus-visible {
             "primary"
             "secondary"
             "choices"
-            "preview"
             "actions";
-    }
-
-    #configPreview.compact-config-preview {
-        min-height: auto;
     }
 }
 

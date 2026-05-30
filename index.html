@@ -346,16 +346,16 @@
 
                 <div class="config-grid four-up compact-grid-secondary">
                     <label class="field">
+                        <span>LLM model</span>
+                        <select id="modelSelect"></select>
+                    </label>
+                    <label class="field">
                         <span>Language</span>
                         <select id="languageSelect"></select>
                     </label>
                     <label id="customLanguageField" class="field field-muted">
                         <span>Custom language</span>
                         <input id="customLanguageInput" type="text" placeholder="Use Custom language">
-                    </label>
-                    <label class="field">
-                        <span>LLM model</span>
-                        <select id="modelSelect"></select>
                     </label>
                 </div>
 
@@ -374,8 +374,6 @@
                         <div id="depthOptions" class="depth-grid compact-depth-grid"></div>
                     </section>
                 </div>
-
-                <aside id="configPreview" class="config-preview compact-config-preview" aria-label="Run snapshot"></aside>
 
                 <div class="modal-actions">
                     <button id="saveConfigButton" type="button" class="button secondary">Apply</button>
