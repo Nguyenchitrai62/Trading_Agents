@@ -1397,10 +1397,56 @@ button.flow-section-item:focus-visible {
 
 .live-agent-flow {
     grid-template-columns: 1fr;
+    gap: 0;
+    padding-right: 4px;
 }
 
 .live-flow-node {
     min-height: 34px;
+}
+
+.live-flow-stage {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+}
+
+.live-flow-stage + .live-flow-stage {
+    margin-top: 2px;
+}
+
+.live-flow-connector {
+    justify-self: center;
+    width: 2px;
+    height: 18px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(101, 208, 173, 0.22), rgba(101, 208, 173, 0.72), rgba(156, 200, 255, 0.2));
+    box-shadow: 0 0 12px rgba(101, 208, 173, 0.24);
+}
+
+.live-flow-group {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    padding: 9px;
+    border: 1px solid rgba(139, 178, 160, 0.12);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.live-flow-group-title {
+    color: var(--muted);
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.live-flow-group-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    min-width: 0;
 }
 
 .live-flow-node-evidence.is-ready {

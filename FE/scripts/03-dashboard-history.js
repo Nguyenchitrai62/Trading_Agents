@@ -305,6 +305,7 @@ function renderConfigPreview() {
 
 function getFlowSectionOrder() {
     return [
+        ...(HISTORY_FLOW_SECTION_ORDER.sources || []),
         ...(HISTORY_FLOW_SECTION_ORDER.inputs || []),
         ...(HISTORY_FLOW_SECTION_ORDER.evidence || []),
         ...(HISTORY_FLOW_SECTION_ORDER.research || []),
@@ -337,7 +338,70 @@ function getLiveEvidenceCount() {
     return Number(state.run.evidenceCount || state.run.evidenceItems?.length || 0);
 }
 
-function renderLiveFlowNode(node = {}) {
+function getLiveSourceArtifactCount() {
+    if (state.run.complete?.source_artifact_count !== undefined && state.run.complete?.source_artifact_count !== null) {
+        return Number(state.run.complete.source_artifact_count) || 0;
+    }
+    if (Number(state.run.sourceArtifactCount || 0) > 0) {
+        return Number(state.run.sourceArtifactCount || 0);
+    }
+    const keys = new Set();
+    ["ccxt", "coinglass", "news", "social", "flow"].forEach((groupKey) => {
+        getLiveSourceTraceEntries(groupKey).forEach((entry) => keys.add(entry.id || `${entry.agent}:${entry.title}:${entry.traceId}`));
+    });
+    return keys.size;
+}
+
+function getLiveSourceTraceEntries(groupKey = "") {
+    const entries = Array.isArray(state.run.traceFeed) ? state.run.traceFeed : [];
+    return entries.filter((entry) => {
+        if (!entry || !["tool_result", "tool_trace"].includes(entry.phase)) {
+            return false;
+        }
+        const title = String(entry.title || "").toLowerCase();
+        const agent = String(entry.agent || "").toLowerCase();
+        const traceId = String(entry.traceId || entry.trace_id || "").toLowerCase();
+        if (groupKey === "ccxt") {
+            return title === "get_crypto_ohlcv" || title === "get_crypto_indicators";
+        }
+        if (groupKey === "coinglass") {
+            return traceId.startsWith("coinglass:") || title.includes("coinglass");
+        }
+        if (groupKey === "news") {
+            return agent.includes("news") || title.includes("news") || title === "get_global_news";
+        }
+        if (groupKey === "social") {
+            return agent.includes("social") || title.includes("reddit") || title.includes("stocktwits");
+        }
+        if (groupKey === "flow") {
+            return agent.includes("flow") && !traceId.startsWith("coinglass:");
+        }
+        return false;
+    });
+}
+
+function formatLiveSourceTraceMarkdown(groupKey = "", title = "Source Data") {
+    const entries = getLiveSourceTraceEntries(groupKey);
+    if (!entries.length) {
+        return "";
+    }
+    return entries
+        .map((entry, index) => {
+            const body = entry.toolResultContent || entry.content || "";
+            return [
+                `## ${index + 1}. ${entry.title || title}`,
+                `- Agent: ${entry.agent || "-"}`,
+                `- Phase: ${formatTracePhaseLabel(entry.phase)}`,
+                `- Trace ID: ${entry.traceId || "-"}`,
+                `- Captured: ${entry.timestamp || "-"}`,
+                "",
+                body,
+            ].join("\n");
+        })
+        .join("\n\n");
+}
+
+function renderLiveFlowLeaf(node = {}) {
     const isReady = Boolean(node.ready);
     const detail = isReady ? node.detail : null;
     const dataset = detail ? buildDetailDataset(detail) : "";
@@ -357,6 +421,20 @@ function renderLiveFlowNode(node = {}) {
     `;
 }
 
+function renderLiveFlowNode(node = {}) {
+    if (Array.isArray(node.nodes)) {
+        return `
+            <div class="live-flow-group live-flow-group-${escapeHtml(node.tone || "neutral")}">
+                <span class="live-flow-group-title">${escapeHtml(node.title || "Flow Stage")}</span>
+                <div class="live-flow-group-grid">
+                    ${node.nodes.map(renderLiveFlowLeaf).join("")}
+                </div>
+            </div>
+        `;
+    }
+    return renderLiveFlowLeaf(node);
+}
+
 function buildLiveFlowNodes() {
     const selectedAnalysts = new Set(state.run.meta?.selected_analysts || ["market", "social", "news", "fundamentals"]);
     const hasSection = (key) => Boolean(String(state.run.sections?.[key] || "").trim());
@@ -366,6 +444,11 @@ function buildLiveFlowNodes() {
     };
     const evidenceReady = getLiveEvidenceCount() > 0;
     const endpointReady = Boolean(state.run.endpointSummaries?.length);
+    const ccxtReady = getLiveSourceTraceEntries("ccxt").length > 0;
+    const coinglassReady = endpointReady || getLiveSourceTraceEntries("coinglass").length > 0;
+    const newsSourceReady = getLiveSourceTraceEntries("news").length > 0;
+    const socialSourceReady = getLiveSourceTraceEntries("social").length > 0;
+    const flowSourceReady = getLiveSourceTraceEntries("flow").length > 0;
     const analystNodes = [
         ["market", "market_report", "Market Analyst"],
         ["social", "sentiment_report", "Social Analyst"],
@@ -387,10 +470,46 @@ function buildLiveFlowNodes() {
 
     return [
         {
-            title: "Endpoint Summaries",
-            ready: endpointReady,
+            title: "Parallel endpoint summaries",
             tone: "evidence",
-            detail: { key: "endpointSummaries" },
+            nodes: [
+                {
+                    title: "CCXT Market Data",
+                    ready: ccxtReady,
+                    tone: "signal",
+                    detail: { key: "liveCcxtData" },
+                },
+                {
+                    title: "CoinGlass Data",
+                    ready: coinglassReady,
+                    tone: "evidence",
+                    detail: { key: "liveCoinGlassData" },
+                },
+                {
+                    title: "News Data",
+                    ready: newsSourceReady,
+                    tone: "signal",
+                    detail: { key: "liveNewsData" },
+                },
+                {
+                    title: "Social / Web Data",
+                    ready: socialSourceReady,
+                    tone: "signal",
+                    detail: { key: "liveSocialData" },
+                },
+                {
+                    title: "Flow Data",
+                    ready: flowSourceReady,
+                    tone: "signal",
+                    detail: { key: "liveFlowData" },
+                },
+                {
+                    title: "Endpoint Summaries",
+                    ready: endpointReady,
+                    tone: "evidence",
+                    detail: { key: "endpointSummaries" },
+                },
+            ],
         },
         {
             title: "Evidence Extractor",
@@ -398,7 +517,11 @@ function buildLiveFlowNodes() {
             tone: "evidence",
             detail: { key: "evidenceExtractor" },
         },
-        ...analystNodes,
+        {
+            title: "Analysts",
+            tone: "signal",
+            nodes: analystNodes,
+        },
         {
             title: "Evidence Ledger",
             ready: evidenceReady,
@@ -406,10 +529,28 @@ function buildLiveFlowNodes() {
             detail: { key: "evidenceLedger" },
         },
         {
-            title: "Bull / Bear / Debate",
-            ready: Boolean(state.run.research?.history || state.run.research?.bull_history || state.run.research?.bear_history),
+            title: "Research Chamber",
             tone: "debate",
-            detail: { key: "researchDebate" },
+            nodes: [
+                {
+                    title: "Bull Researcher",
+                    ready: Boolean(state.run.research?.bull_history),
+                    tone: "bull",
+                    detail: { key: "bullResearch" },
+                },
+                {
+                    title: "Bear Researcher",
+                    ready: Boolean(state.run.research?.bear_history),
+                    tone: "bear",
+                    detail: { key: "bearResearch" },
+                },
+                {
+                    title: "Research Debate",
+                    ready: Boolean(state.run.research?.history),
+                    tone: "debate",
+                    detail: { key: "researchDebate" },
+                },
+            ],
         },
         {
             title: "Research Manager",
@@ -446,10 +587,34 @@ function buildLiveFlowNodes() {
             detail: { key: "traderExtractor" },
         }] : []),
         {
-            title: "Risk Debate",
-            ready: Boolean(state.run.risk?.history),
+            title: "Risk Room",
             tone: "risk",
-            detail: { key: "riskDebate" },
+            nodes: [
+                {
+                    title: "Aggressive Risk",
+                    ready: Boolean(state.run.risk?.aggressive_history),
+                    tone: "aggressive",
+                    detail: { key: "aggressiveRisk" },
+                },
+                {
+                    title: "Neutral Risk",
+                    ready: Boolean(state.run.risk?.neutral_history),
+                    tone: "neutral",
+                    detail: { key: "neutralRisk" },
+                },
+                {
+                    title: "Conservative Risk",
+                    ready: Boolean(state.run.risk?.conservative_history),
+                    tone: "conservative",
+                    detail: { key: "conservativeRisk" },
+                },
+                {
+                    title: "Risk Debate",
+                    ready: Boolean(state.run.risk?.history),
+                    tone: "risk",
+                    detail: { key: "riskDebate" },
+                },
+            ],
         },
         {
             title: "Portfolio Manager",
@@ -489,7 +654,15 @@ function buildLiveFlowNodes() {
 }
 
 function renderLiveAgentFlow() {
-    return buildLiveFlowNodes().map(renderLiveFlowNode).join("");
+    const nodes = buildLiveFlowNodes();
+    return nodes
+        .map((node, index) => `
+            <div class="live-flow-stage">
+                ${renderLiveFlowNode(node)}
+                ${index < nodes.length - 1 ? '<span class="live-flow-connector" aria-hidden="true"></span>' : ""}
+            </div>
+        `)
+        .join("");
 }
 
 function renderFlowInspectorMarkup() {
@@ -511,6 +684,7 @@ function renderFlowInspectorMarkup() {
         <div class="flow-metric-grid">
             ${renderFlowMetric("Verdict", verdict, verdict === "Revise" || verdict === "Caution" ? "warning" : "")}
             ${renderFlowMetric("Action", verificationAction, verdict === "Revise" || verdict === "Caution" ? "warning" : "")}
+            ${renderFlowMetric("Sources", getLiveSourceArtifactCount() || "-")}
             ${renderFlowMetric("Evidence", getLiveEvidenceCount() || "-")}
             ${renderFlowMetric("Web Search", telemetry.web_search_calls ?? "-")}
             ${renderFlowMetric("Model Calls", telemetry.model_calls ?? "-")}
@@ -1035,6 +1209,31 @@ function getDetailContent(detail) {
             return {
                 content: formatEndpointSummariesMarkdown(state.run.endpointSummaries),
                 fallback: "Endpoint summaries are not available for this run yet.",
+            };
+        case "liveCcxtData":
+            return {
+                content: formatLiveSourceTraceMarkdown("ccxt", "CCXT Market Data"),
+                fallback: "CCXT market data tool results have not appeared in the live trace yet.",
+            };
+        case "liveCoinGlassData":
+            return {
+                content: formatLiveSourceTraceMarkdown("coinglass", "CoinGlass Data") || formatEndpointSummariesMarkdown(state.run.endpointSummaries),
+                fallback: "CoinGlass endpoint results are not available for this run yet.",
+            };
+        case "liveNewsData":
+            return {
+                content: formatLiveSourceTraceMarkdown("news", "News Data"),
+                fallback: "News source results have not appeared in the live trace yet.",
+            };
+        case "liveSocialData":
+            return {
+                content: formatLiveSourceTraceMarkdown("social", "Social / Web Data"),
+                fallback: "Social or web source results have not appeared in the live trace yet.",
+            };
+        case "liveFlowData":
+            return {
+                content: formatLiveSourceTraceMarkdown("flow", "Flow Data"),
+                fallback: "Flow source results have not appeared in the live trace yet.",
             };
         case "evidenceExtractor":
         case "evidenceLedger":

@@ -13,6 +13,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from copy import deepcopy
+from datetime import datetime, timezone
 
 from anthropic import AsyncAnthropic
 from fastapi import HTTPException, Request
@@ -457,6 +458,175 @@ class AnalysisService:
             "cancelled": True,
             "run_id": run_id,
             "message": "Cancellation requested for the active analysis stream.",
+        }
+
+    @staticmethod
+    def _slugify_artifact_key(value: object, fallback: str = "artifact") -> str:
+        slug = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+        return slug[:96] or fallback
+
+    @classmethod
+    def _classify_tool_source(cls, *, agent: object, title: object) -> dict | None:
+        agent_text = str(agent or "").strip().lower()
+        title_text = str(title or "").strip().lower()
+        if title_text in {"get_crypto_ohlcv", "get_crypto_indicators"}:
+            return {
+                "flow_group": "ccxt_market_data",
+                "source_kind": "ccxt",
+                "label": "CCXT Market Data",
+            }
+        if title_text in {"get_news", "get_global_news", "get_finnhub_news"} or "news" in title_text:
+            return {
+                "flow_group": "news_data",
+                "source_kind": "news",
+                "label": "News Data",
+            }
+        if title_text == "web_search":
+            if "social" in agent_text:
+                return {
+                    "flow_group": "social_web_data",
+                    "source_kind": "web_search",
+                    "label": "Social / Web Data",
+                }
+            if "flow" in agent_text:
+                return {
+                    "flow_group": "flow_data",
+                    "source_kind": "web_search",
+                    "label": "Flow / Web Data",
+                }
+            if "news" in agent_text:
+                return {
+                    "flow_group": "news_data",
+                    "source_kind": "web_search",
+                    "label": "News / Web Data",
+                }
+            return {
+                "flow_group": "social_web_data",
+                "source_kind": "web_search",
+                "label": "Web Data",
+            }
+        if "reddit" in title_text or "stocktwits" in title_text or "social" in title_text:
+            return {
+                "flow_group": "social_web_data",
+                "source_kind": "social",
+                "label": "Social / Web Data",
+            }
+        return None
+
+    @classmethod
+    def _build_tool_source_artifact(
+        cls,
+        *,
+        agent: object,
+        title: object,
+        trace_id: object,
+        content: object,
+    ) -> dict | None:
+        classification = cls._classify_tool_source(agent=agent, title=title)
+        if classification is None:
+            return None
+        raw_content = cls.format_tool_result_for_display(content)
+        if not raw_content:
+            return None
+        agent_label = str(agent or "Tool Runner").strip() or "Tool Runner"
+        tool_name = str(title or "tool").strip() or "tool"
+        source_key = str(trace_id or tool_name).strip() or tool_name
+        fingerprint = hashlib.sha1(
+            json.dumps(
+                {
+                    "agent": agent_label,
+                    "title": tool_name,
+                    "trace_id": source_key,
+                    "content": raw_content,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8", errors="ignore")
+        ).hexdigest()[:12]
+        section_key = f"source_{classification['flow_group']}_{cls._slugify_artifact_key(tool_name)}_{fingerprint}"
+        markdown = "\n".join(
+            [
+                f"# {classification['label']} - {tool_name}",
+                "",
+                f"- Agent: {agent_label}",
+                f"- Tool: {tool_name}",
+                f"- Trace ID: {source_key}",
+                f"- Captured at: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
+                "",
+                "## Result",
+                raw_content,
+            ]
+        )
+        return {
+            "section_key": section_key,
+            "title": f"{classification['label']} - {tool_name}",
+            "agent": agent_label,
+            "team": "Source Layer",
+            "markdown": markdown,
+            "artifact_type": "source",
+            "flow_stage": "summaries",
+            "flow_group": classification["flow_group"],
+            "source_kind": classification["source_kind"],
+            "source_key": source_key,
+            "payload_json": {
+                "agent": agent_label,
+                "tool": tool_name,
+                "trace_id": source_key,
+                "content": raw_content,
+            },
+        }
+
+    @classmethod
+    def _build_coinglass_source_artifact(cls, result: dict) -> dict | None:
+        if not isinstance(result, dict):
+            return None
+        endpoint_key = str(result.get("key") or result.get("title") or "coinglass").strip()
+        if not endpoint_key:
+            return None
+        payload = result.get("payload")
+        markdown_payload = cls._build_coinglass_tool_result_payload(result).get("answer") or ""
+        raw_payload = ""
+        if payload not in (None, "", [], {}):
+            raw_payload = "\n".join(
+                [
+                    "## Raw endpoint response",
+                    "```json",
+                    json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str),
+                    "```",
+                ]
+            )
+        markdown = "\n\n".join(
+            part
+            for part in [
+                f"# CoinGlass Data - {result.get('title') or endpoint_key}",
+                markdown_payload,
+                raw_payload,
+            ]
+            if str(part or "").strip()
+        )
+        return {
+            "section_key": f"source_coinglass_data_{cls._slugify_artifact_key(endpoint_key)}",
+            "title": f"CoinGlass - {result.get('title') or endpoint_key}",
+            "agent": "CoinGlass Prefetch",
+            "team": "Source Layer",
+            "markdown": markdown,
+            "artifact_type": "source",
+            "flow_stage": "summaries",
+            "flow_group": "coinglass_data",
+            "source_kind": "coinglass",
+            "source_key": endpoint_key,
+            "payload_json": {
+                "endpoint": endpoint_key,
+                "title": result.get("title"),
+                "source": result.get("source"),
+                "status": result.get("status"),
+                "http_status": result.get("http_status"),
+                "elapsed_ms": result.get("elapsed_ms"),
+                "summary": result.get("summary") or {},
+                "payload": payload,
+                "error": result.get("error") or "",
+            },
         }
 
     def build_analysis_runtime_profile(self, request: AnalysisRequest) -> dict:
@@ -939,6 +1109,7 @@ class AnalysisService:
         emit: Callable[[str, dict], None],
         emit_analysis_log: Callable[..., None],
         ensure_not_cancelled: Callable[[], None],
+        record_source_artifact: Callable[[dict], None] | None = None,
     ) -> tuple[str, dict[str, str], list[dict], list[dict]]:
         if not self.settings.coinglass_enabled:
             emit_analysis_log("CoinGlass prefetch is disabled by configuration.", "coinglass", "warning")
@@ -964,6 +1135,10 @@ class AnalysisService:
         def on_endpoint_result(result: dict) -> None:
             endpoint_title = str(result.get("title") or result.get("key") or "CoinGlass endpoint")
             trace_id = f"coinglass:{result.get('key') or endpoint_title}"
+            if record_source_artifact is not None:
+                artifact = self._build_coinglass_source_artifact(result)
+                if artifact:
+                    record_source_artifact(artifact)
             emit(
                 "agent_trace",
                 {
@@ -1429,6 +1604,7 @@ class AnalysisService:
         seen_signatures: set[str],
         emit: Callable[[str, dict], None],
         telemetry: AnalysisTelemetry | None = None,
+        trace_sink: Callable[..., None] | None = None,
     ) -> None:
         for message in messages:
             signature = self._build_message_signature(message)
@@ -1446,8 +1622,16 @@ class AnalysisService:
             if isinstance(message, ToolMessage):
                 tool_name = getattr(message, "name", None) or getattr(message, "tool_call_id", None) or "tool"
                 trace_id = str(getattr(message, "tool_call_id", None) or tool_name)
+                raw_content = getattr(message, "content", "")
+                if trace_sink is not None:
+                    trace_sink(
+                        agent=message_agent or "Tool Runner",
+                        title=str(tool_name),
+                        trace_id=trace_id,
+                        content=raw_content,
+                    )
                 content = self._trim_text(
-                    self.format_tool_result_for_display(getattr(message, "content", "")),
+                    self.format_tool_result_for_display(raw_content),
                     self.settings.analysis_trace_char_limit,
                 )
                 if not content:
@@ -1815,6 +1999,28 @@ class AnalysisService:
         runtime_profile = self.build_analysis_runtime_profile(request)
         telemetry = AnalysisTelemetry()
         telemetry_callback = AnalysisTelemetryCallback(telemetry)
+        source_artifacts: list[dict] = []
+        seen_source_artifacts: set[str] = set()
+
+        def record_source_artifact(artifact: dict) -> None:
+            section_key = str(artifact.get("section_key") or "").strip()
+            if not section_key or section_key in seen_source_artifacts:
+                return
+            markdown = str(artifact.get("markdown") or "").strip()
+            if not markdown:
+                return
+            seen_source_artifacts.add(section_key)
+            source_artifacts.append(artifact)
+
+        def record_tool_source_artifact(*, agent: object, title: object, trace_id: object, content: object) -> None:
+            artifact = self._build_tool_source_artifact(
+                agent=agent,
+                title=title,
+                trace_id=trace_id,
+                content=content,
+            )
+            if artifact:
+                record_source_artifact(artifact)
 
         def emit_analysis_log(
             message: str,
@@ -1943,6 +2149,7 @@ class AnalysisService:
             emit=emit,
             emit_analysis_log=emit_analysis_log,
             ensure_not_cancelled=ensure_not_cancelled,
+            record_source_artifact=record_source_artifact,
         )
         ensure_not_cancelled()
 
@@ -1951,6 +2158,13 @@ class AnalysisService:
                 return
             phase = str(trace.get("phase") or "analysis")
             telemetry.record_tool_trace(phase, trace.get("title") or trace.get("agent") or "Analysis")
+            if phase == "tool_result":
+                record_tool_source_artifact(
+                    agent=trace.get("agent") or "Analyst",
+                    title=trace.get("title") or "tool",
+                    trace_id=trace.get("trace_id") or trace.get("tool_call_id") or trace.get("title") or "tool",
+                    content=trace.get("content") or "",
+                )
             content = self._trim_text(
                 self.format_tool_result_for_display(trace.get("content") or "")
                 if phase == "tool_result"
@@ -2093,6 +2307,7 @@ class AnalysisService:
                         seen_message_signatures,
                         emit,
                         telemetry,
+                        trace_sink=record_tool_source_artifact,
                     )
                     if final_state.get("messages"):
                         final_state["messages"] = []
@@ -2130,6 +2345,7 @@ class AnalysisService:
             verification_action = str(verification_payload.get("recommended_action") or "").strip()
             elapsed_seconds = round(time.time() - started_at, 2)
             history_id = None
+            final_state["flow_artifacts"] = list(source_artifacts)
             history_sections = build_history_sections(final_state)
             if self.history_store.configured:
                 try:
@@ -2190,6 +2406,7 @@ class AnalysisService:
                     "verification_action": verification_action,
                     "history_id": history_id,
                     "evidence_count": len(final_state.get("evidence_items") or []),
+                    "source_artifact_count": len(source_artifacts),
                     "endpoint_summaries": final_state.get("endpoint_summaries") or endpoint_summaries,
                     "structured": {
                         "investment_plan": final_state.get("investment_plan_structured") or {},
@@ -2225,6 +2442,8 @@ class AnalysisService:
             previous_snapshot.clear()
             previous_status.clear()
             seen_message_signatures.clear()
+            source_artifacts.clear()
+            seen_source_artifacts.clear()
             gc.collect()
 
     async def generate_analysis_stream(

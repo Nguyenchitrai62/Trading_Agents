@@ -301,6 +301,7 @@ class CoinGlassClient:
             response.raise_for_status()
             payload = response.json()
             payload = _maybe_filter_symbol_payload(payload, coin_symbol) if spec.filter_symbol_from_payload else payload
+            result["payload"] = payload
             api_error = _coinglass_api_error(payload)
             result["summary"] = summarize_payload(payload)
             if api_error:

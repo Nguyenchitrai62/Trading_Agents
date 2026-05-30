@@ -1244,6 +1244,112 @@
     }
 }
 
+.history-diagram--vertical {
+    --history-node-width: minmax(118px, 148px);
+    --history-node-height: 58px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: stretch;
+    align-items: start;
+    gap: 0;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    padding: 2px 0 6px;
+}
+
+.history-diagram--vertical .history-diagram-stage-slot {
+    width: 100%;
+    justify-items: stretch;
+}
+
+.history-diagram--vertical .history-diagram-group {
+    width: 100%;
+    max-width: none;
+    padding-top: 18px;
+}
+
+.history-diagram--vertical .history-diagram-label {
+    top: 0;
+}
+
+.history-diagram--vertical .history-diagram-signal-grid,
+.history-diagram--vertical .history-diagram-cluster-grid,
+.history-diagram--vertical .history-diagram-single {
+    width: 100%;
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+    justify-items: stretch;
+}
+
+.history-diagram--vertical .history-diagram-source-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    gap: 10px;
+    width: 100%;
+}
+
+.history-diagram-source-column {
+    display: grid;
+    align-content: start;
+    gap: 7px;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.026);
+}
+
+.history-diagram-source-label {
+    color: var(--muted);
+    font-size: 0.64rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.history-diagram-source-list {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.history-diagram--vertical .history-diagram-node,
+.history-diagram--vertical .history-diagram-node--compact,
+.history-diagram--vertical .history-diagram-node--output {
+    width: 100%;
+    min-width: 0;
+    height: var(--history-node-height);
+    min-height: var(--history-node-height);
+    border-radius: 12px;
+}
+
+.history-diagram--vertical .history-diagram-node::before,
+.history-diagram--vertical .history-diagram-node::after,
+.history-diagram--vertical .history-diagram-signal-lane::after,
+.history-diagram--vertical .history-diagram-cluster::before,
+.history-diagram--vertical .history-diagram-cluster::after,
+.history-diagram--vertical .history-diagram-cluster--research::before,
+.history-diagram--vertical .history-diagram-cluster--research::after {
+    display: none;
+}
+
+.history-diagram--vertical .history-diagram-cluster,
+.history-diagram--vertical .history-diagram-cluster--research,
+.history-diagram--vertical .history-diagram-cluster--risk {
+    width: 100%;
+    max-width: none;
+    border-radius: 12px;
+}
+
+.history-diagram-vertical-connector {
+    justify-self: center;
+    width: 2px;
+    height: 22px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(95, 226, 194, 0.24), rgba(95, 226, 194, 0.78), rgba(156, 200, 255, 0.22));
+    box-shadow: 0 0 14px rgba(95, 226, 194, 0.26);
+}
+
 .history-section {
     padding: 14px;
     border: 1px solid var(--line);

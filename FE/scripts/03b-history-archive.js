@@ -222,15 +222,31 @@ function renderHistoryCurveWire(paths = [], className = "", viewBox = "0 0 100 1
 function buildHistoryDiagramModel(sections = []) {
     const sectionsByKey = new Map(sections.map((section) => [section.section_key, section]));
     const knownKeys = new Set(Object.values(HISTORY_FLOW_SECTION_ORDER).flat());
+    const sourceSections = sections.filter((section) => section.artifact_type === "source" || String(section.section_key || "").startsWith("source_"));
+    const sourceGroups = {
+        ccxt: sourceSections.filter((section) => section.flow_group === "ccxt_market_data"),
+        coinglass: sourceSections.filter((section) => section.flow_group === "coinglass_data"),
+        news: sourceSections.filter((section) => section.flow_group === "news_data"),
+        social: sourceSections.filter((section) => section.flow_group === "social_web_data"),
+        flow: sourceSections.filter((section) => section.flow_group === "flow_data"),
+    };
+    sourceSections.forEach((section) => knownKeys.add(section.section_key));
     return {
+        sourceGroups,
+        endpointSummaries: sectionsByKey.get("endpoint_summaries") || null,
         inputs: HISTORY_FLOW_SECTION_ORDER.inputs.map((key) => sectionsByKey.get(key)).filter(Boolean),
         evidence: sectionsByKey.get("structured_evidence") || null,
         researchNodes: ["bull_research", "research_debate", "bear_research"].map((key) => sectionsByKey.get(key)).filter(Boolean),
         investmentPlan: sectionsByKey.get("investment_plan") || null,
+        investmentExtractor: sectionsByKey.get("investment_plan_structured") || null,
         trader: sectionsByKey.get("trader_investment_plan") || null,
+        traderExtractor: sectionsByKey.get("trader_investment_plan_structured") || null,
         riskNodes: ["aggressive_risk", "neutral_risk", "conservative_risk", "risk_debate"].map((key) => sectionsByKey.get(key)).filter(Boolean),
         manager: sectionsByKey.get("final_trade_decision") || null,
+        decisionExtractor: sectionsByKey.get("final_trade_decision_structured") || null,
         verifier: sectionsByKey.get("verification_report") || null,
+        verifierStructured: sectionsByKey.get("verification_report_structured") || null,
+        persistence: sectionsByKey.get("history_persistence") || null,
         extras: sections.filter((section) => !knownKeys.has(section.section_key)),
     };
 }
@@ -318,6 +334,46 @@ function renderHistoryDiagramSingleGroup(label, key, node, options = {}) {
             </div>
         </section>
     `;
+}
+
+function renderHistoryDiagramSourceColumn(label, key, nodes = [], options = {}) {
+    if (!nodes.length) {
+        return "";
+    }
+    return `
+        <div class="history-diagram-source-column history-diagram-source-column--${escapeHtml(key)}">
+            <span class="history-diagram-source-label">${escapeHtml(label)}</span>
+            <div class="history-diagram-source-list">
+                ${nodes.map((section) => renderHistoryDiagramNode(section, options, { compact: true, shortTitle: section.title || label, tone: HISTORY_FLOW_SECTION_META[section.section_key]?.tone || "evidence" })).join("")}
+            </div>
+        </div>
+    `;
+}
+
+function renderHistoryDiagramSourcesGroup(diagram = {}, options = {}) {
+    const groups = [
+        ["CCXT market data", "ccxt", diagram.sourceGroups?.ccxt || []],
+        ["CoinGlass data", "coinglass", diagram.sourceGroups?.coinglass || []],
+        ["News data", "news", diagram.sourceGroups?.news || []],
+        ["Social / web data", "social", diagram.sourceGroups?.social || []],
+        ["Flow data", "flow", diagram.sourceGroups?.flow || []],
+        ["Endpoint summaries", "endpoint", diagram.endpointSummaries ? [diagram.endpointSummaries] : []],
+    ].filter(([_label, _key, nodes]) => nodes.length);
+    if (!groups.length) {
+        return "";
+    }
+    return `
+        <section class="history-diagram-group history-diagram-group--sources">
+            <span class="history-diagram-label">Parallel endpoint summaries</span>
+            <div class="history-diagram-source-grid">
+                ${groups.map(([label, key, nodes]) => renderHistoryDiagramSourceColumn(label, key, nodes, options)).join("")}
+            </div>
+        </section>
+    `;
+}
+
+function renderHistoryVerticalConnector() {
+    return '<span class="history-diagram-vertical-connector" aria-hidden="true"></span>';
 }
 
 function renderHistoryStageConnector(fromStage = null, toStage = null) {
@@ -592,17 +648,29 @@ function renderHistoryPage() {
         loadingKeys,
     };
     const stages = [];
-    if (diagram.inputs.length) {
+    const sourceMarkup = renderHistoryDiagramSourcesGroup(diagram, diagramOptions);
+    if (sourceMarkup) {
         stages.push({
-            key: "signals",
-            markup: renderHistoryDiagramSignalsGroup(diagram.inputs, diagramOptions),
-            wireCount: diagram.inputs.length,
+            key: "sources",
+            markup: sourceMarkup,
         });
     }
     if (diagram.evidence) {
         stages.push({
             key: "evidence",
             markup: renderHistoryDiagramSingleGroup("Evidence Extractor", "evidence", diagram.evidence, diagramOptions),
+        });
+    }
+    if (diagram.inputs.length) {
+        stages.push({
+            key: "signals",
+            markup: renderHistoryDiagramSignalsGroup(diagram.inputs, diagramOptions),
+        });
+    }
+    if (diagram.evidence) {
+        stages.push({
+            key: "ledger",
+            markup: renderHistoryDiagramSingleGroup("Evidence Ledger", "evidence", diagram.evidence, diagramOptions),
         });
     }
     if (diagram.researchNodes.length) {
@@ -617,10 +685,22 @@ function renderHistoryPage() {
             markup: renderHistoryDiagramSingleGroup("Plan", "plan", diagram.investmentPlan, diagramOptions),
         });
     }
+    if (diagram.investmentExtractor) {
+        stages.push({
+            key: "investment-extractor",
+            markup: renderHistoryDiagramSingleGroup("Investment Extractor", "evidence", diagram.investmentExtractor, diagramOptions),
+        });
+    }
     if (diagram.trader) {
         stages.push({
             key: "trader",
             markup: renderHistoryDiagramSingleGroup("Trader", "trader", diagram.trader, diagramOptions),
+        });
+    }
+    if (diagram.traderExtractor) {
+        stages.push({
+            key: "trader-extractor",
+            markup: renderHistoryDiagramSingleGroup("Trader Extractor", "evidence", diagram.traderExtractor, diagramOptions),
         });
     }
     if (diagram.riskNodes.length) {
@@ -635,10 +715,28 @@ function renderHistoryPage() {
             markup: renderHistoryDiagramSingleGroup("Manager", "portfolio", diagram.manager, diagramOptions),
         });
     }
+    if (diagram.decisionExtractor) {
+        stages.push({
+            key: "decision-extractor",
+            markup: renderHistoryDiagramSingleGroup("Decision Extractor", "evidence", diagram.decisionExtractor, diagramOptions),
+        });
+    }
     if (diagram.verifier) {
         stages.push({
             key: "verifier",
             markup: renderHistoryDiagramSingleGroup("Verifier", "verifier", diagram.verifier, diagramOptions),
+        });
+    }
+    if (diagram.verifierStructured) {
+        stages.push({
+            key: "verifier-payload",
+            markup: renderHistoryDiagramSingleGroup("Verifier Payload", "verifier", diagram.verifierStructured, diagramOptions),
+        });
+    }
+    if (diagram.persistence) {
+        stages.push({
+            key: "persistence",
+            markup: renderHistoryDiagramSingleGroup("Persistence", "verifier", diagram.persistence, diagramOptions),
         });
     }
     elements.historyStatusText.textContent = isSectionLoading
@@ -655,12 +753,11 @@ function renderHistoryPage() {
             Flow appears immediately. Click any block to load only that saved markdown.
         </div>
         <div class="history-diagram-wrap">
-            <div class="history-diagram history-diagram--count-${stages.length}">
+            <div class="history-diagram history-diagram--vertical history-diagram--count-${stages.length}">
                 ${stages.length
                     ? stages
                         .map((stage, index) => {
-                            const nextStage = stages[index + 1] || null;
-                            return `<div class="history-diagram-stage-slot history-diagram-stage-slot--${index} history-diagram-stage-slot--${stage.key}">${stage.markup}</div>${renderHistoryStageConnector(stage, nextStage)}`;
+                            return `<div class="history-diagram-stage-slot history-diagram-stage-slot--${index} history-diagram-stage-slot--${stage.key}">${stage.markup}</div>${index < stages.length - 1 ? renderHistoryVerticalConnector() : ""}`;
                         })
                         .join("")
                     : '<div class="history-empty">No saved flow sections are available for this analysis.</div>'}

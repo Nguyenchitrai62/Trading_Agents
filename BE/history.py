@@ -12,6 +12,7 @@ from .config import SECTION_META, SETTINGS
 from .models import AnalysisRequest
 from tradingagents.agents.utils.decision import compatibility_decision_fields
 from tradingagents.agents.utils.evidence import evidence_items_to_markdown
+from tradingagents.dataflows.endpoint_summary import format_endpoint_summaries_for_prompt
 
 
 class TursoHistoryStore:
@@ -162,6 +163,12 @@ class TursoHistoryStore:
                     title TEXT NOT NULL,
                     agent TEXT NOT NULL,
                     team TEXT NOT NULL,
+                    artifact_type TEXT NOT NULL DEFAULT 'markdown',
+                    flow_stage TEXT,
+                    flow_group TEXT,
+                    source_kind TEXT,
+                    source_key TEXT,
+                    payload_json TEXT,
                     display_order INTEGER NOT NULL,
                     markdown TEXT NOT NULL,
                     created_at TEXT NOT NULL,
@@ -224,6 +231,18 @@ class TursoHistoryStore:
             migration_statements: list[tuple[str, list[object] | None]] = []
             if "section_count" not in run_columns:
                 migration_statements.append(("ALTER TABLE analysis_runs ADD COLUMN section_count INTEGER NOT NULL DEFAULT 0", None))
+            section_columns = self._table_columns("analysis_sections")
+            section_column_defaults = {
+                "artifact_type": "TEXT NOT NULL DEFAULT 'markdown'",
+                "flow_stage": "TEXT",
+                "flow_group": "TEXT",
+                "source_kind": "TEXT",
+                "source_key": "TEXT",
+                "payload_json": "TEXT",
+            }
+            for column_name, column_def in section_column_defaults.items():
+                if column_name not in section_columns:
+                    migration_statements.append((f"ALTER TABLE analysis_sections ADD COLUMN {column_name} {column_def}", None))
             user_columns = self._table_columns("auth_users")
             if "email_verified" not in user_columns:
                 migration_statements.append(("ALTER TABLE auth_users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0", None))
@@ -237,6 +256,7 @@ class TursoHistoryStore:
                 migration_statements.append(("ALTER TABLE auth_users ADD COLUMN history_access_days INTEGER", None))
             if migration_statements:
                 self._execute_many(migration_statements)
+            self._execute("CREATE INDEX IF NOT EXISTS idx_analysis_sections_run_stage ON analysis_sections(run_id, flow_stage, flow_group)")
             self._execute(
                 """
                 UPDATE analysis_runs
@@ -524,12 +544,17 @@ class TursoHistoryStore:
         for index, section in enumerate(clean_sections):
             markdown = str(section.get("markdown") or "").strip()
             section_id = hashlib.sha1(f"{run_id}:{section.get('section_key')}".encode()).hexdigest()
+            payload_json = section.get("payload_json")
+            if payload_json not in (None, "") and not isinstance(payload_json, str):
+                payload_json = json.dumps(payload_json, ensure_ascii=False, sort_keys=True, default=str)
             statements.append(
                 (
                     """
                     INSERT INTO analysis_sections (
-                        id, run_id, section_key, title, agent, team, display_order, markdown, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        id, run_id, section_key, title, agent, team, artifact_type,
+                        flow_stage, flow_group, source_kind, source_key, payload_json,
+                        display_order, markdown, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         section_id,
@@ -538,6 +563,12 @@ class TursoHistoryStore:
                         section.get("title"),
                         section.get("agent"),
                         section.get("team"),
+                        section.get("artifact_type") or "markdown",
+                        section.get("flow_stage"),
+                        section.get("flow_group"),
+                        section.get("source_kind"),
+                        section.get("source_key"),
+                        payload_json,
                         index,
                         markdown,
                         created_at,
@@ -678,7 +709,9 @@ class TursoHistoryStore:
         rows = self._query_rows(
             f"""
             SELECT
-                s.run_id, s.section_key, s.title, s.agent, s.team, s.created_at
+                s.run_id, s.section_key, s.title, s.agent, s.team,
+                s.artifact_type, s.flow_stage, s.flow_group, s.source_kind, s.source_key,
+                s.created_at
             FROM analysis_sections s
             INNER JOIN analysis_runs r ON r.id = s.run_id
             WHERE s.run_id IN ({placeholders})
@@ -698,6 +731,11 @@ class TursoHistoryStore:
                 "title": row.get("title"),
                 "agent": row.get("agent"),
                 "team": row.get("team"),
+                "artifact_type": row.get("artifact_type") or "markdown",
+                "flow_stage": row.get("flow_stage"),
+                "flow_group": row.get("flow_group"),
+                "source_kind": row.get("source_kind"),
+                "source_key": row.get("source_key"),
                 "created_at": row.get("created_at"),
             })
         return grouped
@@ -745,7 +783,7 @@ class TursoHistoryStore:
             return None
         sections = self._query_rows(
             """
-            SELECT section_key, title, agent, team, created_at
+            SELECT section_key, title, agent, team, artifact_type, flow_stage, flow_group, source_kind, source_key, created_at
             FROM analysis_sections
             WHERE run_id = ?
             ORDER BY display_order ASC
@@ -760,7 +798,8 @@ class TursoHistoryStore:
             return None
         sections = self._query_rows(
             """
-            SELECT section_key, title, agent, team, markdown, created_at
+            SELECT section_key, title, agent, team, artifact_type, flow_stage, flow_group,
+                source_kind, source_key, payload_json, markdown, created_at
             FROM analysis_sections
             WHERE run_id = ? AND section_key = ?
             LIMIT 1
@@ -787,7 +826,8 @@ class TursoHistoryStore:
             return None
         sections = self._query_rows(
             """
-            SELECT section_key, title, agent, team, markdown, created_at
+            SELECT section_key, title, agent, team, artifact_type, flow_stage, flow_group,
+                source_kind, source_key, payload_json, markdown, created_at
             FROM analysis_sections
             WHERE run_id = ?
             ORDER BY display_order ASC
@@ -812,7 +852,8 @@ class TursoHistoryStore:
             return None
         sections = self._query_rows(
             """
-            SELECT section_key, title, agent, team, markdown, created_at
+            SELECT section_key, title, agent, team, artifact_type, flow_stage, flow_group,
+                source_kind, source_key, payload_json, markdown, created_at
             FROM analysis_sections
             WHERE run_id = ?
             ORDER BY display_order ASC
@@ -822,53 +863,233 @@ class TursoHistoryStore:
         return {"item": runs[0], "sections": sections}
 
 
+def _history_section(
+    section_key: str,
+    title: str,
+    agent: str,
+    team: str,
+    markdown: object,
+    *,
+    artifact_type: str = "markdown",
+    flow_stage: str | None = None,
+    flow_group: str | None = None,
+    source_kind: str | None = None,
+    source_key: str | None = None,
+    payload_json: object = None,
+) -> dict | None:
+    markdown_text = str(markdown or "").strip()
+    if not markdown_text:
+        return None
+    return {
+        "section_key": section_key,
+        "title": title,
+        "agent": agent,
+        "team": team,
+        "markdown": markdown_text,
+        "artifact_type": artifact_type,
+        "flow_stage": flow_stage,
+        "flow_group": flow_group,
+        "source_kind": source_kind,
+        "source_key": source_key,
+        "payload_json": payload_json,
+    }
+
+
+def _structured_payload_to_markdown(title: str, payload: object) -> str:
+    if not isinstance(payload, dict) or not payload:
+        return ""
+    return "\n".join(
+        [
+            f"# {title}",
+            "",
+            "```json",
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str),
+            "```",
+        ]
+    )
+
+
+def _endpoint_summaries_to_markdown(endpoint_summaries: object) -> str:
+    if not isinstance(endpoint_summaries, list) or not endpoint_summaries:
+        return ""
+    prompt_block = format_endpoint_summaries_for_prompt(endpoint_summaries, limit=max(1, len(endpoint_summaries)))
+    rows = [
+        "| Endpoint | Package | Status | Direction | Confidence | Source |",
+        "| --- | --- | --- | --- | ---: | --- |",
+    ]
+    for item in endpoint_summaries:
+        if not isinstance(item, dict):
+            continue
+        confidence = item.get("confidence")
+        try:
+            confidence_text = f"{float(confidence):.2f}"
+        except (TypeError, ValueError):
+            confidence_text = ""
+        cells = [
+            item.get("title") or item.get("endpoint_name") or "",
+            item.get("package_label") or item.get("package") or "",
+            item.get("status") or "",
+            item.get("direction") or "",
+            confidence_text,
+            item.get("source") or "",
+        ]
+        rows.append("| " + " | ".join(str(value).replace("|", "\\|").replace("\n", " ") for value in cells) + " |")
+    return "\n\n".join(["# Endpoint Summaries", prompt_block, "\n".join(rows)]).strip()
+
+
 def build_history_sections(final_state: dict) -> list[dict]:
     sections: list[dict] = []
-    for section_key, meta in SECTION_META.items():
-        markdown = str(final_state.get(section_key) or "").strip()
-        if markdown:
-            sections.append(
-                {
-                    "section_key": section_key,
-                    "title": meta["title"],
-                    "agent": meta["agent"],
-                    "team": meta["team"],
-                    "markdown": markdown,
-                }
+    seen_keys: set[str] = set()
+
+    def add(section: dict | None) -> None:
+        if not section:
+            return
+        key = str(section.get("section_key") or "").strip()
+        if not key or key in seen_keys:
+            return
+        seen_keys.add(key)
+        sections.append(section)
+
+    for artifact in final_state.get("flow_artifacts") or []:
+        if isinstance(artifact, dict):
+            add(artifact)
+
+    add(
+        _history_section(
+            "endpoint_summaries",
+            "Endpoint Summaries",
+            "Endpoint Summarizer",
+            "Source Layer",
+            _endpoint_summaries_to_markdown(final_state.get("endpoint_summaries") or []),
+            artifact_type="summary",
+            flow_stage="summaries",
+            flow_group="endpoint_summaries",
+            source_kind="summary",
+            source_key="endpoint_summaries",
+            payload_json=final_state.get("endpoint_summaries") or [],
+        )
+    )
+
+    evidence_markdown = evidence_items_to_markdown(final_state.get("evidence_items") or [])
+    add(
+        _history_section(
+            "structured_evidence",
+            "Structured Evidence",
+            "Evidence Extractor",
+            "Verification",
+            evidence_markdown,
+            artifact_type="evidence",
+            flow_stage="evidence",
+            flow_group="evidence_extractor",
+            source_kind="evidence",
+            source_key="structured_evidence",
+            payload_json=final_state.get("evidence_items") or [],
+        )
+    )
+
+    for section_key in ("market_report", "sentiment_report", "news_report", "flow_report"):
+        meta = SECTION_META[section_key]
+        add(
+            _history_section(
+                section_key,
+                meta["title"],
+                meta["agent"],
+                meta["team"],
+                final_state.get(section_key),
+                artifact_type="agent_report",
+                flow_stage="analysts",
+                flow_group="analyst_reports",
+                source_kind="agent_report",
+                source_key=section_key,
             )
+        )
 
     investment = final_state.get("investment_debate_state") or {}
     risk = final_state.get("risk_debate_state") or {}
     extra_sections = [
-        ("bull_research", "Bull Research", "Bull Researcher", "Research Team", investment.get("bull_history")),
-        ("bear_research", "Bear Research", "Bear Researcher", "Research Team", investment.get("bear_history")),
-        ("research_debate", "Research Debate", "Research Team", "Research Team", investment.get("history")),
-        ("aggressive_risk", "Aggressive Risk", "Aggressive Analyst", "Risk Team", risk.get("aggressive_history") or risk.get("current_aggressive_response")),
-        ("conservative_risk", "Conservative Risk", "Conservative Analyst", "Risk Team", risk.get("conservative_history") or risk.get("current_conservative_response")),
-        ("neutral_risk", "Neutral Risk", "Neutral Analyst", "Risk Team", risk.get("neutral_history") or risk.get("current_neutral_response")),
-        ("risk_debate", "Risk Debate", "Risk Team", "Risk Team", risk.get("history")),
+        ("bull_research", "Bull Research", "Bull Researcher", "Research Team", investment.get("bull_history"), "research", "research_debate"),
+        ("bear_research", "Bear Research", "Bear Researcher", "Research Team", investment.get("bear_history"), "research", "research_debate"),
+        ("research_debate", "Research Debate", "Research Team", "Research Team", investment.get("history"), "research", "research_debate"),
+        ("aggressive_risk", "Aggressive Risk", "Aggressive Analyst", "Risk Team", risk.get("aggressive_history") or risk.get("current_aggressive_response"), "risk", "risk_debate"),
+        ("conservative_risk", "Conservative Risk", "Conservative Analyst", "Risk Team", risk.get("conservative_history") or risk.get("current_conservative_response"), "risk", "risk_debate"),
+        ("neutral_risk", "Neutral Risk", "Neutral Analyst", "Risk Team", risk.get("neutral_history") or risk.get("current_neutral_response"), "risk", "risk_debate"),
+        ("risk_debate", "Risk Debate", "Risk Team", "Risk Team", risk.get("history"), "risk", "risk_debate"),
     ]
-    for section_key, title, agent, team, markdown in extra_sections:
-        markdown = str(markdown or "").strip()
-        if markdown:
-            sections.append(
-                {
-                    "section_key": section_key,
-                    "title": title,
-                    "agent": agent,
-                    "team": team,
-                    "markdown": markdown,
-                }
+    for section_key, title, agent, team, markdown, flow_stage, flow_group in extra_sections:
+        add(
+            _history_section(
+                section_key,
+                title,
+                agent,
+                team,
+                markdown,
+                artifact_type="agent_report",
+                flow_stage=flow_stage,
+                flow_group=flow_group,
+                source_kind="agent_report",
+                source_key=section_key,
             )
-    evidence_markdown = evidence_items_to_markdown(final_state.get("evidence_items") or [])
-    if evidence_markdown:
-        sections.append(
-            {
-                "section_key": "structured_evidence",
-                "title": "Structured Evidence",
-                "agent": "Evidence Extractor",
-                "team": "Verification",
-                "markdown": evidence_markdown,
-            }
         )
+
+    for section_key in ("investment_plan", "trader_investment_plan", "final_trade_decision", "verification_report"):
+        meta = SECTION_META[section_key]
+        add(
+            _history_section(
+                section_key,
+                meta["title"],
+                meta["agent"],
+                meta["team"],
+                final_state.get(section_key),
+                artifact_type="agent_report",
+                flow_stage="decision",
+                flow_group=section_key,
+                source_kind="agent_report",
+                source_key=section_key,
+            )
+        )
+
+    structured_sections = [
+        ("investment_plan_structured", "Investment Plan Extractor", "Investment Plan Extractor", "Research Team", final_state.get("investment_plan_structured")),
+        ("trader_investment_plan_structured", "Trader Plan Extractor", "Trader Plan Extractor", "Trading Team", final_state.get("trader_investment_plan_structured")),
+        ("final_trade_decision_structured", "Decision Extractor", "Decision Extractor", "Portfolio Management", final_state.get("final_trade_decision_structured")),
+        ("verification_report_structured", "Verifier Structured Payload", "Verifier", "Portfolio Management", final_state.get("verification_report_structured")),
+    ]
+    for section_key, title, agent, team, payload in structured_sections:
+        add(
+            _history_section(
+                section_key,
+                title,
+                agent,
+                team,
+                _structured_payload_to_markdown(title, payload),
+                artifact_type="structured_payload",
+                flow_stage="extraction",
+                flow_group=section_key,
+                source_kind="structured_payload",
+                source_key=section_key,
+                payload_json=payload or {},
+            )
+        )
+    add(
+        _history_section(
+            "history_persistence",
+            "History + Decision Persistence",
+            "History Store",
+            "Persistence",
+            "\n".join(
+                [
+                    "# History + Decision Persistence",
+                    "",
+                    "- Markdown/source sections were prepared from runtime state, source artifacts, debates, and final reports.",
+                    "- Structured decision and verification payloads were prepared from `final_trade_decision_structured` and `verification_report_structured`.",
+                    "- Numeric compatibility fields are written only when the structured decision passes validation.",
+                ]
+            ),
+            artifact_type="persistence",
+            flow_stage="persistence",
+            flow_group="history_persistence",
+            source_kind="persistence",
+            source_key="history_persistence",
+        )
+    )
     return sections

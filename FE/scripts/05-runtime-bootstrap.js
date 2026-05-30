@@ -332,6 +332,7 @@ function handleServerEvent(event, data) {
         state.run.risk = mergeStatePatch(state.run.risk, data.risk_patch || data.risk || {});
         state.run.endpointSummaries = data.endpoint_summaries || state.run.endpointSummaries || [];
         state.run.evidenceCount = Number(data.evidence_count || state.run.evidenceCount || 0);
+        state.run.sourceArtifactCount = Number(data.source_artifact_count || state.run.sourceArtifactCount || 0);
         state.run.structured = {
             ...(state.run.structured || {}),
             ...(data.structured || {}),

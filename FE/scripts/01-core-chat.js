@@ -104,15 +104,21 @@ const DETAIL_PANEL_META = {
     traderExtractor: { title: "Trader Plan Extractor", subtitle: "Structured handoff" },
     decisionExtractor: { title: "Decision Extractor", subtitle: "Structured order fields" },
     verifierStructured: { title: "Verifier Payload", subtitle: "Structured verification" },
+    liveCcxtData: { title: "CCXT Market Data", subtitle: "Raw market tool results" },
+    liveCoinGlassData: { title: "CoinGlass Data", subtitle: "Endpoint source results" },
+    liveNewsData: { title: "News Data", subtitle: "News and web source results" },
+    liveSocialData: { title: "Social / Web Data", subtitle: "Social and web source results" },
+    liveFlowData: { title: "Flow Data", subtitle: "Flow and liquidity source results" },
 };
 
 const HISTORY_FLOW_SECTION_ORDER = {
+    sources: ["endpoint_summaries"],
     inputs: ["market_report", "sentiment_report", "news_report", "flow_report"],
     evidence: ["structured_evidence"],
-    research: ["bull_research", "research_debate", "bear_research", "investment_plan"],
-    trading: ["trader_investment_plan"],
+    research: ["bull_research", "research_debate", "bear_research", "investment_plan", "investment_plan_structured"],
+    trading: ["trader_investment_plan", "trader_investment_plan_structured"],
     risk: ["aggressive_risk", "neutral_risk", "conservative_risk", "risk_debate"],
-    portfolio: ["final_trade_decision", "verification_report"],
+    portfolio: ["final_trade_decision", "final_trade_decision_structured", "verification_report", "verification_report_structured", "history_persistence"],
 };
 
 const HISTORY_FLOW_SECTION_META = {
@@ -145,6 +151,12 @@ const HISTORY_FLOW_SECTION_META = {
         tone: "evidence",
         icon: "evidence",
         description: "Evidence Extractor ledger built from compact source-backed items.",
+    },
+    endpoint_summaries: {
+        shortTitle: "Endpoint Summaries",
+        tone: "evidence",
+        icon: "evidence",
+        description: "Parallel endpoint summary layer prepared before downstream prompts.",
     },
     bull_research: {
         shortTitle: "Bullish",
@@ -212,6 +224,36 @@ const HISTORY_FLOW_SECTION_META = {
         icon: "verify",
         description: "Deterministic and evidence-based verification after the final order plan.",
     },
+    investment_plan_structured: {
+        shortTitle: "Investment Extract",
+        tone: "evidence",
+        icon: "evidence",
+        description: "Structured fields extracted from the Research Manager plan.",
+    },
+    trader_investment_plan_structured: {
+        shortTitle: "Trader Extract",
+        tone: "evidence",
+        icon: "evidence",
+        description: "Structured fields extracted from the Trader proposal.",
+    },
+    final_trade_decision_structured: {
+        shortTitle: "Decision Extract",
+        tone: "evidence",
+        icon: "evidence",
+        description: "Structured order fields extracted from the Portfolio Manager prose.",
+    },
+    verification_report_structured: {
+        shortTitle: "Verifier Payload",
+        tone: "review",
+        icon: "verify",
+        description: "Structured verification payload saved with the run.",
+    },
+    history_persistence: {
+        shortTitle: "Persistence",
+        tone: "review",
+        icon: "verify",
+        description: "History and structured decision persistence record for this run.",
+    },
 };
 
 const HISTORY_DIAGRAM_ICONS = {
@@ -262,6 +304,7 @@ function createEmptyRunState() {
         endpointSummaries: [],
         evidenceItems: [],
         evidenceCount: 0,
+        sourceArtifactCount: 0,
         structured: {},
         seenLogFingerprints: new Set(),
         seenStreamFingerprints: new Set(),
