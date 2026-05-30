@@ -37,9 +37,9 @@ def create_market_analyst(llm):
 
         crypto_tool_instruction = (
             " Use `get_crypto_ohlcv` for market structure and `get_crypto_indicators` for technical signals."
-            " Choose the timeframe that best fits the analysis question; the backend fetches the full active lookback window"
-            " at the requested timeframe and paginates exchange requests when needed."
-            " Use multiple timeframes when that materially improves confirmation of trend, volatility, or liquidity structure."
+            " The backend automatically selects the most granular timeframe that keeps the active lookback under 200 rows"
+            " from 5m, 15m, 1h, 4h, 1d, 1w, and 1M, then paginates exchange requests when needed."
+            " Treat any timeframe argument as a hint only; rely on the auto-selected timeframe shown in the tool result."
             " For indicators, the backend may fetch extra candles on that same requested timeframe when a long-window calculation"
             " needs more history, so long-window signals like `close_200_sma` can still be computed without changing timeframe."
             " Use the exact indicator names from the list above, such as `close_10_ema`, `close_50_sma`, `close_200_sma`, `rsi`, `macd`, `boll`, `atr`, `vwma`, and `mfi`."

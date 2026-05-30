@@ -65,6 +65,7 @@ _CRYPTO_INDICATOR_DESCRIPTIONS = {
 }
 
 _CRYPTO_TIMEFRAME_MINUTES = {
+    "5m": 5,
     "15m": 15,
     "30m": 30,
     "1h": 60,
@@ -74,8 +75,12 @@ _CRYPTO_TIMEFRAME_MINUTES = {
     "8h": 480,
     "12h": 720,
     "1d": 1440,
+    "1w": 10080,
+    "1M": 43200,
 }
 
+_CRYPTO_TIMEFRAME_SELECTION_ORDER = ("5m", "15m", "1h", "4h", "1d", "1w", "1M")
+_CRYPTO_MAX_AUTO_ROWS = 199
 _CRYPTO_OHLCV_PREVIEW_ROWS = 18
 _CRYPTO_INDICATOR_PREVIEW_ROWS = 12
 _BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
@@ -151,34 +156,52 @@ def _coerce_positive_int(value: object, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
-def _select_crypto_window(
-    lookback_days: int,
-    available_timeframes: dict | None,
-    requested_timeframe: str,
-) -> dict[str, int | str]:
+def _supported_crypto_timeframes(available_timeframes: dict | None) -> list[str]:
     supported = [
         timeframe
-        for timeframe in _CRYPTO_TIMEFRAME_MINUTES
+        for timeframe in _CRYPTO_TIMEFRAME_SELECTION_ORDER
         if timeframe in (available_timeframes or {})
     ]
     if not supported:
         raise ValueError("No supported crypto timeframes are available for OHLCV fetching.")
+    return supported
 
-    normalized_timeframe = requested_timeframe.strip().lower() or "1h"
-    if normalized_timeframe not in supported:
-        supported_examples = ", ".join(supported)
-        raise ValueError(
-            f"Timeframe '{requested_timeframe}' is not available. Supported exchange timeframes: {supported_examples}"
-        )
-
+def _expected_candle_limit(lookback_days: int, timeframe: str) -> int:
     lookback_minutes = max(1, lookback_days) * 24 * 60
-    minutes = _CRYPTO_TIMEFRAME_MINUTES[normalized_timeframe]
-    candle_limit = max(1, math.ceil(lookback_minutes / minutes))
+    minutes = _CRYPTO_TIMEFRAME_MINUTES[timeframe]
+    return max(1, math.ceil(lookback_minutes / minutes))
+
+
+def _select_crypto_window(
+    lookback_days: int,
+    available_timeframes: dict | None,
+    requested_timeframe: str,
+) -> dict[str, int | str | bool]:
+    supported = _supported_crypto_timeframes(available_timeframes)
+    row_candidates = [
+        (_expected_candle_limit(lookback_days, timeframe), timeframe)
+        for timeframe in supported
+    ]
+    eligible = [
+        (rows, timeframe)
+        for rows, timeframe in row_candidates
+        if rows <= _CRYPTO_MAX_AUTO_ROWS
+    ]
+    if eligible:
+        candle_limit, selected_timeframe = max(eligible, key=lambda item: item[0])
+    else:
+        selected_timeframe = supported[-1]
+        candle_limit = _expected_candle_limit(lookback_days, selected_timeframe)
+
+    minutes = _CRYPTO_TIMEFRAME_MINUTES[selected_timeframe]
     return {
         "lookback_days": lookback_days,
-        "timeframe": normalized_timeframe,
+        "timeframe": selected_timeframe,
         "limit": candle_limit,
         "minutes": minutes,
+        "auto_timeframe": True,
+        "auto_max_rows": _CRYPTO_MAX_AUTO_ROWS,
+        "requested_timeframe_hint": requested_timeframe,
     }
 
 
@@ -567,10 +590,11 @@ def get_crypto_ohlcv(
         header = [
             f"# Crypto OHLCV for {market_symbol} from {exchange_name}",
             (
-                "# Applied analysis window: "
+                "# Auto-selected analysis window: "
                 f"{policy['timeframe']} x {policy['analysis_limit']} candles "
                 f"for lookback {policy['lookback_days']} day(s)"
             ),
+            f"# Auto timeframe max rows: {policy.get('auto_max_rows', _CRYPTO_MAX_AUTO_ROWS)}",
             f"# Requested window hint: {timeframe} x {limit}",
             f"# Timeframe: {policy['timeframe']}",
             f"# Total candles: {len(frame)}",
@@ -649,10 +673,11 @@ def get_crypto_indicators(
                     [
                         f"## {item} for {market_symbol} on {exchange_name} ({policy['timeframe']})",
                         (
-                            "Applied analysis window: "
+                            "Auto-selected analysis window: "
                             f"{policy['timeframe']} x {policy['analysis_limit']} candles "
                             f"for lookback {policy['lookback_days']} day(s)"
                         ),
+                        f"Auto timeframe max rows: {policy.get('auto_max_rows', _CRYPTO_MAX_AUTO_ROWS)}",
                         f"Indicator computation fetch depth: {policy['fetch_limit']} candles",
                         f"Indicator output window: {plan['output_limit']} candles",
                         f"Requested window hint: {timeframe} x {limit}",

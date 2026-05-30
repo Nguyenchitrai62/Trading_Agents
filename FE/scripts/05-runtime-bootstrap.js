@@ -123,6 +123,7 @@ const elements = {
     customLanguageInput: document.getElementById("customLanguageInput"),
     analystOptions: document.getElementById("analystOptions"),
     depthOptions: document.getElementById("depthOptions"),
+    configPreview: document.getElementById("configPreview"),
     modelSelect: document.getElementById("modelSelect"),
 };
 
@@ -204,9 +205,12 @@ function handleServerEvent(event, data) {
         state.run.meta = data;
         state.run.status = data.initial_status || null;
         state.run.lastTrackedAgent = data.initial_status?.current_agent || null;
+        const depthLabel = data.effective_research_depth && data.effective_research_depth !== data.research_depth
+            ? `${data.research_depth}/${data.effective_research_depth}`
+            : data.research_depth;
         pushStreamFeed({
             title: "Analysis initialized",
-            content: compactText(`${data.symbol} - ${data.asset_type} - ${data.research_depth} depth - ${data.model}`),
+            content: compactText(`${data.symbol} - ${data.asset_type} - ${depthLabel} depth - ${data.model}`),
             tone: "progress",
         });
         renderAll();
@@ -493,8 +497,8 @@ async function runAnalysis() {
     }
 
     const payload = readConfigForm();
-    if (!payload.symbol || !payload.analysis_date || !payload.model) {
-        throw new Error("Symbol, analysis date and model are required.");
+    if (!payload.symbol || !payload.model) {
+        throw new Error("Symbol and model are required.");
     }
 
     if (state.isBusy) {

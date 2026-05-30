@@ -333,10 +333,7 @@
                         <span>Symbol</span>
                         <input id="symbolInput" type="text" placeholder="BTC-USDT">
                     </label>
-                    <label class="field">
-                        <span>Analysis date</span>
-                        <input id="analysisDateInput" type="date">
-                    </label>
+                    <input id="analysisDateInput" type="hidden">
                     <label class="field">
                         <span>Window preset</span>
                         <select id="lookbackPresetSelect"></select>
@@ -370,13 +367,15 @@
                         <div id="analystOptions" class="checkbox-grid compact-option-grid"></div>
                     </section>
 
-                    <section class="config-section compact-config-section">
+                    <section class="config-section compact-config-section hidden" aria-hidden="true">
                         <div class="config-section-header compact-section-header">
                             <h3>Research depth</h3>
                         </div>
                         <div id="depthOptions" class="depth-grid compact-depth-grid"></div>
                     </section>
                 </div>
+
+                <aside id="configPreview" class="config-preview compact-config-preview" aria-label="Run snapshot"></aside>
 
                 <div class="modal-actions">
                     <button id="saveConfigButton" type="button" class="button secondary">Apply</button>

@@ -16,6 +16,7 @@ from copy import deepcopy
 
 from anthropic import AsyncAnthropic
 from fastapi import HTTPException, Request
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 
 from .config import RESEARCH_DEPTH_OPTIONS, SECTION_META, BackendSettings, logger, resolve_minimax_settings
@@ -110,6 +111,51 @@ class AnalysisLoggingHandler(logging.Handler):
             self.emit_log(self.format(record), "backend_log", level)
         except Exception:
             self.handleError(record)
+
+
+class AnalysisTelemetry:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.model_calls = 0
+        self.tool_calls = 0
+        self.tool_results = 0
+        self.web_search_calls = 0
+
+    def record_model_call(self) -> None:
+        with self._lock:
+            self.model_calls += 1
+
+    def record_tool_trace(self, phase: str, title: object) -> None:
+        normalized_phase = str(phase or "").strip().lower()
+        normalized_title = str(title or "").strip()
+        with self._lock:
+            if normalized_phase == "tool_call":
+                self.tool_calls += 1
+                if normalized_title == "web_search":
+                    self.web_search_calls += 1
+            elif normalized_phase == "tool_result":
+                self.tool_results += 1
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "model_calls": self.model_calls,
+                "tool_calls": self.tool_calls,
+                "tool_results": self.tool_results,
+                "web_search_calls": self.web_search_calls,
+            }
+
+
+class AnalysisTelemetryCallback(BaseCallbackHandler):
+    def __init__(self, telemetry: AnalysisTelemetry) -> None:
+        super().__init__()
+        self.telemetry = telemetry
+
+    def on_llm_start(self, *args, **kwargs) -> None:
+        self.telemetry.record_model_call()
+
+    def on_chat_model_start(self, *args, **kwargs) -> None:
+        self.telemetry.record_model_call()
 
 
 STATE_UPDATE_KEYS = {
@@ -409,8 +455,11 @@ class AnalysisService:
 
     def build_analysis_runtime_profile(self, request: AnalysisRequest) -> dict:
         depth_config = RESEARCH_DEPTH_OPTIONS[request.research_depth]
+        effective_depth = str(depth_config.get("effective_depth") or request.research_depth)
         requested_rounds = depth_config["rounds"]
         return {
+            "requested_depth": request.research_depth,
+            "effective_depth": effective_depth,
             "requested_rounds": requested_rounds,
             "effective_rounds": requested_rounds,
             "llm_max_tokens": self.settings.analysis_llm_max_tokens,
@@ -858,6 +907,7 @@ class AnalysisService:
                 "minimax_mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
                 "checkpoint_enabled": request.checkpoint_enabled,
                 "memory_log_path": None,
+                "historical_decision_context_enabled": False,
                 "persist_analysis_artifacts": False,
             }
         )
@@ -1327,6 +1377,7 @@ class AnalysisService:
         current_agent: str | None,
         seen_signatures: set[str],
         emit: Callable[[str, dict], None],
+        telemetry: AnalysisTelemetry | None = None,
     ) -> None:
         for message in messages:
             signature = self._build_message_signature(message)
@@ -1350,6 +1401,8 @@ class AnalysisService:
                 )
                 if not content:
                     continue
+                if telemetry is not None:
+                    telemetry.record_tool_trace("tool_result", tool_name)
                 emit(
                     "agent_trace",
                     {
@@ -1368,6 +1421,8 @@ class AnalysisService:
                     for tool_call in tool_calls:
                         tool_name = str(tool_call.get("name") or "tool")
                         trace_id = str(tool_call.get("id") or tool_name)
+                        if telemetry is not None:
+                            telemetry.record_tool_trace("tool_call", tool_name)
                         emit(
                             "agent_trace",
                             {
@@ -1707,6 +1762,8 @@ class AnalysisService:
         run_started_at = time.time()
         symbol = self.normalize_ticker_symbol(request.symbol)
         runtime_profile = self.build_analysis_runtime_profile(request)
+        telemetry = AnalysisTelemetry()
+        telemetry_callback = AnalysisTelemetryCallback(telemetry)
 
         def emit_analysis_log(
             message: str,
@@ -1771,6 +1828,7 @@ class AnalysisService:
                 "asset_type": asset_type,
                 "output_language": request.output_language,
                 "research_depth": request.research_depth,
+                "effective_research_depth": runtime_profile["effective_depth"],
                 "depth_rounds": runtime_profile["effective_rounds"],
                 "mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
                 "model": request.model,
@@ -1804,6 +1862,7 @@ class AnalysisService:
             selected_analysts=filtered_analysts,
             lookback_days=request.lookback_days,
             research_depth=request.research_depth,
+            effective_research_depth=runtime_profile["effective_depth"],
             effective_depth_rounds=runtime_profile["effective_rounds"],
             mcp_max_tool_rounds=runtime_profile["mcp_max_tool_rounds"],
             llm_max_tokens=runtime_profile["llm_max_tokens"],
@@ -1840,6 +1899,7 @@ class AnalysisService:
             if cancel_event.is_set():
                 return
             phase = str(trace.get("phase") or "analysis")
+            telemetry.record_tool_trace(phase, trace.get("title") or trace.get("agent") or "Analysis")
             content = self._trim_text(
                 self.format_tool_result_for_display(trace.get("content") or "")
                 if phase == "tool_result"
@@ -1870,7 +1930,12 @@ class AnalysisService:
             mcp_max_tool_rounds=runtime_profile["mcp_max_tool_rounds"],
             max_tokens=runtime_profile["llm_max_tokens"],
         )
-        graph = TradingAgentsGraph(selected_analysts=filtered_analysts, debug=False, config=config)
+        graph = TradingAgentsGraph(
+            selected_analysts=filtered_analysts,
+            debug=False,
+            config=config,
+            callbacks=[telemetry_callback],
+        )
 
         ensure_not_cancelled()
         graph.ticker = symbol
@@ -1920,11 +1985,15 @@ class AnalysisService:
         seen_message_signatures: set[str] = set()
         try:
             ensure_not_cancelled()
-            if config.get("memory_log_path"):
+            if config.get("historical_decision_context_enabled") and config.get("memory_log_path"):
                 emit_analysis_log("Loading past context from memory log.", "memory")
                 past_context = graph.memory_log.get_past_context(symbol)
             else:
-                emit_analysis_log("Persistent memory log disabled for stateless API run.", "memory")
+                emit_analysis_log(
+                    "Historical decision context disabled for stateless realtime API run.",
+                    "memory",
+                    future_ready=True,
+                )
                 past_context = ""
             ensure_not_cancelled()
             emit_analysis_log("Creating initial graph state.", "graph_setup")
@@ -1970,6 +2039,7 @@ class AnalysisService:
                         current_agent,
                         seen_message_signatures,
                         emit,
+                        telemetry,
                     )
                     if final_state.get("messages"):
                         final_state["messages"] = []
@@ -2017,6 +2087,9 @@ class AnalysisService:
                         signal=signal,
                         elapsed_seconds=elapsed_seconds,
                         sections=history_sections,
+                        decision_payload=final_state.get("final_trade_decision_structured") or {},
+                        verification_payload=verification_payload,
+                        current_price=final_state.get("verification_reference_price"),
                     )
                     if history_id:
                         emit_analysis_log(
@@ -2043,6 +2116,7 @@ class AnalysisService:
                 signal=signal,
                 verification_verdict=verification_verdict,
                 elapsed_seconds=elapsed_seconds,
+                telemetry=telemetry.snapshot(),
             )
             if verification_verdict and verification_verdict.lower() != "approved":
                 emit(
@@ -2063,6 +2137,7 @@ class AnalysisService:
                     "verification_action": verification_action,
                     "history_id": history_id,
                     "evidence_count": len(final_state.get("evidence_items") or []),
+                    "telemetry": telemetry.snapshot(),
                     "sections_patch": completed_sections_patch,
                     "research_patch": completed_research_patch,
                     "risk_patch": completed_risk_patch,

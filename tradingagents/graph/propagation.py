@@ -68,6 +68,8 @@ class Propagator:
             "trader_investment_plan_structured": {},
             "final_trade_decision_structured": {},
             "verification_report_structured": {},
+            "verification_reference_price": None,
+            "verification_reference_price_source": "",
         }
 
     def get_graph_args(self, callbacks: Optional[List] = None) -> Dict[str, Any]:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -8,18 +8,22 @@ from pydantic import BaseModel, Field, field_validator
 from .config import SETTINGS
 
 
+def realtime_analysis_date() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
 class AnalysisRequest(BaseModel):
     symbol: str = Field(min_length=1)
     asset_type: Literal["crypto"] = SETTINGS.default_asset_type
     run_id: str | None = Field(default=None, max_length=120)
-    analysis_date: str = Field(default_factory=lambda: date.today().isoformat())
+    analysis_date: str = Field(default_factory=realtime_analysis_date)
     lookback_days: int = Field(default=SETTINGS.default_analysis_lookback_days, ge=1)
     output_language: str = Field(default=SETTINGS.default_output_language)
     selected_analysts: list[Literal["market", "social", "news", "fundamentals"]] = Field(
         default_factory=lambda: list(SETTINGS.default_selected_analysts),
         min_length=1,
     )
-    research_depth: Literal["quick", "medium", "deep"] = SETTINGS.default_research_depth
+    research_depth: Literal["auto", "quick", "medium", "deep"] = SETTINGS.default_research_depth
     model: str = Field(default=SETTINGS.default_model, min_length=1)
     checkpoint_enabled: bool = SETTINGS.default_checkpoint_enabled
 
@@ -44,11 +48,7 @@ class AnalysisRequest(BaseModel):
     @field_validator("analysis_date")
     @classmethod
     def validate_analysis_date(cls, value: str) -> str:
-        try:
-            datetime.strptime(value, "%Y-%m-%d")
-        except ValueError as exc:
-            raise ValueError("analysis_date must be in YYYY-MM-DD format") from exc
-        return value
+        return realtime_analysis_date()
 
     @field_validator("output_language")
     @classmethod

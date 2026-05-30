@@ -4,7 +4,7 @@
 
 function getSelectedDepth() {
     const checked = elements.depthOptions.querySelector('input[name="researchDepth"]:checked');
-    return checked ? checked.value : state.config?.analysis_defaults?.research_depth || "quick";
+    return checked ? checked.value : state.config?.analysis_defaults?.research_depth || "auto";
 }
 
 function getOutputLanguage() {
@@ -71,6 +71,7 @@ function refreshConfigUi() {
     syncLanguageControls();
     syncLookbackPreset();
     syncAnalystAvailability();
+    renderConfigPreview();
     renderTopNotice();
     if (!state.isBusy) {
         renderTeamStatusGrid();
@@ -240,21 +241,199 @@ function renderProgress() {
     }
 }
 
+function getAnalysisDepthLabel(source = {}) {
+    const requested = String(source.research_depth || "auto").trim() || "auto";
+    const effective = String(source.effective_research_depth || source.effective_depth || "").trim();
+    if (effective && effective !== requested) {
+        return `${requested} / ${effective}`;
+    }
+    return requested;
+}
+
+function getConfigAnalystLabel(value) {
+    const analyst = state.config?.analysis_options?.analysts?.find((item) => item.value === value);
+    return analyst?.label || value;
+}
+
+function renderConfigPreview() {
+    if (!(elements.configPreview instanceof HTMLElement)) {
+        return;
+    }
+
+    const payload = getConfigSnapshot();
+    if (!payload) {
+        elements.configPreview.innerHTML = '<div class="config-preview-empty">Loading config.</div>';
+        return;
+    }
+
+    const depthOption = state.config?.analysis_options?.research_depths?.find((item) => item.value === payload.research_depth);
+    const effectiveDepth = depthOption?.effective_depth && depthOption.effective_depth !== payload.research_depth
+        ? ` / ${depthOption.effective_depth}`
+        : "";
+    const analysts = (payload.selected_analysts || []).map(getConfigAnalystLabel);
+    const lookbackLabel = payload.lookback_days ? `${payload.lookback_days}d` : "-";
+
+    elements.configPreview.innerHTML = `
+        <div class="config-preview-header">
+            <span>Run Snapshot</span>
+            <strong>${escapeHtml(payload.symbol || "-")}</strong>
+        </div>
+        <div class="config-summary-grid">
+            <div class="config-summary-chip">
+                <span>Lookback</span>
+                <strong>${escapeHtml(lookbackLabel)}</strong>
+            </div>
+            <div class="config-summary-chip">
+                <span>Depth</span>
+                <strong>${escapeHtml(`${payload.research_depth || "auto"}${effectiveDepth}`)}</strong>
+            </div>
+            <div class="config-summary-chip">
+                <span>Model</span>
+                <strong>${escapeHtml(payload.model || "-")}</strong>
+            </div>
+            <div class="config-summary-chip">
+                <span>Language</span>
+                <strong>${escapeHtml(payload.output_language || "-")}</strong>
+            </div>
+        </div>
+        <div class="config-summary-note">
+            <span>Analysts</span>
+            <strong>${escapeHtml(analysts.join(", ") || "-")}</strong>
+        </div>
+    `;
+}
+
+function getFlowSectionOrder() {
+    return [
+        ...(HISTORY_FLOW_SECTION_ORDER.inputs || []),
+        ...(HISTORY_FLOW_SECTION_ORDER.research || []),
+        ...(HISTORY_FLOW_SECTION_ORDER.trading || []),
+        ...(HISTORY_FLOW_SECTION_ORDER.risk || []),
+        ...(HISTORY_FLOW_SECTION_ORDER.portfolio || []),
+    ];
+}
+
+function getFlowSectionTitle(sectionKey) {
+    return HISTORY_FLOW_SECTION_META[sectionKey]?.shortTitle
+        || sectionKey.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function renderFlowMetric(label, value, tone = "") {
+    const normalizedValue = value === 0 ? "0" : value || "-";
+    return `
+        <div class="flow-metric ${tone ? `flow-metric-${escapeHtml(tone)}` : ""}">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(String(normalizedValue))}</strong>
+        </div>
+    `;
+}
+
+function renderFlowSectionList() {
+    return getFlowSectionOrder()
+        .map((sectionKey) => {
+            const hasContent = Boolean(String(state.run.sections?.[sectionKey] || "").trim());
+            const title = getFlowSectionTitle(sectionKey);
+            const baseClass = `flow-section-item ${hasContent ? "is-ready detail-trigger" : "is-pending"}`;
+            const dataset = hasContent
+                ? `data-detail-section="${escapeHtml(sectionKey)}" data-detail-title="${escapeHtml(title)}" data-detail-subtitle="Agent report"`
+                : "";
+            const tag = hasContent ? "button" : "span";
+            const typeAttr = hasContent ? ' type="button"' : "";
+            return `
+                <${tag}${typeAttr} class="${baseClass}" ${dataset}>
+                    <span class="flow-section-dot" aria-hidden="true"></span>
+                    <span>${escapeHtml(title)}</span>
+                </${tag}>
+            `;
+        })
+        .join("");
+}
+
+function renderFlowInspectorMarkup() {
+    const meta = state.run.meta || getConfigSnapshot() || {};
+    const progress = state.run.status?.progress || { completed: 0, total: 0, percent: 0 };
+    const complete = state.run.complete || {};
+    const telemetry = complete.telemetry || {};
+    const completedSections = getFlowSectionOrder().filter((key) => String(state.run.sections?.[key] || "").trim()).length;
+    const totalSections = getFlowSectionOrder().length;
+    const progressText = progress.total ? `${progress.completed}/${progress.total}` : state.run.complete ? "Done" : "-";
+    const signal = complete.signal || (state.run.cancelled ? "Stopped" : state.isBusy ? "Running" : "Pending");
+    const verdict = complete.verification_verdict || "-";
+    const warningItems = state.run.warnings.slice(0, 2);
+    const latestTool = [...state.run.traceFeed].reverse().find((item) => isToolTracePhase(item.phase));
+
+    return `
+        <div class="flow-inspector-header">
+            <span>Flow Snapshot</span>
+            <strong>${escapeHtml(signal)}</strong>
+        </div>
+        <div class="flow-metric-grid">
+            ${renderFlowMetric("Progress", progressText, state.isBusy ? "live" : "")}
+            ${renderFlowMetric("Reports", `${completedSections}/${totalSections}`)}
+            ${renderFlowMetric("Depth", getAnalysisDepthLabel(meta))}
+            ${renderFlowMetric("Verdict", verdict, verdict === "Revise" || verdict === "Caution" ? "warning" : "")}
+            ${renderFlowMetric("Evidence", complete.evidence_count ?? "-")}
+            ${renderFlowMetric("Web Search", telemetry.web_search_calls ?? "-")}
+            ${renderFlowMetric("Model Calls", telemetry.model_calls ?? "-")}
+            ${renderFlowMetric("Tool Events", telemetry.tool_calls ?? "-")}
+        </div>
+        <div class="flow-latest">
+            <span>Current</span>
+            <strong>${escapeHtml(state.run.status?.current_agent || state.run.latestReportTitle || latestTool?.title || "-")}</strong>
+        </div>
+        <div class="flow-section-list" aria-label="Completed report sections">
+            ${renderFlowSectionList()}
+        </div>
+        ${
+            warningItems.length
+                ? `<div class="flow-warning-list">${warningItems.map((warning) => `<span>${escapeHtml(compactText(warning, 96))}</span>`).join("")}</div>`
+                : ""
+        }
+    `;
+}
+
+function clearDetailAttributes(element) {
+    ["data-detail-key", "data-detail-section", "data-detail-title", "data-detail-subtitle"].forEach((attribute) => {
+        element.removeAttribute(attribute);
+    });
+}
+
+function applyDetailAttributes(element, detail) {
+    clearDetailAttributes(element);
+    if (!detail) {
+        return;
+    }
+    if (detail.type === "report") {
+        element.dataset.detailSection = detail.section || "";
+        element.dataset.detailTitle = detail.title || "Report Detail";
+        element.dataset.detailSubtitle = detail.subtitle || detail.title || "Agent report";
+        return;
+    }
+    if (detail.key) {
+        element.dataset.detailKey = detail.key;
+    }
+}
+
 function renderReportGrid() {
     const focus = getCurrentLivePanel();
     const focusId = getFocusIdentity(focus);
+    const hasInspector = Boolean(elements.reportGrid.querySelector(".flow-inspector"));
     let card = elements.reportGrid.querySelector(".live-focus-card");
-    if (!(card instanceof HTMLElement) || card.dataset.focusId !== focusId) {
+    if (!(card instanceof HTMLElement) || !hasInspector || card.dataset.focusId !== focusId) {
         elements.reportGrid.innerHTML = `
-            <div class="live-layout live-layout-single">
+            <div class="live-layout live-layout-with-inspector">
                 <article class="live-focus-card live-focus-card-expanded">
                     <div class="live-focus-topline">
                         <span class="live-chip"></span>
-                        <span class="live-focus-status"></span>
+                        <div class="live-focus-actions">
+                            <span class="live-focus-status"></span>
+                            <button class="live-detail-button detail-trigger hidden" type="button">Open</button>
+                        </div>
                     </div>
                     <h3 class="live-focus-title"></h3>
                     <div class="live-focus-body markdown-preview"></div>
                 </article>
+                <aside class="flow-inspector" aria-label="Flow snapshot"></aside>
             </div>
         `;
         card = elements.reportGrid.querySelector(".live-focus-card");
@@ -264,26 +443,24 @@ function renderReportGrid() {
         return;
     }
 
-    const isAwaitingFocus = state.isBusy && !String(focus.content || "").trim();
-    setElementLoadingState(card, isAwaitingFocus, state.run.status?.current_agent ? `Waiting ${getCompactAgentLabel(state.run.status.current_agent)}` : "Streaming");
-
     const liveChip = card.querySelector(".live-chip");
     const liveStatus = card.querySelector(".live-focus-status");
+    const detailButton = card.querySelector(".live-detail-button");
     const liveTitle = card.querySelector(".live-focus-title");
     const liveBody = card.querySelector(".live-focus-body");
+    const inspector = elements.reportGrid.querySelector(".flow-inspector");
     const tone = focus.tone || "idle";
     const bodyMarkup = formatBlock(focus.content, focus.fallback);
     const bodyFingerprint = `${focusId}:${focus.content || ""}:${focus.fallback}`;
 
     card.dataset.focusId = focusId;
     card.className = `live-focus-card live-focus-card-expanded live-tone-${tone}`;
+    const isAwaitingFocus = state.isBusy && !String(focus.content || "").trim();
+    setElementLoadingState(card, isAwaitingFocus, state.run.status?.current_agent ? `Waiting ${getCompactAgentLabel(state.run.status.current_agent)}` : "Streaming");
     card.removeAttribute("tabindex");
     card.removeAttribute("role");
     card.setAttribute("aria-label", focus.title);
-    card.removeAttribute("data-detail-key");
-    card.removeAttribute("data-detail-section");
-    card.removeAttribute("data-detail-title");
-    card.removeAttribute("data-detail-subtitle");
+    clearDetailAttributes(card);
 
     if (liveChip instanceof HTMLElement) {
         liveChip.className = `live-chip live-chip-${tone}`;
@@ -291,6 +468,14 @@ function renderReportGrid() {
     }
     if (liveStatus instanceof HTMLElement) {
         liveStatus.textContent = focus.subtitle || "";
+    }
+    if (detailButton instanceof HTMLElement) {
+        detailButton.classList.toggle("hidden", !focus.detail);
+        detailButton.removeAttribute("aria-label");
+        applyDetailAttributes(detailButton, focus.detail);
+        if (focus.detail) {
+            detailButton.setAttribute("aria-label", `Open ${focus.title} detail`);
+        }
     }
     if (liveTitle instanceof HTMLElement) {
         liveTitle.textContent = focus.title;
@@ -301,6 +486,9 @@ function renderReportGrid() {
             liveBody.classList.toggle("is-empty", !focus.content);
             liveBody.dataset.fingerprint = bodyFingerprint;
         });
+    }
+    if (inspector instanceof HTMLElement) {
+        inspector.innerHTML = renderFlowInspectorMarkup();
     }
 
     elements.activeReportText.textContent = state.run.cancelled?.message
@@ -550,7 +738,7 @@ function renderSmartNotes() {
     if (state.run.meta) {
         notes.push(`Market mode: ${state.run.meta.asset_type}`);
         notes.push(`Lookback window: ${state.run.meta.lookback_days} day(s)`);
-        notes.push(`Depth preset: ${state.run.meta.research_depth} (${state.run.meta.depth_rounds} rounds)`);
+        notes.push(`Depth preset: ${getAnalysisDepthLabel(state.run.meta)} (${state.run.meta.depth_rounds} rounds)`);
         notes.push(`Output language: ${state.run.meta.output_language}`);
     }
     if (state.run.status?.current_agent) {

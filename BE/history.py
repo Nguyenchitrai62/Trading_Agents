@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 import uuid
 from datetime import datetime, timedelta
@@ -24,6 +25,13 @@ class TursoHistoryStore:
     @property
     def configured(self) -> bool:
         return bool(self.database_url and self.auth_token)
+
+    @staticmethod
+    def _coerce_float(value: object) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     @property
     def pipeline_url(self) -> str:
@@ -160,6 +168,27 @@ class TursoHistoryStore:
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS analysis_decisions (
+                    run_id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    analysis_date TEXT NOT NULL,
+                    signal TEXT,
+                    primary_limit_price REAL,
+                    secondary_limit_price REAL,
+                    stop_loss REAL,
+                    take_profit REAL,
+                    position_sizing TEXT,
+                    time_horizon TEXT,
+                    verification_verdict TEXT,
+                    verification_action TEXT,
+                    current_price REAL,
+                    decision_json TEXT NOT NULL,
+                    verification_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS auth_users (
                     email TEXT PRIMARY KEY,
                     google_sub TEXT,
@@ -185,6 +214,7 @@ class TursoHistoryStore:
                 "CREATE INDEX IF NOT EXISTS idx_analysis_runs_created ON analysis_runs(created_at DESC)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_runs_user_symbol_date ON analysis_runs(user_email, symbol, analysis_date DESC)",
                 "CREATE INDEX IF NOT EXISTS idx_analysis_sections_run_order ON analysis_sections(run_id, display_order)",
+                "CREATE INDEX IF NOT EXISTS idx_analysis_decisions_symbol_date ON analysis_decisions(symbol, analysis_date DESC)",
                 "CREATE INDEX IF NOT EXISTS idx_auth_users_google_sub ON auth_users(google_sub)",
                 "CREATE INDEX IF NOT EXISTS idx_auth_users_last_seen ON auth_users(last_seen_at DESC)",
             ]
@@ -439,6 +469,9 @@ class TursoHistoryStore:
         signal: str,
         elapsed_seconds: float,
         sections: list[dict],
+        decision_payload: dict | None = None,
+        verification_payload: dict | None = None,
+        current_price: object = None,
     ) -> str | None:
         if not self.configured or not sections:
             return None
@@ -506,6 +539,56 @@ class TursoHistoryStore:
                         section.get("team"),
                         index,
                         markdown,
+                        created_at,
+                    ],
+                )
+            )
+        decision_payload = decision_payload or {}
+        verification_payload = verification_payload or {}
+        if decision_payload or verification_payload or current_price is not None:
+            decision_signal = str(decision_payload.get("signal") or signal or "").strip()
+            statements.append(
+                (
+                    """
+                    INSERT INTO analysis_decisions (
+                        run_id, symbol, analysis_date, signal, primary_limit_price,
+                        secondary_limit_price, stop_loss, take_profit, position_sizing,
+                        time_horizon, verification_verdict, verification_action,
+                        current_price, decision_json, verification_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(run_id) DO UPDATE SET
+                        symbol = excluded.symbol,
+                        analysis_date = excluded.analysis_date,
+                        signal = excluded.signal,
+                        primary_limit_price = excluded.primary_limit_price,
+                        secondary_limit_price = excluded.secondary_limit_price,
+                        stop_loss = excluded.stop_loss,
+                        take_profit = excluded.take_profit,
+                        position_sizing = excluded.position_sizing,
+                        time_horizon = excluded.time_horizon,
+                        verification_verdict = excluded.verification_verdict,
+                        verification_action = excluded.verification_action,
+                        current_price = excluded.current_price,
+                        decision_json = excluded.decision_json,
+                        verification_json = excluded.verification_json,
+                        created_at = excluded.created_at
+                    """,
+                    [
+                        run_id,
+                        symbol,
+                        request.analysis_date,
+                        decision_signal,
+                        self._coerce_float(decision_payload.get("primary_limit_price")),
+                        self._coerce_float(decision_payload.get("secondary_limit_price")),
+                        self._coerce_float(decision_payload.get("stop_loss")),
+                        self._coerce_float(decision_payload.get("take_profit")),
+                        decision_payload.get("position_sizing"),
+                        decision_payload.get("time_horizon"),
+                        verification_payload.get("verdict"),
+                        verification_payload.get("recommended_action"),
+                        self._coerce_float(current_price),
+                        json.dumps(decision_payload, ensure_ascii=False, sort_keys=True, default=str),
+                        json.dumps(verification_payload, ensure_ascii=False, sort_keys=True, default=str),
                         created_at,
                     ],
                 )

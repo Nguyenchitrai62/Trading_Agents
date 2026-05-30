@@ -264,37 +264,32 @@ def get_global_news_yfinance(
                         seen_titles.add(title)
                         all_news.append(article)
 
-            if limit is not None and len(all_news) >= limit:
-                break
-
         if not all_news:
             return f"No global news found for {curr_date}"
 
-        # Calculate date range
         curr_dt = datetime.strptime(curr_date, "%Y-%m-%d")
         start_dt = curr_dt - relativedelta(days=look_back_days)
         start_date = start_dt.strftime("%Y-%m-%d")
+        end_dt = curr_dt + relativedelta(days=1)
 
         news_str = ""
-        articles_to_render = all_news if limit is None else all_news[:limit]
-        for article in articles_to_render:
+        rendered_count = 0
+        for article in all_news:
             # Handle both flat and nested structures
             if "content" in article:
                 data = _extract_article_data(article)
-                # Skip articles published after curr_date (look-ahead guard)
-                if data.get("pub_date"):
-                    pub_naive = data["pub_date"].replace(tzinfo=None) if hasattr(data["pub_date"], "replace") else data["pub_date"]
-                    if pub_naive > curr_dt + relativedelta(days=1):
-                        continue
+                pub_date = data.get("pub_date")
+                if not pub_date:
+                    continue
+                pub_naive = pub_date.replace(tzinfo=None) if hasattr(pub_date, "replace") else pub_date
+                if not (start_dt <= pub_naive <= end_dt):
+                    continue
                 title = data["title"]
                 publisher = data["publisher"]
                 link = data["link"]
                 summary = data["summary"]
             else:
-                title = article.get("title", "No title")
-                publisher = article.get("publisher", "Unknown")
-                link = article.get("link", "")
-                summary = ""
+                continue
 
             news_str += f"### {title} (source: {publisher})\n"
             if summary:
@@ -302,6 +297,12 @@ def get_global_news_yfinance(
             if link:
                 news_str += f"Link: {link}\n"
             news_str += "\n"
+            rendered_count += 1
+            if limit is not None and rendered_count >= limit:
+                break
+
+        if rendered_count == 0:
+            return f"No global news found between {start_date} and {curr_date}"
 
         return f"## Global Market News, from {start_date} to {curr_date}:\n\n{news_str}"
 

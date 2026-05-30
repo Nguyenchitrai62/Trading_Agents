@@ -86,7 +86,7 @@ function normalizeFrontendConfig() {
             lookback_days: Number(defaults.lookbackDays || defaults.lookback_days || 7),
             output_language: defaults.outputLanguage || defaults.output_language || "Vietnamese",
             selected_analysts: defaults.selectedAnalysts || defaults.selected_analysts || ["market", "social", "news", "fundamentals"],
-            research_depth: defaults.researchDepth || defaults.research_depth || "medium",
+            research_depth: defaults.researchDepth || defaults.research_depth || "auto",
             model: defaultModel,
             checkpoint_enabled: Boolean(defaults.checkpointEnabled ?? defaults.checkpoint_enabled ?? false),
         },
@@ -110,6 +110,7 @@ function normalizeFrontendConfig() {
                 { value: "MiniMax-M2.7", label: "MiniMax M2.7" },
             ],
             research_depths: options.researchDepths || options.research_depths || [
+                { value: "auto", label: "Auto", rounds: 3, effective_depth: "medium", description: "Backend-managed baseline depth." },
                 { value: "quick", label: "Quick", rounds: 1, description: "Fast scan with minimal debate." },
                 { value: "medium", label: "Medium", rounds: 3, description: "Balanced research depth for regular analysis." },
                 { value: "deep", label: "Deep", rounds: 5, description: "More debate rounds before the final decision." },
@@ -628,7 +629,7 @@ function collectConfigDraft() {
     return {
         symbol: normalizeCryptoSymbol(elements.symbolInput.value),
         asset_type: "crypto",
-        analysis_date: elements.analysisDateInput.value,
+            analysis_date: todayIsoDate(),
         lookback_days: getSelectedLookbackDays(),
         output_language: getOutputLanguage(),
         selected_analysts: getCheckedAnalysts(),
@@ -668,7 +669,7 @@ function getConfigSnapshot() {
         return {
             symbol: state.config.analysis_defaults.symbol,
             asset_type: "crypto",
-            analysis_date: state.config.analysis_defaults.analysis_date,
+            analysis_date: todayIsoDate(),
             lookback_days: state.config.analysis_defaults.lookback_days,
             output_language: state.config.analysis_defaults.output_language,
             selected_analysts: state.config.analysis_defaults.selected_analysts,

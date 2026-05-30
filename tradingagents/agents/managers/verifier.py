@@ -307,6 +307,8 @@ Be strict. If a strong claim is not grounded in the supplied evidence, call it o
             "messages": [AIMessage(content=verification_report)],
             "verification_report": verification_report,
             "verification_report_structured": structured_payload,
+            "verification_reference_price": deterministic["current_price"],
+            "verification_reference_price_source": "binance_spot" if deterministic["current_price"] is not None else "",
         }
 
     return verifier_node

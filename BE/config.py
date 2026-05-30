@@ -24,10 +24,10 @@ DEFAULT_ANALYSTS = ("market", "social", "news", "fundamentals")
 APP_TITLE = "TradingAgents Analysis API"
 APP_VERSION = "0.1.2"
 DEFAULT_MODEL = "MiniMax-M2.5"
-DEFAULT_ANALYSIS_LOOKBACK_DAYS = 7
+DEFAULT_ANALYSIS_LOOKBACK_DAYS = 14
 DEFAULT_ASSET_TYPE = "crypto"
 DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
-DEFAULT_RESEARCH_DEPTH = "medium"
+DEFAULT_RESEARCH_DEPTH = "auto"
 DEFAULT_CHECKPOINT_ENABLED = False
 DEFAULT_HISTORY_PAGE_SIZE = 10
 DEFAULT_HISTORY_PUBLIC_READ = True
@@ -49,6 +49,13 @@ DEFAULT_COINGLASS_PACKAGE_CONTEXT_CHAR_LIMIT = 0
 DEFAULT_COINGLASS_REQUEST_INTERVAL_SECONDS = 0.05
 DEFAULT_COINGLASS_CONCURRENCY_LIMIT = 4
 RESEARCH_DEPTH_OPTIONS = {
+    "auto": {
+        "label": "Auto",
+        "rounds": 3,
+        "mcp_tool_rounds": 5,
+        "description": "Backend-managed baseline depth. Future escalation will be driven by evidence quality.",
+        "effective_depth": "medium",
+    },
     "quick": {
         "label": "Quick",
         "rounds": 1,

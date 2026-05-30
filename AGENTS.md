@@ -2,35 +2,38 @@
 
 ## Product Goal
 
-Xây dựng một hệ thống agent phân tích thị trường có thể dùng thực tế với các thành phần sau:
+Xay dung he thong multi-agent phan tich thi truong co the dung thuc te:
 
-- FE tách riêng, deploy trên Vercel.
-- BE tách riêng, deploy trên Render.
-- DB là tùy chọn, chỉ thêm khi thực sự cần lưu trữ bền vững. Ưu tiên MongoDB hoặc Turso.
-- Telegram bot là một lớp giao tiếp bổ sung, gọi lại cùng backend/service layer, không nhân bản logic phân tích.
+- FE tach rieng, deploy static tren Vercel.
+- BE tach rieng, deploy FastAPI tren Render.
+- DB chi dung khi can persistence that su. Repo hien co Turso history store tuy chon cho lich su phan tich, auth/access, va markdown sections.
+- Telegram bot, neu them, phai la client/adaptor goi lai backend/service layer hien co, khong nhan ban logic agent.
 
-Mục tiêu sản phẩm không phải là giữ nguyên CLI cũ. Mục tiêu là giữ lại và phát triển phần backend agent orchestration, sau đó đẩy kết quả phân tích theo thời gian thực lên FE và các kênh tích hợp khác.
+Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend agent orchestration trong `tradingagents/`, stream tien trinh theo thoi gian thuc len FE, va tao artifact co cau truc du de cac client khac co the su dung.
 
 ## Architecture Target
 
-- FE dùng HTML, CSS, JavaScript thuần. Không tự ý thêm React, Vue, Next.js hoặc framework FE khác nếu chưa có yêu cầu rõ ràng.
-- BE dùng FastAPI.
-- Luồng phân tích chính phải là streaming theo thời gian thực bằng Server-Sent Events (SSE).
-- FE phải có khả năng chọn cấu hình rồi bấm chạy phân tích; trong khi BE đang xử lý, FE phải cập nhật liên tục các vùng UI tương ứng với từng agent/team/report.
-- Backend phải tái sử dụng core trong thư mục `tradingagents/`, không xây một pipeline agent song song mới nếu không thật sự cần.
+- FE dung HTML, CSS, JavaScript thuan. Khong tu y them React, Vue, Next.js hoac framework FE khac khi chua co yeu cau ro rang.
+- BE dung FastAPI.
+- Luong phan tich chinh la Server-Sent Events (SSE).
+- FE phai cho phep chon cau hinh roi chay phan tich; trong khi BE xu ly, FE cap nhat lien tuc cac panel agent/team/report.
+- Backend phai tai su dung core trong `tradingagents/`; khong xay pipeline agent song song moi neu khong that su can.
 
 ## Current Implementation
 
-- Backend entrypoint hiện tại là `app.py`.
-- Frontend hiện tại là `index.html`, `FE/scripts/*.js`, `FE/styles.css`, `FE/styles/*.css`.
-- FE hiện đã là dashboard nhiều window theo tinh thần TradingAgents CLI:
+- `app.py` chi la wrapper khoi dong uvicorn va export `BE.server:app`.
+- Backend routes nam trong `BE/server.py`.
+- Orchestration/SSE runtime chinh nam trong `BE/analysis.py`.
+- Frontend hien tai la `index.html`, `FE/scripts/*.js`, `FE/styles.css`, `FE/styles/*.css`.
+- FE hien la dashboard nhieu window theo tinh than TradingAgents CLI:
   - Execution Board
   - Report Windows
   - Research Chamber
   - Trader Desk
   - Risk Room
   - Final Decision
-- Popup config hiện hỗ trợ:
+  - History, Chart, Admin, Chat pages
+- Popup config hien ho tro:
   - symbol
   - analysis date
   - lookback window
@@ -39,78 +42,194 @@ Mục tiêu sản phẩm không phải là giữ nguyên CLI cũ. Mục tiêu l�
   - research depth
   - model
   - checkpoint toggle
-- `/api/analyze` là endpoint chính cho luồng phân tích streaming.
-- `/api/analyze` stream các event như `analysis_meta`, `status_snapshot`, `section_update`, `debate_update`, `warning`, `complete`, `error`.
-- FE đang map các event này vào các panel UI tương ứng.
-- `/api/analyze` là API phân tích chính; endpoint chat thử nghiệm cũ đã được loại bỏ để giảm bề mặt API.
+- `/api/analyze` la endpoint phan tich streaming chinh.
+- `/api/analyze` stream cac event nhu `analysis_meta`, `analysis_log`, `agent_trace`, `evidence_update`, `status_snapshot`, `section_update`, `debate_update`, `warning`, `complete`, `cancelled`, `error`.
+- FE map cac event nay vao cac panel UI tuong ung.
+- `/api/chat` van ton tai nhu backend chat page, nhung khong phai luong phan tich chinh va khong duoc xem la core agent orchestration.
+
+## Current Analysis Flow
+
+1. `BE.models.AnalysisRequest` normalize symbol, date, lookback, selected analysts, depth, model, checkpoint.
+2. `BE.analysis.AnalysisService.run_trading_analysis()` resolve MiniMax config, reserve runtime slot, emit metadata/status ban dau.
+3. Backend build graph config tu `tradingagents.agent_config.DEFAULT_CONFIG`, override model, language, analysis date, lookback, debate rounds, risk rounds, and MiniMax MCP tool budget.
+4. Backend prefetch CoinGlass snapshot neu configured. Hien tai prefetch toan bo high-value endpoints roi chia thanh package context cho cac role.
+5. `TradingAgentsGraph` tao quick/deep LLM clients, tool nodes, graph setup.
+6. Analyst phase chay cac analyst duoc chon. Mac dinh co the chay song song theo `analyst_concurrency_limit`:
+   - Market Analyst: OHLCV, indicators, optional MiniMax `web_search`.
+   - Social Analyst: news/StockTwits/Reddit prefetched context va optional `web_search`.
+   - News Analyst: `get_news`, `get_global_news`, optional `web_search`.
+   - Flow Analyst: crypto flow/news/global context, CoinGlass package context, optional `web_search`.
+7. Research Team: Bull/Bear debate trong `max_debate_rounds`, sau do Research Manager tao `investment_plan` va `investment_plan_structured`.
+8. Trader tao `trader_investment_plan` va `trader_investment_plan_structured`.
+9. Risk Room: Aggressive/Conservative/Neutral debate trong `max_risk_discuss_rounds`.
+10. Portfolio Manager tao `final_trade_decision` va `final_trade_decision_structured`.
+11. Verifier kiem tra deterministic order logic va semantic support, tao `verification_report` va `verification_report_structured`.
+12. Turso history store luu `analysis_runs.signal` va cac markdown sections neu DB configured.
+
+## Accuracy And Cost Notes
+
+- FE config hien dang mac dinh `lookbackDays: 30`, `researchDepth: deep`, va all analysts. Day la cau hinh ton LLM/API. Backend default la lookback 7 va depth medium, nhung FE default se override khi nguoi dung chay tu UI.
+- Depth tac dong truc tiep den so LLM calls:
+  - quick = 1 research round va 1 risk round.
+  - medium = 3 research rounds va 3 risk rounds.
+  - deep = 5 research rounds va 5 risk rounds.
+- Research debate moi round gom Bull/Bear, risk debate moi round gom Aggressive/Conservative/Neutral. Deep them rat nhieu call sau khi analyst reports da co, nen khong nen xem la default toi uu do chinh xac.
+- `mcp_max_tool_rounds` trong runtime profile chua phai hard cap chat cho analyst tool calls. Analyst loop hien duoc dat thanh `max(24, mcp_rounds * 6)`, nen cac prompt bat buoc `web_search` va cross-check trusted sources co the ton nhieu request hon mong doi.
+- Nen uu tien medium/quick cho default product flow, va chi dung deep khi co ly do ro rang hoac nguoi dung chu dong chon.
+- Nen tranh de moi analyst deu bi prompt "cross-check each trusted source" mot cach rieng le. Neu can tiet kiem request, nen co mot role so huu live web/source validation va chia lai structured evidence cho cac role sau.
+
+## Data Extraction And Noise Notes
+
+- Crypto OHLCV/indicator tools trong `tradingagents/dataflows/ccxt_crypto.py` fetch full active lookback theo timeframe agent yeu cau, co paginate khi can.
+- Model khong nhin toan bo raw candles. Tool chi tra summary, window metadata, va bang recent rows compact:
+  - OHLCV hien thi recent 18 candles.
+  - Indicators hien thi recent 12 rows moi indicator.
+- Neu nguoi dung chon lookback qua dai tren timeframe thap, vi du 180 ngay voi 1h, backend van co the fetch hang nghin candles de tinh summary/indicator. Model input khong qua lon, nhung latency/API/noise tang va summary co the pha tron nhieu regime thi truong.
+- CoinGlass prefetch dung default limit 42 voi interval 4h cho cac endpoint history, xap xi 7 ngay du lieu. Payload duoc summarize/compact truoc khi dua vao prompt; package context vao agent bi gioi han boi `coinglass_prompt_char_limit` mac dinh 4800 ky tu.
+- MiniMax MCP tool result mac dinh khong bi cat (`MINIMAX_MCP_TOOL_RESULT_CHAR_LIMIT=0`). Neu env nay duoc set > 0 thi tool result se bi truncate truoc khi tra ve model.
+- `ANALYSIS_TRACE_CHAR_LIMIT` chi anh huong noi dung trace gui len FE, khong phai nhat thiet la prompt noi bo cua model.
+- Structured evidence block moi analyst toi da 8 item; downstream evidence ledger chi dua mot so item gioi han vao prompt. Day la co chu dich de giam noise.
+- `get_global_news_yfinance()` hien co future-date guard nhung lower-bound start date khong duoc enforce chat nhu Alpha Vantage. Neu can phan tich historical nghiem tuc, can fix loc date cho global news.
+- Verifier hien fetch current Binance spot price tai thoi diem verify. Neu `analysis_date` la ngay qua khu, deterministic price checks co the so sanh voi gia hien tai thay vi gia tai ngay phan tich. Backtest/historical runs can sua de dung last OHLCV candle tai analysis cutoff.
+
+## Structured Decision And DB Guidance
+
+- Structured outputs da ton tai trong runtime state:
+  - `investment_plan_structured`
+  - `trader_investment_plan_structured`
+  - `final_trade_decision_structured`
+  - `verification_report_structured`
+- `final_trade_decision_structured` da co cac field can cho lenh:
+  - `signal`
+  - `execution_summary`
+  - `market_context`
+  - `investment_thesis`
+  - `primary_limit_price`
+  - `secondary_limit_price`
+  - `stop_loss`
+  - `take_profit`
+  - `position_sizing`
+  - `time_horizon`
+- Hien DB chi luu `analysis_runs.signal` va markdown sections. Chua co bang/cot structured order plan de query truc tiep entry/SL/TP.
+- Neu muc tieu la vao lenh ma khong doc markdown, buoc dung huong tiep theo la them persistence co cau truc, vi du bang `analysis_decisions` hoac JSON column, ghi truc tiep tu `final_trade_decision_structured` va `verification_report_structured`.
+- Khong nen parse markdown de ghi DB. Nen ghi tu structured payload trong `final_state`.
+- Schema toi thieu nen query duoc:
+  - `run_id`
+  - `symbol`
+  - `analysis_date`
+  - `signal`
+  - `primary_limit_price`
+  - `secondary_limit_price`
+  - `stop_loss`
+  - `take_profit`
+  - `position_sizing`
+  - `time_horizon`
+  - `verification_verdict`
+  - `verification_action`
+  - `created_at`
+- Neu sau nay cho phep nhieu entry, dung child table `analysis_order_legs` thay vi nhan them cot `entry_1`, `entry_2` qua nhieu noi.
+- FE/history co the van luu markdown sections de doc chi tiet, nhung UI trading summary nen lay tu structured decision table/payload.
+
+## Historical Decisions And Memory
+
+- `/api/analyze` hien khong dua cac phan quyet cu trong DB vao prompt phan tich.
+- Backend streaming run dang set:
+  - `memory_log_path = None`
+  - `persist_analysis_artifacts = False`
+  - `past_context = ""`
+- `TradingAgentsGraph.propagate()` legacy/CLI path van co `TradingMemoryLog`, co the luu pending decisions va inject past context, nhung `/api/analyze` khong dung path nay.
+- Nen giu history injection tat mac dinh. Khong phai phan quyet nao agent dua ra nguoi dung cung vao lenh kip, nen dua moi phan quyet cu vao prompt de "hoc" co the lam roi va tao bias sai.
+- Neu sau nay muon dung lich su, chi nen dua vao cac outcome da duoc xac nhan:
+  - lenh that su da execute
+  - entry/exit/fill time ro rang
+  - PnL hoac outcome sau mot holding window
+  - market regime tuong ung
+  - nguon du lieu khong leak tuong lai
 
 ## Environment And Configuration
 
-- Dùng `.env` cho runtime configuration.
-- Base URL FE dùng để gọi backend khi chạy tách origin và các default analysis của FE được đặt trong `FE/config.js`.
-- `MINIMAX_API_KEY` hoặc `MINIMAX_CN_API_KEY` phải nằm trong `.env` để backend gọi LLM.
-- `MINIMAX_BASE_URL` dùng để trỏ tới anthropic-compatible MiniMax endpoint.
-- `CORS_ALLOW_ORIGINS` phải được cấu hình theo domain FE thật khi deploy.
+- Dung `.env` cho runtime configuration.
+- Base URL FE va default analysis cua FE nam trong `FE/config.js`.
+- `MINIMAX_API_KEY` hoac `MINIMAX_CN_API_KEY` phai nam trong `.env` de backend goi LLM.
+- `MINIMAX_BASE_URL` tro toi anthropic-compatible MiniMax endpoint.
+- `CORS_ALLOW_ORIGINS` phai cau hinh theo domain FE that khi deploy.
+- CoinGlass dung `COINGLASS_API_KEY` hoac cac alias duoc ho tro trong `BE/config.py`.
+- Turso history dung `TURSO_DATABASE_URL` va `TURSO_AUTH_TOKEN`.
 
 ## Dependency Policy
 
-- Chỉ dùng `requirements.txt` cho cài đặt dependency.
-- Không tự ý khôi phục `pyproject.toml` hoặc chuyển repo về flow package build cũ nếu người dùng chưa yêu cầu.
-- `requirements.txt` đang được giữ khá rộng để tránh thiếu thư viện khi mở rộng backend trong các bước tiếp theo.
+- Chi dung `requirements.txt` cho cai dependency.
+- Khong tu y khoi phuc `pyproject.toml` hoac chuyen repo ve flow package build cu neu nguoi dung chua yeu cau.
+- `requirements.txt` dang duoc giu rong de tranh thieu thu vien khi mo rong backend.
 
 ## Deployment Intent
 
-- FE: static hosting trên Vercel.
-- BE: FastAPI trên Render.
-- DB: chỉ thêm khi cần persistence thực sự, ví dụ:
-  - lịch sử phân tích
-  - cấu hình người dùng
-  - logs dài hạn
-  - báo cáo đã lưu
-- Telegram bot: triển khai như client/adaptor gọi vào backend hiện có, không chèn logic agent trực tiếp vào bot.
+- FE: static hosting tren Vercel.
+- BE: FastAPI tren Render.
+- DB: Turso history store la optional persistence hien tai. Chi mo rong schema khi co nhu cau persistence ro rang.
+- Telegram bot: client/adaptor goi backend hien co, khong chen logic agent truc tiep vao bot.
 
 ## Working Priorities For Future Changes
 
-1. Ưu tiên ổn định luồng FE -> BE -> SSE -> UI trước.
-2. Mọi thay đổi UI phải giữ được khả năng hiển thị tiến trình agent theo thời gian thực.
-3. Khi thêm DB, phải tách thành lớp persistence/service rõ ràng để không phá vỡ SSE flow hiện tại.
-4. Khi thêm Telegram bot, phải tái sử dụng request models, config models và orchestration hiện có.
-5. Khi mở rộng backend, ưu tiên mở rộng `app.py` và `tradingagents/` thay vì thêm các entrypoint rời rạc không liên kết.
+1. Uu tien on dinh luong FE -> BE -> SSE -> UI.
+2. Moi thay doi UI phai giu kha nang hien thi tien trinh agent theo thoi gian thuc.
+3. Toi uu request/model budget truoc khi tang depth hoac them agent moi.
+4. Neu them structured DB decision, ghi tu structured payload trong final state, khong parse markdown.
+5. Khi them DB schema moi, tach persistence/service ro rang de khong pha SSE flow.
+6. Khi them Telegram bot, tai su dung request models, config models va orchestration hien co.
+7. Khi mo rong backend, uu tien `BE/analysis.py`, `BE/server.py`, `BE/history.py` va `tradingagents/` thay vi them entrypoint roi rac.
 
 ## Non-Goals
 
-- Không khôi phục lại toàn bộ repo cũ chỉ để giữ tài liệu, CLI hoặc artifact không phục vụ mục tiêu FE/BE hiện tại.
-- Không biến FE hiện tại thành framework app lớn nếu chưa có yêu cầu cụ thể.
-- Không thêm DB chỉ vì “có thể cần”; chỉ thêm khi xuất hiện nhu cầu persistence rõ ràng.
+- Khong khoi phuc toan bo repo cu chi de giu tai lieu, CLI hoac artifact khong phuc vu muc tieu FE/BE hien tai.
+- Khong bien FE hien tai thanh framework app lon neu chua co yeu cau cu the.
+- Khong them DB chi vi co the can; chi them khi co nhu cau persistence ro rang.
+- Khong dua phan quyet cu vao prompt phan tich neu chua co du lieu execution/outcome that su.
 
 ## Key Files
 
-- `app.py`: FastAPI app, config bootstrap, SSE endpoints, MiniMax integration.
-- `index.html`: shell của dashboard FE và bootstrap backend base URL.
+- `app.py`: wrapper export `BE.server:app` va khoi dong uvicorn khi chay truc tiep.
+- `BE/server.py`: FastAPI app, routes, CORS, static mount, auth/history/admin/chat/analyze endpoints.
+- `BE/analysis.py`: config bootstrap cho run, SSE streaming, CoinGlass prefetch, graph execution, event emission, history save.
+- `BE/models.py`: request/response Pydantic models cho analysis, chat, auth, admin.
+- `BE/history.py`: Turso schema, history save/list/detail, markdown sections.
+- `BE/config.py`: backend settings tu `.env`, MiniMax, CoinGlass, Turso, CORS, runtime limits.
+- `index.html`: dashboard shell va page/modal structure.
+- `FE/config.js`: FE backend base URL, default analysis config, options.
 - `FE/scripts/01-core-chat.js`: constants, markdown/chat helpers, state factory helpers.
 - `FE/scripts/02-config-auth-trace.js`: config bootstrap, auth/session helpers, trace merge logic.
 - `FE/scripts/03-dashboard-history.js`: dashboard rendering, operations/detail modal helpers, page shell rendering.
 - `FE/scripts/03b-history-archive.js`: history archive rendering, pagination, detail loading, section markdown flow.
 - `FE/scripts/04-chart-admin.js`: chart workspace, admin page, page switching.
 - `FE/scripts/05-runtime-bootstrap.js`: state/elements bootstrap, SSE consumption, DOM listeners.
-- `FE/styles.css` và `FE/styles/*.css`: stylesheet manifest và các partial theo domain.
-- `tradingagents/graph/trading_graph.py`: core orchestration của TradingAgentsGraph.
-- `tradingagents/graph/analyst_execution.py`: analyst node mapping và report mapping.
-- `tradingagents/default_config.py`: default runtime config của graph.
-- `requirements.txt`: nguồn cài dependency duy nhất.
+- `FE/styles.css` va `FE/styles/*.css`: stylesheet manifest va cac partial theo domain.
+- `tradingagents/agent_config.py`: default graph/runtime config, depth/tool/source/data defaults.
+- `tradingagents/graph/trading_graph.py`: core `TradingAgentsGraph`, LLM clients, tool nodes, graph compile.
+- `tradingagents/graph/setup.py`: LangGraph node/edge flow.
+- `tradingagents/graph/parallel_analysts.py`: analyst parallel execution and tool loop.
+- `tradingagents/graph/analyst_execution.py`: analyst node/report mapping.
+- `tradingagents/dataflows/ccxt_crypto.py`: crypto OHLCV/indicator fetching and compact output.
+- `tradingagents/dataflows/coinglass_client.py`: CoinGlass endpoint prefetch, summaries, evidence items.
+- `tradingagents/agents/schemas.py`: structured output schemas for research/trader/portfolio/verifier.
+- `tradingagents/agents/managers/portfolio_manager.py`: final structured portfolio decision.
+- `tradingagents/agents/managers/verifier.py`: deterministic and evidence verification.
+- `requirements.txt`: dependency source of truth.
 
 ## Definition Of Done For Core Product Work
 
-Một thay đổi được xem là đi đúng hướng mục tiêu lớn khi thỏa các điều sau:
+Mot thay doi di dung huong khi thoa cac dieu sau:
 
-- FE có thể cấu hình phiên phân tích và gửi request xuống backend.
-- Backend stream tiến trình phân tích liên tục thay vì chỉ trả kết quả cuối.
-- FE cập nhật đúng panel theo từng bước agent/team/report.
-- Cấu hình runtime giữ API key trong `.env`; riêng base URL FE và default analysis được quản lý trong `FE/config.js`.
-- Thay đổi vẫn phù hợp với mô hình deploy FE trên Vercel và BE trên Render.
+- FE co the cau hinh phien phan tich va gui request xuong backend.
+- Backend stream tien trinh phan tich lien tuc thay vi chi tra ket qua cuoi.
+- FE cap nhat dung panel theo tung buoc agent/team/report.
+- Runtime config giu API key trong `.env`; FE base URL va default analysis nam trong `FE/config.js`.
+- Neu co DB output moi, signal/entry/SL/TP/verification phai query duoc truc tiep ma khong can doc markdown.
+- Thay doi van phu hop deploy FE tren Vercel va BE tren Render.
 
 ## Guidance For Coding Agents
 
-- Luôn xem repo này như một sản phẩm multi-agent market analysis platform, không phải chỉ là demo chat với LLM.
-- Nếu phải chọn giữa việc thêm tính năng ngắn hạn và giữ đúng kiến trúc FE/BE streaming dài hạn, ưu tiên kiến trúc dài hạn.
-- Nếu cần thêm tích hợp mới, cố gắng nối nó vào backend/service layer hiện tại để mọi client (FE, Telegram, tác vụ sau này) dùng chung một luồng phân tích.
+- Luon xem repo nay la multi-agent market analysis platform, khong phai demo chat voi LLM.
+- Khi danh gia do chinh xac, phai xem ca data window, freshness, tool budget, structured evidence, verifier, va persistence.
+- Neu phai chon giua them tinh nang ngan han va giu dung kien truc FE/BE streaming dai han, uu tien kien truc dai han.
+- Neu can them tich hop moi, noi vao backend/service layer hien tai de FE, Telegram, va tac vu sau nay dung chung mot luong phan tich.
+- Khong tang depth, analyst count, hoac web-search requirement neu chua do duoc gia tri tang them so voi request/API cost.

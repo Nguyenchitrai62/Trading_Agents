@@ -86,6 +86,12 @@ class AgentState(MessagesState):
     verification_report_structured: Annotated[
         dict[str, Any], "Structured verification report"
     ]
+    verification_reference_price: Annotated[
+        float | None, "Realtime reference price used by the verifier"
+    ]
+    verification_reference_price_source: Annotated[
+        str, "Source of the verifier reference price"
+    ]
     past_context: Annotated[str, "Memory log context injected at run start (same-ticker decisions + cross-ticker lessons)"]
     coinglass_context: Annotated[str, "CoinGlass market context collected for the configured analyst path in this analysis run"]
     coinglass_package_contexts: Annotated[

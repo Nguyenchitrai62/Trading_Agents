@@ -23,7 +23,11 @@ def create_app() -> FastAPI:
     app = FastAPI(title=SETTINGS.app_title, version=SETTINGS.app_version)
 
     def current_history_public_read() -> bool:
-        return history_store.get_history_public_read(SETTINGS.history_public_read)
+        try:
+            return history_store.get_history_public_read(SETTINGS.history_public_read)
+        except Exception as exc:
+            logger.warning("history public-read setting unavailable; using configured default: %s", exc)
+            return SETTINGS.history_public_read
 
     def apply_api_response_headers(request: Request, response: Response) -> Response:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
