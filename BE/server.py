@@ -122,7 +122,9 @@ def create_app() -> FastAPI:
                 "max_tokens": SETTINGS.analysis_llm_max_tokens,
             },
             "auth": {
+                "enabled": SETTINGS.auth_enabled,
                 "google_client_id": SETTINGS.google_client_id,
+                "local_user": auth_service.local_admin_user() if not SETTINGS.auth_enabled else None,
             },
             "history": {
                 "configured": history_store.configured,

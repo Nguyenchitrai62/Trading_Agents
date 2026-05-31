@@ -302,6 +302,7 @@ class BackendSettings:
     default_research_depth: str
     default_checkpoint_enabled: bool
     default_history_access_days: int
+    auth_enabled: bool
     admin_emails: frozenset[str]
     auth_restrict_to_allowed_emails: bool
     google_allowed_email: str
@@ -380,6 +381,7 @@ class BackendSettings:
             default_research_depth=os.getenv("DEFAULT_RESEARCH_DEPTH", DEFAULT_RESEARCH_DEPTH).strip() or DEFAULT_RESEARCH_DEPTH,
             default_checkpoint_enabled=DEFAULT_CHECKPOINT_ENABLED,
             default_history_access_days=max(1, _env_int("DEFAULT_HISTORY_ACCESS_DAYS", DEFAULT_HISTORY_ACCESS_DAYS)),
+            auth_enabled=_env_bool("AUTH_ENABLED", _env_bool("AUTH", True)),
             admin_emails=admin_emails,
             auth_restrict_to_allowed_emails=_env_bool("AUTH_RESTRICT_TO_ALLOWED_EMAILS", False),
             google_allowed_email=google_allowed_email,

@@ -66,7 +66,9 @@ function normalizeFrontendConfig() {
             max_tokens: Number(source.chat?.maxTokens || source.chat?.max_tokens || 8000),
         },
         auth: {
+            enabled: true,
             google_client_id: "",
+            local_user: null,
         },
         history: {
             configured: Boolean(source.history?.configured ?? false),
@@ -202,6 +204,10 @@ function getGoogleClientId() {
     return state.config?.auth?.google_client_id || "";
 }
 
+function isAuthEnabled() {
+    return state.config?.auth?.enabled !== false;
+}
+
 function canReadHistory() {
     return Boolean(state.auth.canReadHistory);
 }
@@ -224,6 +230,9 @@ function getAuthHeaders() {
 }
 
 function getAdminAuthHeaders(extraHeaders = {}) {
+    if (!isAuthEnabled()) {
+        return { ...extraHeaders };
+    }
     const authHeaders = getAuthHeaders();
     if (!authHeaders.Authorization) {
         throw new Error("Admin API calls require an authenticated session header.");
@@ -235,6 +244,11 @@ function getAdminAuthHeaders(extraHeaders = {}) {
 }
 
 function persistAuthState() {
+    if (!isAuthEnabled()) {
+        safeRemoveSessionStorage(AUTH_STORAGE_KEY);
+        safeRemoveLocalStorage(AUTH_STORAGE_KEY);
+        return;
+    }
     if (!state.auth.idToken || !state.auth.profile) {
         safeRemoveSessionStorage(AUTH_STORAGE_KEY);
         safeRemoveLocalStorage(AUTH_STORAGE_KEY);
@@ -299,20 +313,24 @@ function clearAuthState() {
         state.chat.controller = null;
     }
     state.chat.isStreaming = false;
-    state.auth = {
-        idToken: "",
-        profile: null,
-        user: null,
-        status: "signed_out",
-        isAuthorized: false,
-        canRunAnalysis: false,
-        isAdmin: false,
-        canReadHistory: false,
-        historyAccessDays: null,
-        historyAccessUnlimited: false,
-        initialized: state.auth.initialized,
-        error: "",
-    };
+    if (!isAuthEnabled()) {
+        applyAuthDisabledUser();
+    } else {
+        state.auth = {
+            idToken: "",
+            profile: null,
+            user: null,
+            status: "signed_out",
+            isAuthorized: false,
+            canRunAnalysis: false,
+            isAdmin: false,
+            canReadHistory: false,
+            historyAccessDays: null,
+            historyAccessUnlimited: false,
+            initialized: state.auth.initialized,
+            error: "",
+        };
+    }
     safeRemoveSessionStorage(AUTH_STORAGE_KEY);
     safeRemoveLocalStorage(AUTH_STORAGE_KEY);
     if (window.google?.accounts?.id) {
@@ -328,6 +346,11 @@ function clearAuthState() {
 }
 
 async function validateAuthSession() {
+    if (!isAuthEnabled()) {
+        applyAuthDisabledUser();
+        renderAuthState();
+        return true;
+    }
     if (!state.auth.idToken || isJwtExpired(state.auth.profile || {})) {
         clearAuthState();
         return false;
@@ -382,6 +405,10 @@ async function setGoogleCredential(idToken) {
 }
 
 async function ensureAuthorizedSession() {
+    if (!isAuthEnabled()) {
+        applyAuthDisabledUser();
+        return true;
+    }
     if (!state.auth.idToken) {
         throw new Error("Sign in with Google before continuing.");
     }
@@ -425,7 +452,38 @@ function renderGoogleSignInFallback(message = "Google sign-in is not ready.") {
     }
 }
 
+function applyAuthDisabledUser() {
+    const user = state.config?.auth?.local_user || {
+        email: "local-admin@tradingagents.local",
+        sub: "local-auth-disabled",
+        name: "Local Admin",
+        picture: "",
+        email_verified: true,
+        authorized: true,
+        is_admin: true,
+        role: "admin",
+        can_run_analysis: true,
+        can_read_history: true,
+        history_access_days: null,
+        history_access_unlimited: true,
+        auth_disabled: true,
+    };
+    state.auth.idToken = "";
+    state.auth.profile = normalizeAuthProfile(user);
+    applyAuthUser(user);
+    state.auth.status = "authorized";
+    state.auth.initialized = true;
+    state.auth.error = "";
+    safeRemoveSessionStorage(AUTH_STORAGE_KEY);
+    safeRemoveLocalStorage(AUTH_STORAGE_KEY);
+}
+
 function initializeGoogleAuth() {
+    if (!isAuthEnabled()) {
+        applyAuthDisabledUser();
+        renderAuthState();
+        return;
+    }
     const clientId = getGoogleClientId();
     state.auth.initialized = true;
     renderAuthState();
@@ -532,12 +590,16 @@ function renderAuthState() {
     const name = profile.name || "";
     const profileLabel = email || name || "Google account";
     const profileInitial = (email || name || "G").trim().charAt(0).toUpperCase() || "G";
-    const showProfile = Boolean(state.auth.idToken);
+    const authDisabled = !isAuthEnabled();
+    const showProfile = Boolean(state.auth.idToken || authDisabled);
     let label = "";
     let status = "idle";
     if (state.auth.status === "validating") {
         label = "Checking Google";
         status = "running";
+    } else if (authDisabled && state.auth.isAuthorized) {
+        label = "Auth off - local admin";
+        status = "completed";
     } else if (state.auth.isAuthorized && email) {
         const accessLabel = state.auth.isAdmin ? "admin" : state.auth.canRunAnalysis ? "can run" : "history";
         label = `${email} - ${accessLabel}`;
@@ -552,7 +614,7 @@ function renderAuthState() {
 
     if (elements.authStatusText instanceof HTMLElement) {
         elements.authStatusText.textContent = label;
-        elements.authStatusText.title = state.auth.error || "Authorized Google account required.";
+        elements.authStatusText.title = authDisabled ? "AUTH_ENABLED=false: local admin permissions are active." : state.auth.error || "Authorized Google account required.";
         elements.authStatusText.dataset.state = status;
     }
     if (elements.authProfile instanceof HTMLElement) {
@@ -576,8 +638,8 @@ function renderAuthState() {
             elements.authProfileAvatar.removeAttribute("src");
         }
     }
-    elements.signOutButton.classList.toggle("hidden", !showProfile);
-    elements.googleSignInButton.classList.toggle("hidden", showProfile);
+    elements.signOutButton.classList.toggle("hidden", !showProfile || authDisabled);
+    elements.googleSignInButton.classList.toggle("hidden", showProfile || authDisabled);
     if (elements.adminPageButton instanceof HTMLElement) {
         elements.adminPageButton.classList.toggle("hidden", !state.auth.isAdmin);
     }
