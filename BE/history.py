@@ -641,11 +641,7 @@ class TursoHistoryStore:
             """
             SELECT
                 r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
-                d.current_price, d.primary_limit_price, d.secondary_limit_price,
-                d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
-                d.verification_verdict, d.verification_action,
+                r.output_language, r.research_depth, r.model, r.signal,
                 r.elapsed_seconds, r.created_at, r.section_count,
                 (
                     SELECT s.markdown
@@ -655,7 +651,6 @@ class TursoHistoryStore:
                     LIMIT 1
                 ) AS final_markdown
             FROM analysis_runs r
-            LEFT JOIN analysis_decisions d ON d.run_id = r.id
             WHERE r.user_email = ?
             ORDER BY r.created_at DESC
             LIMIT ?
@@ -670,16 +665,11 @@ class TursoHistoryStore:
         return self._query_rows(
             """
             SELECT
-                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
-                d.current_price, d.primary_limit_price, d.secondary_limit_price,
-                d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
-                d.verification_verdict, d.verification_action,
-                r.elapsed_seconds, r.created_at, r.section_count
-            FROM analysis_runs r
-            LEFT JOIN analysis_decisions d ON d.run_id = r.id
-            ORDER BY r.created_at DESC
+                id, symbol, asset_type, analysis_date, lookback_days,
+                output_language, research_depth, model, signal,
+                elapsed_seconds, created_at, section_count
+            FROM analysis_runs
+            ORDER BY created_at DESC
             LIMIT ?
             OFFSET ?
             """,
@@ -697,14 +687,9 @@ class TursoHistoryStore:
             f"""
             SELECT
                 r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
-                d.current_price, d.primary_limit_price, d.secondary_limit_price,
-                d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
-                d.verification_verdict, d.verification_action,
+                r.output_language, r.research_depth, r.model, r.signal,
                 r.elapsed_seconds, r.created_at, r.section_count, r.user_email
             FROM analysis_runs r
-            LEFT JOIN analysis_decisions d ON d.run_id = r.id
             {where_clause}
             ORDER BY r.created_at DESC
             LIMIT ?
@@ -781,23 +766,17 @@ class TursoHistoryStore:
     def get_accessible_run_meta(self, run_id: str, history_access_days: int | None) -> dict | None:
         self.ensure_schema()
         cutoff = self._history_cutoff(history_access_days)
-        where_clause = "AND r.created_at >= ?" if cutoff else ""
+        where_clause = "AND created_at >= ?" if cutoff else ""
         args: list[object] = [run_id]
         if cutoff:
             args.append(cutoff)
         runs = self._query_rows(
             f"""
-            SELECT
-                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
-                d.current_price, d.primary_limit_price, d.secondary_limit_price,
-                d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
-                d.verification_verdict, d.verification_action,
-                r.elapsed_seconds, r.created_at, r.section_count, r.user_email
-            FROM analysis_runs r
-            LEFT JOIN analysis_decisions d ON d.run_id = r.id
-            WHERE r.id = ? {where_clause}
+            SELECT id, symbol, asset_type, analysis_date, lookback_days,
+                output_language, research_depth, model, signal, elapsed_seconds,
+                created_at, section_count, user_email
+            FROM analysis_runs
+            WHERE id = ? {where_clause}
             LIMIT 1
             """,
             args,
@@ -857,25 +836,6 @@ class TursoHistoryStore:
         )
         if not rows:
             return None
-        summary_lines = ["# Final Decision Snapshot", ""]
-        summary_pairs = [
-            ("Signal", item.get("signal")),
-            ("Current Price", item.get("current_price")),
-            ("Primary Limit Price", item.get("primary_limit_price")),
-            ("Secondary Limit Price", item.get("secondary_limit_price")),
-            ("Stop Loss", item.get("stop_loss")),
-            ("Take Profit", item.get("take_profit")),
-            ("Position Sizing", item.get("position_sizing")),
-            ("Time Horizon", item.get("time_horizon")),
-            ("Verification Verdict", item.get("verification_verdict")),
-            ("Verification Action", item.get("verification_action")),
-        ]
-        for label, value in summary_pairs:
-            if value in (None, ""):
-                continue
-            summary_lines.append(f"- {label}: {value}")
-        if len(summary_lines) > 2:
-            summary_lines.append("")
         markdown_blocks = []
         for row in rows:
             markdown = str(row.get("markdown") or "").strip()
@@ -892,7 +852,7 @@ class TursoHistoryStore:
                 "title": "Final Decision",
                 "agent": "Portfolio Manager",
                 "team": "Portfolio Management",
-                "markdown": "\n".join(summary_lines + ["\n\n---\n\n".join(markdown_blocks)]).strip(),
+                "markdown": "\n\n---\n\n".join(markdown_blocks),
                 "created_at": rows[0].get("created_at"),
             },
         }
@@ -955,17 +915,10 @@ class TursoHistoryStore:
         self.ensure_schema()
         runs = self._query_rows(
             """
-            SELECT
-                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
-                d.current_price, d.primary_limit_price, d.secondary_limit_price,
-                d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
-                d.verification_verdict, d.verification_action,
-                r.elapsed_seconds, r.created_at
-            FROM analysis_runs r
-            LEFT JOIN analysis_decisions d ON d.run_id = r.id
-            WHERE r.id = ? AND r.user_email = ?
+            SELECT id, symbol, asset_type, analysis_date, lookback_days,
+                output_language, research_depth, model, signal, elapsed_seconds, created_at
+            FROM analysis_runs
+            WHERE id = ? AND user_email = ?
             LIMIT 1
             """,
             [run_id, user_email],
@@ -988,17 +941,10 @@ class TursoHistoryStore:
         self.ensure_schema()
         runs = self._query_rows(
             """
-            SELECT
-                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
-                d.current_price, d.primary_limit_price, d.secondary_limit_price,
-                d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
-                d.verification_verdict, d.verification_action,
-                r.elapsed_seconds, r.created_at
-            FROM analysis_runs r
-            LEFT JOIN analysis_decisions d ON d.run_id = r.id
-            WHERE r.id = ?
+            SELECT id, symbol, asset_type, analysis_date, lookback_days,
+                output_language, research_depth, model, signal, elapsed_seconds, created_at
+            FROM analysis_runs
+            WHERE id = ?
             LIMIT 1
             """,
             [run_id],

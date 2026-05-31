@@ -72,7 +72,6 @@ class Propagator:
             "verification_report_structured": {},
             "verification_reference_price": None,
             "verification_reference_price_source": "",
-            "decision_revision_count": 0,
         }
 
     def get_graph_args(self, callbacks: Optional[List] = None) -> Dict[str, Any]:

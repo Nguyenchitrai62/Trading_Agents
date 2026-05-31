@@ -2486,14 +2486,16 @@ class AnalysisService:
             completed_sections_patch = self.build_changed_sections(previous_snapshot.get("sections", {}), completed_snapshot["sections"])
             completed_research_patch = self.build_changed_fields(previous_snapshot.get("investment", {}), completed_snapshot["investment"])
             completed_risk_patch = self.build_changed_fields(previous_snapshot.get("risk", {}), completed_snapshot["risk"])
+<<<<<<< HEAD
             final_progress_keys = set(completed_sections_patch)
             previous_structured = previous_snapshot.get("structured", {})
             for structured_key, payload in (completed_snapshot.get("structured") or {}).items():
                 if payload and payload != previous_structured.get(structured_key):
                     final_progress_keys.add(f"{structured_key}_structured")
+=======
+            signal = graph.process_signal(final_state["final_trade_decision"])
+>>>>>>> parent of 1535373 (feat: Enhance analysis and history management with structured decision feedback)
             verification_payload = final_state.get("verification_report_structured") or {}
-            decision_payload = final_state.get("final_trade_decision_structured") or {}
-            signal = str(decision_payload.get("signal") or graph.process_signal(final_state["final_trade_decision"])).strip()
             verification_verdict = str(verification_payload.get("verdict") or "").strip()
             verification_action = str(verification_payload.get("recommended_action") or "").strip()
             elapsed_seconds = round(time.time() - started_at, 2)

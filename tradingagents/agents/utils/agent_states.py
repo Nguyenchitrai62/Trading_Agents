@@ -92,9 +92,6 @@ class AgentState(MessagesState):
     verification_reference_price_source: Annotated[
         str, "Source of the verifier reference price"
     ]
-    decision_revision_count: Annotated[
-        int, "Number of portfolio decision revision attempts triggered by the verifier"
-    ]
     past_context: Annotated[str, "Memory log context injected at run start (same-ticker decisions + cross-ticker lessons)"]
     coinglass_context: Annotated[str, "CoinGlass market context collected for the configured analyst path in this analysis run"]
     coinglass_package_contexts: Annotated[

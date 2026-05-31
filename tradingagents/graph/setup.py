@@ -182,13 +182,6 @@ class GraphSetup:
         )
 
         workflow.add_edge("Portfolio Manager", "Verifier")
-        workflow.add_conditional_edges(
-            "Verifier",
-            self.conditional_logic.should_continue_portfolio_verification,
-            {
-                "Portfolio Manager": "Portfolio Manager",
-                END: END,
-            },
-        )
+        workflow.add_edge("Verifier", END)
 
         return workflow

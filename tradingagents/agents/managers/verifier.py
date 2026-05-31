@@ -263,19 +263,6 @@ Be strict. If a strong claim is not grounded in the supplied evidence, call it o
                 verification_report.rstrip()
                 + "\n\n**Deterministic Override**: Hard blockers were detected, so the final decision should be revised before execution."
             )
-            structured_payload = {
-                "verdict": VerificationVerdict.REVISE.value,
-                "deterministic_checks": deterministic["summary"],
-                "evidence_support": "",
-                "unsupported_claims": "",
-                "confidence_note": "Deterministic blockers were detected even though the structured verifier output could not be parsed.",
-                "recommended_action": "Return to the Portfolio Manager and revise the order plan before execution.",
-            }
-
-        revision_count = int(state.get("decision_revision_count") or 0)
-        verdict_text = str(structured_payload.get("verdict") or "").strip().lower()
-        if verdict_text and verdict_text != "approved":
-            revision_count += 1
 
         return {
             "messages": [AIMessage(content=verification_report)],
@@ -283,7 +270,6 @@ Be strict. If a strong claim is not grounded in the supplied evidence, call it o
             "verification_report_structured": structured_payload,
             "verification_reference_price": deterministic["current_price"],
             "verification_reference_price_source": "binance_spot" if deterministic["current_price"] is not None else "",
-            "decision_revision_count": revision_count,
         }
 
     return verifier_node
