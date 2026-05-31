@@ -104,11 +104,12 @@ const DETAIL_PANEL_META = {
     traderExtractor: { title: "Trader Plan Extractor", subtitle: "Structured handoff" },
     decisionExtractor: { title: "Decision Extractor", subtitle: "Structured order fields" },
     verifierStructured: { title: "Verifier Payload", subtitle: "Structured verification" },
+    persistence: { title: "History + Decision Persistence", subtitle: "Persistence status" },
     liveCcxtData: { title: "CCXT Market Data", subtitle: "Raw market tool results" },
     liveCoinGlassData: { title: "CoinGlass Data", subtitle: "Endpoint source results" },
     liveNewsData: { title: "News Data", subtitle: "News and web source results" },
     liveSocialData: { title: "Social / Web Data", subtitle: "Social and web source results" },
-    liveFlowData: { title: "Flow Data", subtitle: "Flow and liquidity source results" },
+    liveFlowData: { title: "On-chain Data", subtitle: "Flow and liquidity source results" },
 };
 
 const HISTORY_FLOW_SECTION_ORDER = {

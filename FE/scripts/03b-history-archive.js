@@ -35,6 +35,12 @@ function formatHistoryElapsedSeconds(value) {
 }
 
 function formatHistoryPrice(value) {
+    if (value === null) {
+        return "null";
+    }
+    if (value === undefined || value === "") {
+        return "-";
+    }
     const price = Number(value);
     if (!Number.isFinite(price)) {
         return "-";
@@ -250,9 +256,10 @@ function renderHistoryCurveWire(paths = [], className = "", viewBox = "0 0 100 1
 }
 
 function buildHistoryDiagramModel(sections = []) {
-    const sectionsByKey = new Map(sections.map((section) => [section.section_key, section]));
+    const diagramSections = sections.filter((section) => section.artifact_type !== "flow_block");
+    const sectionsByKey = new Map(diagramSections.map((section) => [section.section_key, section]));
     const knownKeys = new Set(Object.values(HISTORY_FLOW_SECTION_ORDER).flat());
-    const sourceSections = sections.filter((section) => section.artifact_type === "source" || String(section.section_key || "").startsWith("source_"));
+    const sourceSections = diagramSections.filter((section) => section.artifact_type === "source" || String(section.section_key || "").startsWith("source_"));
     const sourceGroups = {
         ccxt: sourceSections.filter((section) => section.flow_group === "ccxt_market_data"),
         coinglass: sourceSections.filter((section) => section.flow_group === "coinglass_data"),
@@ -277,7 +284,7 @@ function buildHistoryDiagramModel(sections = []) {
         verifier: sectionsByKey.get("verification_report") || null,
         verifierStructured: sectionsByKey.get("verification_report_structured") || null,
         persistence: sectionsByKey.get("history_persistence") || null,
-        extras: sections.filter((section) => !knownKeys.has(section.section_key)),
+        extras: diagramSections.filter((section) => !knownKeys.has(section.section_key)),
     };
 }
 
@@ -386,7 +393,7 @@ function renderHistoryDiagramSourcesGroup(diagram = {}, options = {}) {
         ["CoinGlass data", "coinglass", diagram.sourceGroups?.coinglass || []],
         ["News data", "news", diagram.sourceGroups?.news || []],
         ["Social / web data", "social", diagram.sourceGroups?.social || []],
-        ["Flow data", "flow", diagram.sourceGroups?.flow || []],
+        ["On-chain data", "flow", diagram.sourceGroups?.flow || []],
         ["Endpoint summaries", "endpoint", diagram.endpointSummaries ? [diagram.endpointSummaries] : []],
     ].filter(([_label, _key, nodes]) => nodes.length);
     if (!groups.length) {

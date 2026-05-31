@@ -106,8 +106,10 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
     elif signal == "Market Sell":
         if primary is not None or secondary is not None:
             blockers.append("Market Sell should not include limit prices.")
-        if take_profit is not None:
-            blockers.append("Market Sell should not include a take-profit target in this long-only workflow.")
+        if stop_loss is None:
+            blockers.append("Market Sell is missing a stop-loss or invalidation level.")
+        if take_profit is None:
+            blockers.append("Market Sell is missing a take-profit or next exit objective.")
 
     summary_lines = []
     summary_lines.append("Deterministic findings:")

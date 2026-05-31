@@ -369,14 +369,21 @@ class PortfolioDecision(BaseModel):
     )
     stop_loss: Optional[float] = Field(
         default=None,
-        description="Optional invalidation or stop-loss level in the instrument's quote currency.",
+        description=(
+            "Invalidation or stop-loss level in the instrument's quote currency. "
+            "Required for Market Buy and Market Sell. Optional for Limit Buy or "
+            "Limit Sell only when the prose explicitly says there is no remaining "
+            "exposure after execution."
+        ),
     )
     take_profit: Optional[float] = Field(
         default=None,
         description=(
-            "Optional first take-profit or target price in the instrument's quote "
-            "currency. Leave empty for Limit Sell and Market Sell in this long-only "
-            "workflow."
+            "First take-profit, target, or profit-protection level in the "
+            "instrument's quote currency. Required for Market Buy and Market Sell. "
+            "For Market Sell, this is the target level for any remaining long "
+            "tranche or the next downside exit objective, not a new short thesis. "
+            "Leave empty for Limit Sell in this long-only workflow."
         ),
     )
     position_sizing: Optional[str] = Field(
@@ -400,7 +407,7 @@ class PortfolioDecision(BaseModel):
         if self.signal != ExecutionSignal.LIMIT_SELL:
             self.primary_limit_sell_price = None
             self.secondary_limit_sell_price = None
-        if self.signal in {ExecutionSignal.LIMIT_SELL, ExecutionSignal.MARKET_SELL, ExecutionSignal.HOLD}:
+        if self.signal in {ExecutionSignal.LIMIT_SELL, ExecutionSignal.HOLD}:
             self.take_profit = None
         if self.signal == ExecutionSignal.HOLD:
             self.stop_loss = None

@@ -101,6 +101,10 @@ def validate_portfolio_decision(
     if signal == "Market Buy":
         if buy_primary is not None or buy_secondary is not None or sell_primary is not None or sell_secondary is not None:
             errors.append("Market Buy must not contain limit ladder fields.")
+        if stop_loss is None:
+            errors.append("Market Buy requires stop_loss.")
+        if take_profit is None:
+            errors.append("Market Buy requires take_profit.")
         if current_price is not None and stop_loss is not None and stop_loss >= current_price:
             errors.append("Market Buy stop_loss must be below current price.")
         if current_price is not None and take_profit is not None and take_profit <= current_price:
@@ -125,8 +129,10 @@ def validate_portfolio_decision(
             errors.append("Market Sell must not contain limit ladder fields.")
         if buy_primary is not None or buy_secondary is not None:
             errors.append("Sell signals must not contain buy entry ladders.")
-        if take_profit is not None:
-            errors.append("Sell signals must not contain upside take-profit ladders.")
+        if stop_loss is None:
+            errors.append("Market Sell requires stop_loss for remaining long exposure or execution invalidation.")
+        if take_profit is None:
+            errors.append("Market Sell requires take_profit as a next exit objective or profit-protection level.")
 
     if signal in SELL_SIGNALS and _mentions_short_exposure(decision_text):
         errors.append("Sell signals represent long-only reduction/exit and must not describe new short exposure.")

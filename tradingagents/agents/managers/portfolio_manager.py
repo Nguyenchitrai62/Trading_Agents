@@ -176,7 +176,8 @@ def create_portfolio_manager(llm):
     - For **Limit Sell**, the limit price must be a better exit level for the current long position. If immediate selling is the right action, choose **Market Sell** instead.
     - If you choose **Hold**, explain what confirmation, catalyst, or price zone would be needed before placing an order.
     - When the setup is actionable, include stop-loss, take-profit, and position sizing.
-    - For **Limit Sell** or **Market Sell**, do not include a new short thesis or an upside take-profit ladder. Use **Position Sizing** to say how much of the current long to trim or exit, and only use **Stop Loss** if you explicitly keep a remaining long tranche.
+    - For **Market Buy** and **Market Sell**, stop-loss and take-profit are mandatory because the structured output is persisted for execution review.
+    - For **Limit Sell** or **Market Sell**, do not include a new short thesis or an upside take-profit ladder. Use **Position Sizing** to say how much of the current long to trim or exit, and use **Stop Loss**/**Take Profit** only for remaining long exposure or the next exit objective.
     - The first line of your answer must be exactly one signal and nothing else:
       Market Buy, Limit Buy, Hold, Limit Sell, or Market Sell.
     - After the first line, write a concise prose explanation for a human reader. Do not output JSON.
@@ -206,7 +207,8 @@ Use signal-specific limit fields:
 - primary_limit_buy_price / secondary_limit_buy_price only for Limit Buy.
 - primary_limit_sell_price / secondary_limit_sell_price only for Limit Sell.
 - Sell signals are long-only reduction or exit plans, never new short exposure.
-- Sell signals must not contain buy ladders or upside take-profit ladders.
+- Limit Sell must not contain buy ladders or upside take-profit ladders.
+- Market Buy and Market Sell must include stop_loss and take_profit when the prose supports immediate execution.
 
 Current reference price: {current_price if current_price is not None else "unavailable"}
 

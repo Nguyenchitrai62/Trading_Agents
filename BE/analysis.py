@@ -2391,6 +2391,8 @@ class AnalysisService:
             for artifact in source_artifacts:
                 group_key = str(artifact.get("flow_group") or "other")
                 source_artifact_groups[group_key] = source_artifact_groups.get(group_key, 0) + 1
+            final_state["selected_analysts"] = list(filtered_analysts)
+            final_state["source_artifact_groups"] = dict(source_artifact_groups)
             history_sections = build_history_sections(final_state)
             if self.history_store.configured:
                 try:

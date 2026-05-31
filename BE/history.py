@@ -1093,6 +1093,161 @@ def _endpoint_summaries_to_markdown(endpoint_summaries: object) -> str:
     return "\n\n".join(["# Endpoint Summaries", prompt_block, "\n".join(rows)]).strip()
 
 
+def _flow_block_markdown(title: str, status: str, summary: str, payload: dict) -> str:
+    related_sections = payload.get("related_sections") if isinstance(payload, dict) else []
+    related_sources = payload.get("source_groups") if isinstance(payload, dict) else []
+    lines = [
+        f"# {title}",
+        "",
+        f"- Status: {status or 'pending'}",
+    ]
+    if summary:
+        lines.append(f"- Summary: {summary}")
+    if isinstance(related_sections, list) and related_sections:
+        lines.append("- Related sections: " + ", ".join(str(item) for item in related_sections if item))
+    if isinstance(related_sources, list) and related_sources:
+        lines.append("- Related source groups: " + ", ".join(str(item) for item in related_sources if item))
+    lines.extend(["", "```json", json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str), "```"])
+    return "\n".join(lines).strip()
+
+
+def _build_flow_block_sections(final_state: dict) -> list[dict]:
+    sections: list[dict] = []
+    selected_analysts = set(final_state.get("selected_analysts") or ["market", "social", "news", "fundamentals"])
+    source_group_counts = final_state.get("source_artifact_groups") or {}
+
+    def has_text(key: str) -> bool:
+        return bool(str(final_state.get(key) or "").strip())
+
+    def has_payload(key: str) -> bool:
+        payload = final_state.get(key)
+        return isinstance(payload, (dict, list)) and bool(payload)
+
+    def status_for(ready: bool, prerequisite: bool = True) -> str:
+        if ready:
+            return "completed"
+        return "pending" if prerequisite else "not_selected"
+
+    def source_ready(*groups: str) -> bool:
+        return any(int(source_group_counts.get(group) or 0) > 0 for group in groups)
+
+    def add(
+        block_key: str,
+        title: str,
+        stage: str,
+        group: str,
+        status: str,
+        tone: str,
+        *,
+        summary: str = "",
+        related_sections: list[str] | None = None,
+        source_groups: list[str] | None = None,
+        detail_type: str = "section",
+        agent: str = "Flow Runtime",
+        team: str = "Main View",
+    ) -> None:
+        payload = {
+            "block_key": block_key,
+            "title": title,
+            "stage": stage,
+            "group": group,
+            "status": status,
+            "tone": tone,
+            "detail_type": detail_type,
+            "related_sections": related_sections or [],
+            "source_groups": source_groups or [],
+        }
+        sections.append(
+            {
+                "section_key": f"flow_block_{block_key}",
+                "title": title,
+                "agent": agent,
+                "team": team,
+                "markdown": _flow_block_markdown(title, status, summary, payload),
+                "artifact_type": "flow_block",
+                "flow_stage": stage,
+                "flow_group": group,
+                "source_kind": "flow_block",
+                "source_key": block_key,
+                "summary": summary,
+                "payload_json": payload,
+            }
+        )
+
+    source_specs = [
+        ("ccxt_data", "CCXT Market Data", "market", "ccxt_market_data", ["ccxt_market_data"], source_ready("ccxt_market_data")),
+        ("market_summary", "Market Summary", "market", "ccxt_market_data", ["ccxt_market_data"], source_ready("ccxt_market_data")),
+        ("coinglass_data", "CoinGlass Data", "fundamentals", "coinglass_data", ["coinglass_data"], source_ready("coinglass_data") or bool(final_state.get("endpoint_summaries"))),
+        ("coinglass_summary", "Derivatives / Flow Summary", "fundamentals", "coinglass_data", ["coinglass_data", "endpoint_summaries"], source_ready("coinglass_data") or bool(final_state.get("endpoint_summaries"))),
+        ("news_data", "News Data", "news", "news_data", ["news_data"], source_ready("news_data")),
+        ("news_summary", "News Summary", "news", "news_data", ["news_data"], source_ready("news_data")),
+        ("social_data", "Social / Web Data", "social", "social_web_data", ["social_web_data"], source_ready("social_web_data")),
+        ("social_summary", "Social Summary", "social", "social_web_data", ["social_web_data"], source_ready("social_web_data")),
+        ("flow_data", "On-chain / Liquidity Data", "fundamentals", "flow_data", ["flow_data"], source_ready("flow_data")),
+        ("flow_summary", "Flow Summary", "fundamentals", "flow_data", ["flow_data"], source_ready("flow_data")),
+    ]
+    for block_key, title, analyst_key, group, source_groups, ready in source_specs:
+        selected = analyst_key in selected_analysts
+        add(
+            block_key,
+            title,
+            "sources",
+            group,
+            status_for(ready, selected),
+            "source",
+            summary=f"{title} source package for Main View.",
+            source_groups=source_groups,
+            detail_type="source_group",
+            agent="Source Layer",
+            team="Source Layer",
+        )
+
+    evidence_ready = bool(final_state.get("evidence_items"))
+    add("evidence_extractor", "Evidence Extractor", "evidence", "evidence_extractor", status_for(evidence_ready), "evidence", related_sections=["structured_evidence"], summary="Extracted structured evidence from source-backed analyst outputs.")
+
+    analyst_specs = [
+        ("market_analyst", "Market Analyst", "market", "market_report"),
+        ("social_analyst", "Social Analyst", "social", "sentiment_report"),
+        ("news_analyst", "News Analyst", "news", "news_report"),
+        ("flow_analyst", "Flow Analyst", "fundamentals", "flow_report"),
+    ]
+    for block_key, title, analyst_key, section_key in analyst_specs:
+        selected = analyst_key in selected_analysts
+        add(
+            block_key,
+            title,
+            "analysts",
+            "analyst_reports",
+            status_for(has_text(section_key), selected),
+            "signal",
+            related_sections=[section_key],
+            summary=f"{title} report block.",
+            agent=title,
+            team="Analyst Team",
+        )
+
+    add("evidence_ledger", "Evidence Ledger", "evidence", "evidence_extractor", status_for(evidence_ready), "evidence", related_sections=["structured_evidence"], summary="Evidence ledger available to downstream agents.")
+
+    investment = final_state.get("investment_debate_state") or {}
+    risk = final_state.get("risk_debate_state") or {}
+    add("bull_researcher", "Bull Researcher", "research", "research_debate", status_for(bool(investment.get("bull_history"))), "bull", related_sections=["bull_research"], agent="Bull Researcher", team="Research Team")
+    add("bear_researcher", "Bear Researcher", "research", "research_debate", status_for(bool(investment.get("bear_history"))), "bear", related_sections=["bear_research"], agent="Bear Researcher", team="Research Team")
+    add("research_debate", "Research Debate", "research", "research_debate", status_for(bool(investment.get("history"))), "debate", related_sections=["research_debate"], agent="Research Team", team="Research Team")
+    add("research_manager", "Research Manager", "research", "investment_plan", status_for(has_text("investment_plan")), "plan", related_sections=["investment_plan"], agent="Research Manager", team="Research Team")
+    add("investment_extractor", "Investment Plan Extractor", "extraction", "investment_plan_structured", status_for(has_payload("investment_plan_structured")), "evidence", related_sections=["investment_plan_structured"], agent="Investment Plan Extractor", team="Research Team")
+    add("trader", "Trader", "trading", "trader_investment_plan", status_for(has_text("trader_investment_plan")), "trader", related_sections=["trader_investment_plan"], agent="Trader", team="Trading Team")
+    add("trader_extractor", "Trader Plan Extractor", "extraction", "trader_investment_plan_structured", status_for(has_payload("trader_investment_plan_structured")), "evidence", related_sections=["trader_investment_plan_structured"], agent="Trader Plan Extractor", team="Trading Team")
+    add("aggressive_risk", "Aggressive Analyst", "risk", "risk_debate", status_for(bool(risk.get("aggressive_history") or risk.get("current_aggressive_response"))), "aggressive", related_sections=["aggressive_risk"], agent="Aggressive Analyst", team="Risk Team")
+    add("conservative_risk", "Conservative Analyst", "risk", "risk_debate", status_for(bool(risk.get("conservative_history") or risk.get("current_conservative_response"))), "conservative", related_sections=["conservative_risk"], agent="Conservative Analyst", team="Risk Team")
+    add("neutral_risk", "Neutral Analyst", "risk", "risk_debate", status_for(bool(risk.get("neutral_history") or risk.get("current_neutral_response"))), "neutral", related_sections=["neutral_risk"], agent="Neutral Analyst", team="Risk Team")
+    add("risk_debate", "Risk Debate", "risk", "risk_debate", status_for(bool(risk.get("history"))), "risk", related_sections=["risk_debate"], agent="Risk Team", team="Risk Team")
+    add("portfolio_manager", "Portfolio Manager", "portfolio", "final_trade_decision", status_for(has_text("final_trade_decision")), "decision", related_sections=["final_trade_decision"], agent="Portfolio Manager", team="Portfolio Management")
+    add("decision_extractor", "Decision Extractor", "extraction", "final_trade_decision_structured", status_for(has_payload("final_trade_decision_structured")), "evidence", related_sections=["final_trade_decision_structured"], agent="Decision Extractor", team="Portfolio Management")
+    add("verifier", "Verifier", "portfolio", "verification_report", status_for(has_text("verification_report")), "review", related_sections=["verification_report", "verification_report_structured"], agent="Verifier", team="Portfolio Management")
+    add("persistence", "History + Decision Persistence", "persistence", "history_persistence", "completed", "evidence", related_sections=["history_persistence"], agent="History Store", team="Persistence")
+    return sections
+
+
 def build_history_sections(final_state: dict) -> list[dict]:
     sections: list[dict] = []
     seen_keys: set[str] = set()
@@ -1109,6 +1264,9 @@ def build_history_sections(final_state: dict) -> list[dict]:
     for artifact in final_state.get("flow_artifacts") or []:
         if isinstance(artifact, dict):
             add(artifact)
+
+    for flow_block in _build_flow_block_sections(final_state):
+        add(flow_block)
 
     add(
         _history_section(
