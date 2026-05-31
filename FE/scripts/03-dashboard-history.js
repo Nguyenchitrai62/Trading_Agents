@@ -334,6 +334,27 @@ function getLiveFlowBlockError(blockKey = "") {
     return state.run.blockErrors?.[blockKey] || "";
 }
 
+function isLiveFlowBlockLockedComplete(blockKey = "") {
+    return Boolean(blockKey && state.run.flowCompletedBlocks?.has?.(blockKey));
+}
+
+function markLiveFlowBlockComplete(blockKey = "") {
+    if (!blockKey) {
+        return;
+    }
+    state.run.flowCompletedBlocks = state.run.flowCompletedBlocks || new Set();
+    state.run.flowCompletedBlocks.add(blockKey);
+}
+
+function resolveLiveFlowNodeStatus(node = {}) {
+    const fallbackStatus = node.ready ? "completed" : "pending";
+    const rawStatus = String(node.status || fallbackStatus);
+    if (rawStatus !== "error" && isLiveFlowBlockLockedComplete(node.blockKey)) {
+        return "completed";
+    }
+    return rawStatus;
+}
+
 function getLiveEvidenceCount() {
     const completeCount = state.run.complete?.evidence_count;
     if (completeCount !== undefined && completeCount !== null) {
@@ -505,11 +526,14 @@ function getLiveSourceSummaryReady(groupKey = "") {
 
 function buildLiveSourceDataNode(groupKey, title, ready, status, tone, detailKey, blockKey) {
     const error = getLiveFlowBlockError(blockKey);
+    const lockedComplete = isLiveFlowBlockLockedComplete(blockKey);
+    const finalReady = Boolean(ready || lockedComplete);
+    const finalStatus = error ? "error" : lockedComplete ? "completed" : status;
     return {
         blockKey,
         title,
-        ready: Boolean(ready),
-        status: error ? "error" : status,
+        ready: finalReady,
+        status: finalStatus,
         tone,
         detail: { key: detailKey },
         error,
@@ -518,11 +542,14 @@ function buildLiveSourceDataNode(groupKey, title, ready, status, tone, detailKey
 
 function buildLiveSourceSummaryNode(groupKey, title, ready, status, blockKey) {
     const error = getLiveFlowBlockError(blockKey);
+    const lockedComplete = isLiveFlowBlockLockedComplete(blockKey);
+    const finalReady = Boolean(ready || lockedComplete);
+    const finalStatus = error ? "error" : lockedComplete ? "completed" : status;
     return {
         blockKey,
         title,
-        ready: Boolean(ready),
-        status: error ? "error" : status,
+        ready: finalReady,
+        status: finalStatus,
         tone: "evidence",
         detail: { key: `live${groupKey[0].toUpperCase()}${groupKey.slice(1)}Summary` },
         error,
@@ -765,27 +792,34 @@ function buildLiveFlowNodes() {
     };
     const sourceGroupOwnerReportsDone = (groupKey) => Object.entries(analystSourceGroups)
         .some(([analystKey, groupKeys]) => selectedAnalysts.has(analystKey) && groupKeys.includes(groupKey) && analystReportDone(analystKey));
+    const sourceGroupSelected = (groupKey) => Object.entries(analystSourceGroups)
+        .some(([analystKey, groupKeys]) => selectedAnalysts.has(analystKey) && groupKeys.includes(groupKey));
     const sourceDoneForGroup = (groupKey) => {
         const resultCount = getLiveSourceTraceEntries(groupKey).length;
         const pendingCount = getLiveSourcePendingTraceEntries(groupKey).length;
-        const hasResult = resultCount > 0 || savedGroupReady(groupKey) || sourceGroupOwnerReportsDone(groupKey) || (groupKey === "coinglass" && endpointReady);
+        const hasResult = resultCount > 0 || savedGroupReady(groupKey) || (groupKey === "coinglass" && endpointReady);
         const hasPending = pendingCount > 0;
+        const lockedComplete = isLiveFlowBlockLockedComplete(`${groupKey}_data`) || isLiveFlowBlockLockedComplete(`${groupKey}_summary`);
+        if (sourceGroupSelected(groupKey)) {
+            return Boolean(sourceGroupOwnerReportsDone(groupKey) || lockedComplete || (hasResult && !hasPending));
+        }
         return Boolean(hasResult && !hasPending);
     };
     const sourceActiveForGroup = (groupKey, analystKey, title) => Boolean(
-        getLiveSourcePendingTraceEntries(groupKey).length
-        || (getLiveSourceTraceEntries(groupKey).length && !sourceDoneForGroup(groupKey))
-        || (analystKey && title && analystActive(analystKey, title))
+        !sourceDoneForGroup(groupKey)
+        && (
+            getLiveSourcePendingTraceEntries(groupKey).length
+            || getLiveSourceTraceEntries(groupKey).length
+            || savedGroupReady(groupKey)
+            || (groupKey === "coinglass" && endpointReady)
+            || (analystKey && title && analystActive(analystKey, title))
+        )
     );
     const ccxtReady = sourceDoneForGroup("ccxt");
     const coinglassReady = sourceDoneForGroup("coinglass");
     const newsSourceReady = sourceDoneForGroup("news");
     const socialSourceReady = sourceDoneForGroup("social");
     const flowSourceReady = sourceDoneForGroup("flow");
-    const selectedSourceGroups = Array.from(new Set(selectedAnalystSpecs.flatMap(([analystKey]) => analystSourceGroups[analystKey] || [])));
-    const selectedSourcesComplete = selectedSourceGroups.length
-        ? selectedSourceGroups.every(sourceDoneForGroup)
-        : false;
     const marketSummaryReady = getLiveSourceSummaryReady("ccxt");
     const coinglassSummaryReady = getLiveSourceSummaryReady("coinglass");
     const newsSummaryReady = getLiveSourceSummaryReady("news");
@@ -797,16 +831,24 @@ function buildLiveFlowNodes() {
         const active = selected && sourceActiveForGroup(groupKey, analystKey, title);
         return statusFor(Boolean(rawReady), active, true);
     };
+    const sourceSummaryStatus = (groupKey, analystKey, title, sourceReady) => {
+        if (sourceReady) {
+            return "completed";
+        }
+        return sourceStatus(groupKey, analystKey, title, false);
+    };
+    const analystInputsReady = (analystKey) => (analystSourceGroups[analystKey] || [])
+        .every((groupKey) => sourceDoneForGroup(groupKey));
     const analystNode = ([analystKey, sectionKey, title, blockKey]) => {
         const reportDone = hasSection(sectionKey) && flowSectionCompleted(sectionKey);
         const backendStatus = normalizeStatus(groupStatus("analysts", title));
-        const active = backendStatus === "in_progress" || analystActive(analystKey, title);
-        const upstreamSourceReady = (analystSourceGroups[analystKey] || []).every(sourceDoneForGroup);
+        const inputsReady = analystInputsReady(analystKey);
+        const active = inputsReady && (backendStatus === "in_progress" || analystActive(analystKey, title));
         return {
             blockKey,
             title,
             ready: reportDone,
-            status: getLiveFlowBlockError(blockKey) ? "error" : statusFor(reportDone, active, selectedAnalysts.has(analystKey) && upstreamSourceReady),
+            status: getLiveFlowBlockError(blockKey) ? "error" : statusFor(reportDone, active, selectedAnalysts.has(analystKey) && inputsReady),
             visible: selectedAnalysts.has(analystKey) || reportDone,
             tone: "signal",
             detail: { type: "report", section: sectionKey, title, subtitle: "Analyst report" },
@@ -855,30 +897,30 @@ function buildLiveFlowNodes() {
             {
                 visible: sourceVisible("market", ccxtReady),
                 data: buildLiveSourceDataNode("ccxt", "CCXT Market Data", ccxtReady, sourceStatus("ccxt", "market", "Market Analyst", ccxtReady), "signal", "liveCcxtData", "ccxt_data"),
-                summary: buildLiveSourceSummaryNode("ccxt", "Market Summary", marketSummaryReady && ccxtReady, sourceStatus("ccxt", "market", "Market Analyst", marketSummaryReady && ccxtReady), "market_summary"),
+                summary: buildLiveSourceSummaryNode("ccxt", "Market Summary", marketSummaryReady && ccxtReady, sourceSummaryStatus("ccxt", "market", "Market Analyst", ccxtReady), "market_summary"),
             },
             {
                 visible: sourceVisible("fundamentals", coinglassReady),
                 data: buildLiveSourceDataNode("coinglass", "CoinGlass Data", coinglassReady, sourceStatus("coinglass", "fundamentals", "Flow Analyst", coinglassReady), "evidence", "liveCoinGlassData", "coinglass_data"),
-                summary: buildLiveSourceSummaryNode("coinglass", "Derivatives / Flow Summary", coinglassSummaryReady && coinglassReady, sourceStatus("coinglass", "fundamentals", "Flow Analyst", coinglassSummaryReady && coinglassReady), "coinglass_summary"),
+                summary: buildLiveSourceSummaryNode("coinglass", "Derivatives / Flow Summary", coinglassSummaryReady && coinglassReady, sourceSummaryStatus("coinglass", "fundamentals", "Flow Analyst", coinglassReady), "coinglass_summary"),
             },
             {
                 visible: sourceVisible("news", newsSourceReady),
                 data: buildLiveSourceDataNode("news", "News Data", newsSourceReady, sourceStatus("news", "news", "News Analyst", newsSourceReady), "signal", "liveNewsData", "news_data"),
-                summary: buildLiveSourceSummaryNode("news", "News Summary", newsSummaryReady && newsSourceReady, sourceStatus("news", "news", "News Analyst", newsSummaryReady && newsSourceReady), "news_summary"),
+                summary: buildLiveSourceSummaryNode("news", "News Summary", newsSummaryReady && newsSourceReady, sourceSummaryStatus("news", "news", "News Analyst", newsSourceReady), "news_summary"),
             },
             {
                 visible: sourceVisible("social", socialSourceReady),
                 data: buildLiveSourceDataNode("social", "Social / Web Data", socialSourceReady, sourceStatus("social", "social", "Social Analyst", socialSourceReady), "signal", "liveSocialData", "social_data"),
-                summary: buildLiveSourceSummaryNode("social", "Social Summary", socialSummaryReady && socialSourceReady, sourceStatus("social", "social", "Social Analyst", socialSummaryReady && socialSourceReady), "social_summary"),
+                summary: buildLiveSourceSummaryNode("social", "Social Summary", socialSummaryReady && socialSourceReady, sourceSummaryStatus("social", "social", "Social Analyst", socialSourceReady), "social_summary"),
             },
             {
                 visible: sourceVisible("fundamentals", flowSourceReady),
                 data: buildLiveSourceDataNode("flow", "On-chain / Liquidity Data", flowSourceReady, sourceStatus("flow", "fundamentals", "Flow Analyst", flowSourceReady), "signal", "liveFlowData", "flow_data"),
-                summary: buildLiveSourceSummaryNode("flow", "Flow Summary", flowSummaryReady && flowSourceReady, sourceStatus("flow", "fundamentals", "Flow Analyst", flowSummaryReady && flowSourceReady), "flow_summary"),
+                summary: buildLiveSourceSummaryNode("flow", "Flow Summary", flowSummaryReady && flowSourceReady, sourceSummaryStatus("flow", "fundamentals", "Flow Analyst", flowSourceReady), "flow_summary"),
             },
         ],
-        evidenceExtractor: { blockKey: "evidence_extractor", title: "Evidence Extractor", ready: selectedSourcesComplete, status: getLiveFlowBlockError("evidence_extractor") ? "error" : statusFor(selectedSourcesComplete, false), tone: "evidence", detail: { key: "evidenceExtractor" }, error: getLiveFlowBlockError("evidence_extractor") },
+        evidenceExtractor: { blockKey: "evidence_extractor", title: "Evidence Extractor", ready: selectedAnalystReportsComplete, status: getLiveFlowBlockError("evidence_extractor") ? "error" : statusFor(selectedAnalystReportsComplete, false), tone: "evidence", detail: { key: "evidenceExtractor" }, error: getLiveFlowBlockError("evidence_extractor") },
         analystNodes: analystSpecs.map(analystNode),
         evidenceLedger: { blockKey: "evidence_ledger", title: "Evidence Ledger", ready: selectedAnalystReportsComplete, status: getLiveFlowBlockError("evidence_ledger") ? "error" : statusFor(selectedAnalystReportsComplete, false), tone: "evidence", detail: { key: "evidenceLedger" }, error: getLiveFlowBlockError("evidence_ledger") },
         bullResearcher: { blockKey: "bull_researcher", title: "Bull Researcher", ready: Boolean(researchDebateReady && state.run.research?.bull_history), status: researchNodeStatus("bull_researcher", "Bull Researcher", state.run.research?.bull_history), tone: "bull", detail: { key: "bullResearch" }, error: getLiveFlowBlockError("bull_researcher") },
@@ -981,21 +1023,24 @@ function renderLiveFlowCurveWire(paths = [], className = "", viewBox = "0 0 100 
     `;
 }
 
-const LIVE_FLOW_VERTICAL_WIRE_PATH = "M50 0 L50 22";
-const LIVE_FLOW_SHORT_WIRE_PATH = "M50 0 L50 16";
+const LIVE_FLOW_VERTICAL_WIRE_PATH = "M50 0 C36 7 64 15 50 22";
+const LIVE_FLOW_SHORT_WIRE_PATH = "M50 0 C42 5 58 11 50 16";
 
 function renderLiveFlowLeaf(node = {}, layout = {}) {
-    const isReady = Boolean(node.ready);
     const detail = node.detail || null;
     const dataset = detail ? buildDetailDataset(detail) : "";
     const tag = detail ? "button" : "span";
     const typeAttr = detail ? ' type="button"' : "";
     const currentAgent = String(state.run.status?.current_agent || "");
-    const status = String(node.status || (isReady ? "completed" : "pending"));
-    const visualStatus = status === "not_selected" ? "pending" : status;
-    const isActive = Boolean(status === "in_progress" || (currentAgent && currentAgent === node.title));
     const titleText = node.title || layout.shortTitle || "Flow block";
     const blockKey = node.blockKey || titleText.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    const status = resolveLiveFlowNodeStatus({ ...node, blockKey });
+    if (status === "completed") {
+        markLiveFlowBlockComplete(blockKey);
+    }
+    const visualStatus = status === "not_selected" ? "pending" : status;
+    const isReady = Boolean(node.ready || status === "completed");
+    const isActive = Boolean(status === "in_progress" || (!isReady && currentAgent && currentAgent === node.title));
     const detailDataset = dataset ? `${dataset} data-flow-detail-signature="${escapeHtml(JSON.stringify(detail || {}))}"` : "";
     const classes = [
         "history-diagram-node",
@@ -1022,13 +1067,14 @@ function isLiveFlowNodeVisible(node = {}) {
     if (node.visible === false) {
         return false;
     }
-    if (node.ready || node.status === "in_progress") {
+    const status = resolveLiveFlowNodeStatus(node);
+    if (node.ready || status === "completed" || status === "in_progress") {
         return true;
     }
     if (state.isBusy || !state.run.complete) {
         return true;
     }
-    return Boolean(state.run.complete && node.status === "completed");
+    return Boolean(state.run.complete && status === "completed");
 }
 
 function renderLiveFlowNode(node = {}, layout = {}) {
@@ -1128,13 +1174,15 @@ function getLiveFlowWireStatusClass(fromNode = null, toNode = null) {
     if (!fromNode || !toNode || fromNode.visible === false || toNode.visible === false) {
         return "live-flow-wire--pending";
     }
-    if (fromNode.status === "error" || toNode.status === "error") {
+    const fromStatus = resolveLiveFlowNodeStatus(fromNode);
+    const toStatus = resolveLiveFlowNodeStatus(toNode);
+    if (fromStatus === "error" || toStatus === "error") {
         return "live-flow-wire--error";
     }
-    if (fromNode.status === "completed" && toNode.status === "completed") {
+    if (fromStatus === "completed" && toStatus === "completed") {
         return "live-flow-wire--complete";
     }
-    if (fromNode.status === "completed" && toNode.status === "in_progress") {
+    if (fromStatus === "completed" && toStatus === "in_progress") {
         return "live-flow-wire--active";
     }
     return "live-flow-wire--pending";
@@ -1145,7 +1193,7 @@ function combineLiveFlowNodes(nodes = []) {
     if (!visibleNodes.length) {
         return { status: "pending", ready: false, visible: false };
     }
-    const statuses = visibleNodes.map((node) => node.status || (node.ready ? "completed" : "pending"));
+    const statuses = visibleNodes.map((node) => resolveLiveFlowNodeStatus(node));
     const allComplete = statuses.every((status) => status === "completed");
     const anyActive = statuses.some((status) => status === "in_progress");
     const anyError = statuses.some((status) => status === "error");
@@ -1172,7 +1220,7 @@ function renderLiveFlowFanInWire(sourceCount = 0, className = "", fromNode = nul
     const step = 100 / count;
     const paths = Array.from({ length: count }, (_unused, index) => {
         const x = Math.round((step * index + step / 2) * 100) / 100;
-        return `M${x} 0 L${x} 14 L50 14 L50 34`;
+        return `M${x} 0 C${x} 12 50 16 50 34`;
     });
     return renderLiveFlowCurveWire(paths, `live-flow-wire live-flow-wire--fan-in ${className} ${statusClass}`, "0 0 100 36");
 }
@@ -1183,7 +1231,7 @@ function renderLiveFlowFanOutWire(targetCount = 0, className = "", fromNode = nu
     const step = 100 / count;
     const paths = Array.from({ length: count }, (_unused, index) => {
         const x = Math.round((step * index + step / 2) * 100) / 100;
-        return `M50 0 L50 14 L${x} 14 L${x} 34`;
+        return `M50 0 C50 12 ${x} 16 ${x} 34`;
     });
     return renderLiveFlowCurveWire(paths, `live-flow-wire live-flow-wire--fan-out ${className} ${statusClass}`, "0 0 100 36");
 }
@@ -1250,10 +1298,10 @@ function getLiveFlowSignature() {
         .map((source) => [
             source.data?.blockKey,
             isLiveFlowNodeVisible(source.data) ? "1" : "0",
-            source.data?.status || "",
+            resolveLiveFlowNodeStatus(source.data),
             source.summary?.blockKey,
             isLiveFlowNodeVisible(source.summary) ? "1" : "0",
-            source.summary?.status || "",
+            resolveLiveFlowNodeStatus(source.summary),
         ].join(":"))
         .join("|");
     const rowKeys = [
@@ -1265,7 +1313,7 @@ function getLiveFlowSignature() {
         flow.neutralRisk,
     ]
         .filter(Boolean)
-        .map((node) => `${node.blockKey}:${isLiveFlowNodeVisible(node) ? "1" : "0"}:${node.status || ""}`)
+        .map((node) => `${node.blockKey}:${isLiveFlowNodeVisible(node) ? "1" : "0"}:${resolveLiveFlowNodeStatus(node)}`)
         .join("|");
     const singletonKeys = [
         flow.evidenceExtractor,
@@ -1282,7 +1330,7 @@ function getLiveFlowSignature() {
         flow.persistence,
     ]
         .filter(Boolean)
-        .map((node) => `${node.blockKey}:${isLiveFlowNodeVisible(node) ? "1" : "0"}:${node.status || ""}`)
+        .map((node) => `${node.blockKey}:${isLiveFlowNodeVisible(node) ? "1" : "0"}:${resolveLiveFlowNodeStatus(node)}`)
         .join("|");
     const selected = Array.from(new Set(state.run.meta?.selected_analysts || [])).sort().join(",");
     return `${selected}||${sourceKeys}||${rowKeys}||${singletonKeys}`;
@@ -1299,10 +1347,13 @@ function updateLiveFlowNodeDom(node = {}) {
     if (!(element instanceof HTMLElement)) {
         return;
     }
-    const status = String(node.status || (node.ready ? "completed" : "pending"));
+    const status = resolveLiveFlowNodeStatus(node);
+    if (status === "completed") {
+        markLiveFlowBlockComplete(node.blockKey);
+    }
     const visualStatus = status === "not_selected" ? "pending" : status;
-    const isReady = Boolean(node.ready);
-    const isActive = Boolean(status === "in_progress" || state.run.status?.current_agent === node.title);
+    const isReady = Boolean(node.ready || status === "completed");
+    const isActive = Boolean(status === "in_progress" || (!isReady && state.run.status?.current_agent === node.title));
     ["pending", "in_progress", "completed", "error"].forEach((value) => {
         element.classList.toggle(`live-flow-node--${value}`, visualStatus === value);
     });
@@ -1384,11 +1435,11 @@ function renderLiveAgentFlow() {
 
     const segments = [
         renderLiveFlowSourceLayer(flow.sourceNodes),
-        sourceCount && evidenceVisible ? renderLiveFlowFanInWire(sourceCount, "live-flow-wire--sources-to-evidence", sourceGroupNode, flow.evidenceExtractor) : "",
-        renderLiveFlowSingle(flow.evidenceExtractor, "live-flow-single--evidence"),
-        evidenceVisible && analystCount ? renderLiveFlowFanOutWire(analystCount, "live-flow-wire--evidence-to-analysts", flow.evidenceExtractor, analystGroupNode) : "",
+        sourceCount && analystCount ? renderLiveFlowFanOutWire(analystCount, "live-flow-wire--sources-to-analysts", sourceGroupNode, analystGroupNode) : "",
         renderLiveFlowRow(flow.analystNodes, "live-flow-row--analysts"),
-        analystCount && ledgerVisible ? renderLiveFlowFanInWire(analystCount, "live-flow-wire--analysts-to-ledger", analystGroupNode, flow.evidenceLedger) : "",
+        analystCount && evidenceVisible ? renderLiveFlowFanInWire(analystCount, "live-flow-wire--analysts-to-evidence", analystGroupNode, flow.evidenceExtractor) : "",
+        renderLiveFlowSingle(flow.evidenceExtractor, "live-flow-single--evidence"),
+        renderLiveFlowWireIf(evidenceVisible && ledgerVisible, "live-flow-wire--evidence-to-ledger", flow.evidenceExtractor, flow.evidenceLedger),
         renderLiveFlowSingle(flow.evidenceLedger, "live-flow-single--ledger"),
         ledgerVisible && researcherCount ? renderLiveFlowFanOutWire(researcherCount, "live-flow-wire--ledger-to-researchers", flow.evidenceLedger, researcherGroupNode) : "",
         renderLiveFlowRow([flow.bullResearcher, flow.bearResearcher], "live-flow-row--researchers"),
@@ -1485,6 +1536,7 @@ function renderReportGrid() {
             nextScrollHost.scrollTop = previousScrollTop;
             nextScrollHost.scrollLeft = previousScrollLeft;
         }
+        syncLiveFlowDomState();
     } else {
         syncLiveFlowDomState();
     }

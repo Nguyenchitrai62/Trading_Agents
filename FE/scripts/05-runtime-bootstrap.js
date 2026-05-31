@@ -314,6 +314,7 @@ function handleServerEvent(event, data) {
     if (event === "flow_progress") {
         const completed = Array.isArray(data.completed) ? data.completed : [];
         state.run.flowCompletedSections = state.run.flowCompletedSections || new Set();
+        state.run.flowCompletedBlocks = state.run.flowCompletedBlocks || new Set();
         completed.forEach((key) => {
             if (key) {
                 state.run.flowCompletedSections.add(key);
@@ -387,6 +388,7 @@ function handleServerEvent(event, data) {
         }
         state.run.sections = { ...state.run.sections, ...(data.sections_patch || data.sections || {}) };
         state.run.flowCompletedSections = state.run.flowCompletedSections || new Set();
+        state.run.flowCompletedBlocks = state.run.flowCompletedBlocks || new Set();
         Object.keys(data.sections_patch || data.sections || {}).forEach((key) => {
             if (key) {
                 state.run.flowCompletedSections.add(key);

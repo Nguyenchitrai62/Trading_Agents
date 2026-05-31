@@ -318,6 +318,7 @@ function createEmptyRunState() {
         sourceSummaryMarkdown: {},
         blockErrors: {},
         flowCompletedSections: new Set(),
+        flowCompletedBlocks: new Set(),
         liveFlowSignature: "",
         structured: {},
         seenLogFingerprints: new Set(),
