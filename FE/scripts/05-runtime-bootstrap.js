@@ -277,6 +277,24 @@ function handleServerEvent(event, data) {
         return;
     }
 
+    if (event === "structured_update") {
+        const section = data.section || "";
+        if (section) {
+            state.run.structured = {
+                ...(state.run.structured || {}),
+                [section]: data.payload || {},
+            };
+        }
+        state.run.latestReportTitle = data.title || state.run.latestReportTitle;
+        pushStreamFeed({
+            title: data.title || "Structured payload",
+            content: compactText(`${data.agent || "Extractor"} completed structured handoff.`),
+            tone: "completed",
+        });
+        renderSoon();
+        return;
+    }
+
     if (event === "debate_update") {
         const patch = data.patch || data.state || {};
         if (data.team === "research") {
@@ -288,6 +306,18 @@ function handleServerEvent(event, data) {
             title: data.speaker,
             content: compactText(data.content, 260),
             tone: "live",
+        });
+        renderSoon();
+        return;
+    }
+
+    if (event === "flow_progress") {
+        const completed = Array.isArray(data.completed) ? data.completed : [];
+        state.run.flowCompletedSections = state.run.flowCompletedSections || new Set();
+        completed.forEach((key) => {
+            if (key) {
+                state.run.flowCompletedSections.add(key);
+            }
         });
         renderSoon();
         return;
@@ -356,6 +386,12 @@ function handleServerEvent(event, data) {
             state.history.loaded = false;
         }
         state.run.sections = { ...state.run.sections, ...(data.sections_patch || data.sections || {}) };
+        state.run.flowCompletedSections = state.run.flowCompletedSections || new Set();
+        Object.keys(data.sections_patch || data.sections || {}).forEach((key) => {
+            if (key) {
+                state.run.flowCompletedSections.add(key);
+            }
+        });
         state.run.research = mergeStatePatch(state.run.research, data.research_patch || data.research || {});
         state.run.risk = mergeStatePatch(state.run.risk, data.risk_patch || data.risk || {});
         state.run.endpointSummaries = data.endpoint_summaries || state.run.endpointSummaries || [];
@@ -366,6 +402,11 @@ function handleServerEvent(event, data) {
             ...(state.run.structured || {}),
             ...(data.structured || {}),
         };
+        Object.keys(data.structured || {}).forEach((key) => {
+            if (data.structured?.[key] && Object.keys(data.structured[key] || {}).length) {
+                state.run.flowCompletedSections.add(`${key}_structured`);
+            }
+        });
         state.run.status = data.status || state.run.status;
         pushStreamFeed({
             title: "Final Decision",

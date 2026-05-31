@@ -1592,14 +1592,14 @@ button.flow-section-item:focus-visible {
     width: min(34%, 74px);
     min-width: 42px;
     height: 22px;
-    margin: 0;
+    margin: -1px 0;
 }
 
 .live-flow-wire--pair {
     width: 42%;
     min-width: 36px;
     height: 16px;
-    margin: 0 auto;
+    margin: -1px auto;
 }
 
 .live-flow-wire--fan-in,
@@ -1607,11 +1607,11 @@ button.flow-section-item:focus-visible {
     width: min(100%, 620px);
     min-width: 0;
     height: 36px;
-    margin: 0;
+    margin: -1px 0;
 }
 
 .live-flow-wire--fan-out {
-    margin: 0 0 2px;
+    margin: -1px 0 1px;
 }
 
 .live-flow-wire--merge,
@@ -1702,6 +1702,15 @@ button.flow-section-item:focus-visible {
     animation-duration: 2.35s;
 }
 
+.live-flow-wire--error .history-diagram-curve-base {
+    stroke: rgba(220, 38, 38, 0.58);
+}
+
+.live-flow-wire--error .history-diagram-curve-glow,
+.live-flow-wire--error .history-diagram-curve-pulse {
+    stroke: rgba(220, 38, 38, 0.72);
+}
+
 .live-flow-diagram.history-diagram--vertical .history-diagram-source-grid,
 .live-flow-diagram.history-diagram--vertical .history-diagram-signal-grid,
 .live-flow-diagram.history-diagram--vertical .history-diagram-cluster-grid,
@@ -1778,84 +1787,10 @@ button.flow-section-item:focus-visible {
     display: block;
 }
 
-.live-flow-diagram.history-diagram--vertical .history-diagram-node-icon {
-    display: none;
-}
-
 .live-flow-diagram.history-diagram--vertical .history-diagram-node-head {
     display: grid;
     place-items: center;
     min-width: 0;
-}
-
-.live-flow-status-icon {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 14px;
-    height: 14px;
-    border-radius: 999px;
-    border: 1.5px solid currentColor;
-    color: #64748b;
-    background: rgba(255, 255, 255, 0.72);
-    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.18);
-}
-
-.live-flow-status-icon--pending::before {
-    content: "";
-    position: absolute;
-    inset: 4px;
-    border-radius: inherit;
-    background: currentColor;
-    opacity: 0.78;
-}
-
-.live-flow-status-icon--in_progress {
-    color: #b7791f;
-    border-top-color: transparent;
-    animation: taskSpin 0.9s linear infinite;
-}
-
-.live-flow-status-icon--completed {
-    color: #3f8f11;
-    background: #ecfccb;
-}
-
-.live-flow-status-icon--completed::before {
-    content: "";
-    position: absolute;
-    left: 4px;
-    top: 2px;
-    width: 4px;
-    height: 7px;
-    border-right: 2px solid currentColor;
-    border-bottom: 2px solid currentColor;
-    transform: rotate(40deg);
-}
-
-.live-flow-status-icon--error {
-    color: #b91c1c;
-    background: #fee2e2;
-}
-
-.live-flow-status-icon--error::before,
-.live-flow-status-icon--error::after {
-    content: "";
-    position: absolute;
-    left: 3px;
-    right: 3px;
-    top: 5px;
-    height: 2px;
-    border-radius: 999px;
-    background: currentColor;
-}
-
-.live-flow-status-icon--error::before {
-    transform: rotate(45deg);
-}
-
-.live-flow-status-icon--error::after {
-    transform: rotate(-45deg);
 }
 
 .live-flow-diagram.history-diagram--vertical .history-diagram-node strong,

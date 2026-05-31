@@ -1318,6 +1318,12 @@ class AnalysisService:
         risk_state = state.get("risk_debate_state") or {}
         return {
             "sections": {key: (state.get(key) or "") for key in SECTION_META},
+            "structured": {
+                "investment_plan": state.get("investment_plan_structured") or {},
+                "trader_investment_plan": state.get("trader_investment_plan_structured") or {},
+                "final_trade_decision": state.get("final_trade_decision_structured") or {},
+                "verification_report": state.get("verification_report_structured") or {},
+            },
             "evidence_items": list(state.get("evidence_items") or []),
             "endpoint_summaries": list(state.get("endpoint_summaries") or []),
             "investment": {
@@ -1755,6 +1761,29 @@ class AnalysisService:
         return updates
 
     @staticmethod
+    def graph_node_to_agent_label(node_name: str | None) -> str | None:
+        if not node_name:
+            return None
+        normalized = str(node_name)
+        if normalized in {
+            "Parallel Analyst Team",
+            "Bull Researcher",
+            "Bear Researcher",
+            "Research Manager",
+            "Trader",
+            "Aggressive Analyst",
+            "Conservative Analyst",
+            "Neutral Analyst",
+            "Portfolio Manager",
+            "Verifier",
+        }:
+            return normalized
+        for spec in ANALYST_NODE_SPECS.values():
+            if normalized in {spec.agent_node, spec.tool_node}:
+                return spec.agent_node
+        return None
+
+    @staticmethod
     def merge_graph_state_update(state: dict, update: dict) -> list[str]:
         changed_keys: list[str] = []
         for key, value in update.items():
@@ -1773,11 +1802,18 @@ class AnalysisService:
             changed_keys.append(key)
         return sorted(set(changed_keys))
 
-    def build_status_snapshot(self, snapshot: dict, selected_analysts: list[str], current_agent: str | None) -> dict:
+    def build_status_snapshot(
+        self,
+        snapshot: dict,
+        selected_analysts: list[str],
+        current_agent: str | None,
+        *,
+        max_debate_rounds: int = 1,
+        max_risk_rounds: int = 1,
+    ) -> dict:
         selected_specs = [ANALYST_NODE_SPECS[key] for key in selected_analysts]
         sections = snapshot["sections"]
         analysts = []
-        first_incomplete = True
         parallel_analysts_active = current_agent in {"Analyst Team", "Parallel Analyst Team"}
         for spec in selected_specs:
             has_report = bool(sections.get(spec.report_key))
@@ -1785,9 +1821,8 @@ class AnalysisService:
                 status = "completed"
             elif parallel_analysts_active and not sections.get("investment_plan"):
                 status = "in_progress"
-            elif first_incomplete and not sections.get("investment_plan"):
+            elif current_agent == spec.agent_node:
                 status = "in_progress"
-                first_incomplete = False
             else:
                 status = "pending"
             analysts.append({"key": spec.key, "label": spec.agent_node, "status": status})
@@ -1795,23 +1830,26 @@ class AnalysisService:
         analyst_reports_complete = all(bool(sections.get(spec.report_key)) for spec in selected_specs)
 
         investment = snapshot["investment"]
+        expected_research_turns = max(1, int(max_debate_rounds or 1)) * 2
+        research_turns_complete = bool(sections.get("investment_plan")) or int(investment.get("count") or 0) >= expected_research_turns
+        research_active = analyst_reports_complete and not sections.get("investment_plan")
         research = [
             {
                 "key": "bull",
                 "label": "Bull Researcher",
                 "status": "completed"
-                if investment["bull_history"]
+                if research_turns_complete and investment["bull_history"]
                 else "in_progress"
-                if analyst_reports_complete and not sections.get("investment_plan")
+                if research_active and (current_agent == "Bull Researcher" or not investment["bull_history"] or investment["history"])
                 else "pending",
             },
             {
                 "key": "bear",
                 "label": "Bear Researcher",
                 "status": "completed"
-                if investment["bear_history"]
+                if research_turns_complete and investment["bear_history"]
                 else "in_progress"
-                if investment["bull_history"] and not sections.get("investment_plan")
+                if research_active and (current_agent == "Bear Researcher" or investment["bull_history"])
                 else "pending",
             },
             {
@@ -1820,7 +1858,7 @@ class AnalysisService:
                 "status": "completed"
                 if sections.get("investment_plan")
                 else "in_progress"
-                if investment["history"]
+                if current_agent == "Research Manager"
                 else "pending",
             },
         ]
@@ -1838,32 +1876,35 @@ class AnalysisService:
         ]
 
         risk = snapshot["risk"]
+        expected_risk_turns = max(1, int(max_risk_rounds or 1)) * 3
+        risk_turns_complete = bool(sections.get("final_trade_decision")) or int(risk.get("count") or 0) >= expected_risk_turns
+        risk_active = bool(sections.get("trader_investment_plan")) and not sections.get("final_trade_decision")
         risk_items = [
             {
                 "key": "aggressive",
                 "label": "Aggressive Analyst",
                 "status": "completed"
-                if risk["current_aggressive_response"]
+                if risk_turns_complete and risk["current_aggressive_response"]
                 else "in_progress"
-                if sections.get("trader_investment_plan") and not sections.get("final_trade_decision")
+                if risk_active and (current_agent == "Aggressive Analyst" or not risk["current_aggressive_response"] or risk["history"])
                 else "pending",
             },
             {
                 "key": "conservative",
                 "label": "Conservative Analyst",
                 "status": "completed"
-                if risk["current_conservative_response"]
+                if risk_turns_complete and risk["current_conservative_response"]
                 else "in_progress"
-                if risk["current_aggressive_response"] and not sections.get("final_trade_decision")
+                if risk_active and (current_agent == "Conservative Analyst" or risk["current_aggressive_response"])
                 else "pending",
             },
             {
                 "key": "neutral",
                 "label": "Neutral Analyst",
                 "status": "completed"
-                if risk["current_neutral_response"]
+                if risk_turns_complete and risk["current_neutral_response"]
                 else "in_progress"
-                if risk["current_conservative_response"] and not sections.get("final_trade_decision")
+                if risk_active and (current_agent == "Neutral Analyst" or risk["current_conservative_response"])
                 else "pending",
             },
         ]
@@ -1875,7 +1916,7 @@ class AnalysisService:
                 "status": "completed"
                 if sections.get("final_trade_decision")
                 else "in_progress"
-                if risk["history"]
+                if current_agent == "Portfolio Manager"
                 else "pending",
             },
             {
@@ -1936,9 +1977,11 @@ class AnalysisService:
     def emit_snapshot_updates(self, previous: dict, current: dict, emit: Callable[[str, dict], None]) -> None:
         previous_sections = previous.get("sections", {})
         current_sections = current.get("sections", {})
+        emitted_section_updates: set[str] = set()
         for key, meta in SECTION_META.items():
             content = current_sections.get(key, "")
             if content and content != previous_sections.get(key):
+                emitted_section_updates.add(key)
                 emit(
                     "section_update",
                     {
@@ -1949,6 +1992,48 @@ class AnalysisService:
                         "content": content,
                     },
                 )
+
+        structured_meta = {
+            "investment_plan": {
+                "title": "Investment Plan Extractor",
+                "agent": "Investment Plan Extractor",
+                "team": "Research Team",
+            },
+            "trader_investment_plan": {
+                "title": "Trader Plan Extractor",
+                "agent": "Trader Plan Extractor",
+                "team": "Trading Team",
+            },
+            "final_trade_decision": {
+                "title": "Decision Extractor",
+                "agent": "Decision Extractor",
+                "team": "Portfolio Management",
+            },
+            "verification_report": {
+                "title": "Verifier Payload",
+                "agent": "Verifier",
+                "team": "Portfolio Management",
+            },
+        }
+        previous_structured = previous.get("structured", {})
+        current_structured = current.get("structured", {})
+        for key, meta in structured_meta.items():
+            payload = current_structured.get(key) or {}
+            if payload and payload != previous_structured.get(key):
+                emitted_section_updates.add(f"{key}_structured")
+                emit(
+                    "structured_update",
+                    {
+                        "section": key,
+                        "title": meta["title"],
+                        "agent": meta["agent"],
+                        "team": meta["team"],
+                        "payload": payload,
+                    },
+                )
+
+        if emitted_section_updates:
+            emit("flow_progress", {"completed": sorted(emitted_section_updates)})
 
         previous_evidence = previous.get("evidence_items", [])
         current_evidence = current.get("evidence_items", [])
@@ -2106,7 +2191,13 @@ class AnalysisService:
             and len(filtered_analysts) > 1
         )
         current_agent = "Analyst Team" if analyst_parallel_enabled else ANALYST_NODE_SPECS[filtered_analysts[0]].agent_node
-        initial_status = self.build_status_snapshot(initial_snapshot, filtered_analysts, current_agent)
+        initial_status = self.build_status_snapshot(
+            initial_snapshot,
+            filtered_analysts,
+            current_agent,
+            max_debate_rounds=int(config.get("max_debate_rounds") or 1),
+            max_risk_rounds=int(config.get("max_risk_discuss_rounds") or 1),
+        )
         emit(
             "analysis_meta",
             {
@@ -2329,8 +2420,18 @@ class AnalysisService:
                     chunk_index += 1
                     updated_keys = self.merge_graph_state_update(final_state, update)
                     current_snapshot = self.extract_runtime_snapshot(final_state)
-                    current_agent = self.detect_current_agent(previous_snapshot, current_snapshot) or current_agent
-                    current_status = self.build_status_snapshot(current_snapshot, filtered_analysts, current_agent)
+                    current_agent = (
+                        self.detect_current_agent(previous_snapshot, current_snapshot)
+                        or self.graph_node_to_agent_label(node_name)
+                        or current_agent
+                    )
+                    current_status = self.build_status_snapshot(
+                        current_snapshot,
+                        filtered_analysts,
+                        current_agent,
+                        max_debate_rounds=int(config.get("max_debate_rounds") or 1),
+                        max_risk_rounds=int(config.get("max_risk_discuss_rounds") or 1),
+                    )
                     emit_analysis_log(
                         "Graph emitted a state update.",
                         current_status["phase"],
@@ -2375,10 +2476,21 @@ class AnalysisService:
                 clear_checkpoint(config["data_cache_dir"], symbol, request.analysis_date)
 
             completed_snapshot = self.extract_runtime_snapshot(final_state)
-            completed_status = self.build_status_snapshot(completed_snapshot, filtered_analysts, "Verifier")
+            completed_status = self.build_status_snapshot(
+                completed_snapshot,
+                filtered_analysts,
+                "Verifier",
+                max_debate_rounds=int(config.get("max_debate_rounds") or 1),
+                max_risk_rounds=int(config.get("max_risk_discuss_rounds") or 1),
+            )
             completed_sections_patch = self.build_changed_sections(previous_snapshot.get("sections", {}), completed_snapshot["sections"])
             completed_research_patch = self.build_changed_fields(previous_snapshot.get("investment", {}), completed_snapshot["investment"])
             completed_risk_patch = self.build_changed_fields(previous_snapshot.get("risk", {}), completed_snapshot["risk"])
+            final_progress_keys = set(completed_sections_patch)
+            previous_structured = previous_snapshot.get("structured", {})
+            for structured_key, payload in (completed_snapshot.get("structured") or {}).items():
+                if payload and payload != previous_structured.get(structured_key):
+                    final_progress_keys.add(f"{structured_key}_structured")
             verification_payload = final_state.get("verification_report_structured") or {}
             decision_payload = final_state.get("final_trade_decision_structured") or {}
             signal = str(decision_payload.get("signal") or graph.process_signal(final_state["final_trade_decision"])).strip()
@@ -2444,6 +2556,8 @@ class AnalysisService:
                         )
                     },
                 )
+            if final_progress_keys:
+                emit("flow_progress", {"completed": sorted(final_progress_keys)})
             emit(
                 "complete",
                 {

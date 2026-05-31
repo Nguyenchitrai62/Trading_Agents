@@ -416,32 +416,39 @@ function getLiveSourceArtifactCount() {
     return keys.size;
 }
 
+function isLiveSourceTraceEntryForGroup(entry = {}, groupKey = "", phases = ["tool_result", "tool_trace"]) {
+    if (!entry || !phases.includes(entry.phase)) {
+        return false;
+    }
+    const title = String(entry.title || "").toLowerCase();
+    const agent = String(entry.agent || "").toLowerCase();
+    const traceId = String(entry.traceId || entry.trace_id || "").toLowerCase();
+    if (groupKey === "ccxt") {
+        return title === "get_crypto_ohlcv" || title === "get_crypto_indicators";
+    }
+    if (groupKey === "coinglass") {
+        return traceId.startsWith("coinglass:") || title.includes("coinglass");
+    }
+    if (groupKey === "news") {
+        return agent.includes("news") || title.includes("news") || title === "get_global_news";
+    }
+    if (groupKey === "social") {
+        return agent.includes("social") || title.includes("reddit") || title.includes("stocktwits");
+    }
+    if (groupKey === "flow") {
+        return agent.includes("flow") && !traceId.startsWith("coinglass:");
+    }
+    return false;
+}
+
 function getLiveSourceTraceEntries(groupKey = "") {
     const entries = Array.isArray(state.run.traceFeed) ? state.run.traceFeed : [];
-    return entries.filter((entry) => {
-        if (!entry || !["tool_result", "tool_trace"].includes(entry.phase)) {
-            return false;
-        }
-        const title = String(entry.title || "").toLowerCase();
-        const agent = String(entry.agent || "").toLowerCase();
-        const traceId = String(entry.traceId || entry.trace_id || "").toLowerCase();
-        if (groupKey === "ccxt") {
-            return title === "get_crypto_ohlcv" || title === "get_crypto_indicators";
-        }
-        if (groupKey === "coinglass") {
-            return traceId.startsWith("coinglass:") || title.includes("coinglass");
-        }
-        if (groupKey === "news") {
-            return agent.includes("news") || title.includes("news") || title === "get_global_news";
-        }
-        if (groupKey === "social") {
-            return agent.includes("social") || title.includes("reddit") || title.includes("stocktwits");
-        }
-        if (groupKey === "flow") {
-            return agent.includes("flow") && !traceId.startsWith("coinglass:");
-        }
-        return false;
-    });
+    return entries.filter((entry) => isLiveSourceTraceEntryForGroup(entry, groupKey, ["tool_result", "tool_trace"]));
+}
+
+function getLiveSourcePendingTraceEntries(groupKey = "") {
+    const entries = Array.isArray(state.run.traceFeed) ? state.run.traceFeed : [];
+    return entries.filter((entry) => isLiveSourceTraceEntryForGroup(entry, groupKey, ["tool_call"]));
 }
 
 function getEndpointSummariesForGroup(groupKey = "") {
@@ -700,6 +707,7 @@ function formatLiveSourceTraceMarkdown(groupKey = "", title = "Source Data") {
 function buildLiveFlowNodes() {
     const selectedAnalysts = new Set(state.run.meta?.selected_analysts || ["market", "social", "news", "fundamentals"]);
     const hasSection = (key) => Boolean(String(state.run.sections?.[key] || "").trim());
+    const flowSectionCompleted = (key) => Boolean(state.run.flowCompletedSections?.has?.(key) || state.run.complete);
     const hasStructuredPayload = (key) => {
         const payload = state.run.structured?.[key];
         return Boolean(payload && typeof payload === "object" && Object.keys(payload).length);
@@ -709,125 +717,217 @@ function buildLiveFlowNodes() {
         const item = (state.run.status?.groups?.[groupKey] || []).find((entry) => entry.label === label);
         return item?.status || "";
     };
-    const nodeState = (ready, labels = [], fallback = "") => {
+    const normalizeStatus = (value) => String(value || "").trim();
+    const isCurrent = (label) => Boolean(label && currentAgent === label);
+    const statusFor = (ready, active = false, prerequisiteReady = true) => {
+        if (state.run.complete && ready) {
+            return "completed";
+        }
         if (ready) {
             return "completed";
         }
-        if (labels.some((label) => label && currentAgent === label)) {
+        if (active && prerequisiteReady) {
             return "in_progress";
         }
-        return fallback || "pending";
+        return "pending";
     };
-    const evidenceReady = getLiveEvidenceCount() > 0;
+    const analystSpecs = [
+        ["market", "market_report", "Market Analyst", "market_analyst"],
+        ["social", "sentiment_report", "Social Analyst", "social_analyst"],
+        ["news", "news_report", "News Analyst", "news_analyst"],
+        ["fundamentals", "flow_report", "Flow Analyst", "flow_analyst"],
+    ];
+    const selectedAnalystSpecs = analystSpecs.filter(([analystKey]) => selectedAnalysts.has(analystKey));
+    const analystSourceGroups = {
+        market: ["ccxt"],
+        social: ["social"],
+        news: ["news"],
+        fundamentals: ["coinglass", "flow"],
+    };
+    const analystReportDone = (analystKey) => {
+        const spec = analystSpecs.find(([key]) => key === analystKey);
+        return spec ? hasSection(spec[1]) && flowSectionCompleted(spec[1]) : false;
+    };
+    const analystActive = (analystKey, title) => {
+        if (!selectedAnalysts.has(analystKey) || analystReportDone(analystKey)) {
+            return false;
+        }
+        const backendStatus = normalizeStatus(groupStatus("analysts", title));
+        return backendStatus === "in_progress" || isCurrent(title) || currentAgent === "Analyst Team" || currentAgent === "Parallel Analyst Team";
+    };
+    const selectedAnalystReportsComplete = selectedAnalystSpecs.length
+        ? selectedAnalystSpecs.every(([analystKey]) => analystReportDone(analystKey))
+        : false;
     const endpointReady = Boolean(state.run.endpointSummaries?.length);
     const savedGroupReady = (groupKey) => {
         const flowGroup = SOURCE_ARTIFACT_GROUPS[groupKey]?.flowGroup || "";
         return Number(state.run.sourceArtifactGroups?.[flowGroup] || 0) > 0;
     };
-    const ccxtReady = getLiveSourceTraceEntries("ccxt").length > 0 || savedGroupReady("ccxt");
-    const coinglassReady = endpointReady || getLiveSourceTraceEntries("coinglass").length > 0 || savedGroupReady("coinglass");
-    const newsSourceReady = getLiveSourceTraceEntries("news").length > 0 || savedGroupReady("news");
-    const socialSourceReady = getLiveSourceTraceEntries("social").length > 0 || savedGroupReady("social");
-    const flowSourceReady = getLiveSourceTraceEntries("flow").length > 0 || savedGroupReady("flow");
+    const sourceGroupOwnerReportsDone = (groupKey) => Object.entries(analystSourceGroups)
+        .some(([analystKey, groupKeys]) => selectedAnalysts.has(analystKey) && groupKeys.includes(groupKey) && analystReportDone(analystKey));
+    const sourceDoneForGroup = (groupKey) => {
+        const resultCount = getLiveSourceTraceEntries(groupKey).length;
+        const pendingCount = getLiveSourcePendingTraceEntries(groupKey).length;
+        const hasResult = resultCount > 0 || savedGroupReady(groupKey) || sourceGroupOwnerReportsDone(groupKey) || (groupKey === "coinglass" && endpointReady);
+        const hasPending = pendingCount > 0;
+        return Boolean(hasResult && !hasPending);
+    };
+    const sourceActiveForGroup = (groupKey, analystKey, title) => Boolean(
+        getLiveSourcePendingTraceEntries(groupKey).length
+        || (getLiveSourceTraceEntries(groupKey).length && !sourceDoneForGroup(groupKey))
+        || (analystKey && title && analystActive(analystKey, title))
+    );
+    const ccxtReady = sourceDoneForGroup("ccxt");
+    const coinglassReady = sourceDoneForGroup("coinglass");
+    const newsSourceReady = sourceDoneForGroup("news");
+    const socialSourceReady = sourceDoneForGroup("social");
+    const flowSourceReady = sourceDoneForGroup("flow");
+    const selectedSourceGroups = Array.from(new Set(selectedAnalystSpecs.flatMap(([analystKey]) => analystSourceGroups[analystKey] || [])));
+    const selectedSourcesComplete = selectedSourceGroups.length
+        ? selectedSourceGroups.every(sourceDoneForGroup)
+        : false;
     const marketSummaryReady = getLiveSourceSummaryReady("ccxt");
     const coinglassSummaryReady = getLiveSourceSummaryReady("coinglass");
     const newsSummaryReady = getLiveSourceSummaryReady("news");
     const socialSummaryReady = getLiveSourceSummaryReady("social");
     const flowSummaryReady = getLiveSourceSummaryReady("flow");
     const sourceVisible = (analystKey, ready) => Boolean(ready || selectedAnalysts.has(analystKey) || state.isBusy || state.run.complete);
+    const sourceStatus = (groupKey, analystKey, title, rawReady) => {
+        const selected = selectedAnalysts.has(analystKey);
+        const active = selected && sourceActiveForGroup(groupKey, analystKey, title);
+        return statusFor(Boolean(rawReady), active, true);
+    };
+    const analystNode = ([analystKey, sectionKey, title, blockKey]) => {
+        const reportDone = hasSection(sectionKey) && flowSectionCompleted(sectionKey);
+        const backendStatus = normalizeStatus(groupStatus("analysts", title));
+        const active = backendStatus === "in_progress" || analystActive(analystKey, title);
+        const upstreamSourceReady = (analystSourceGroups[analystKey] || []).every(sourceDoneForGroup);
+        return {
+            blockKey,
+            title,
+            ready: reportDone,
+            status: getLiveFlowBlockError(blockKey) ? "error" : statusFor(reportDone, active, selectedAnalysts.has(analystKey) && upstreamSourceReady),
+            visible: selectedAnalysts.has(analystKey) || reportDone,
+            tone: "signal",
+            detail: { type: "report", section: sectionKey, title, subtitle: "Analyst report" },
+            error: getLiveFlowBlockError(blockKey),
+        };
+    };
+    const depthRounds = Math.max(1, Number(state.run.meta?.depth_rounds || 1));
+    const researchCount = Number(state.run.research?.count || 0);
+    const expectedResearchTurns = depthRounds * 2;
+    const researchManagerBackendStatus = normalizeStatus(groupStatus("research", "Research Manager"));
+    const researchDebateReady = (hasSection("investment_plan") && flowSectionCompleted("investment_plan"))
+        || researchCount >= expectedResearchTurns
+        || researchManagerBackendStatus === "completed";
+    const researchCanRun = selectedAnalystReportsComplete;
+    const researchNodeStatus = (blockKey, label, hasContent) => {
+        const backendStatus = normalizeStatus(groupStatus("research", label));
+        const active = backendStatus === "in_progress" || isCurrent(label);
+        const complete = Boolean(researchDebateReady && hasContent);
+        return getLiveFlowBlockError(blockKey) ? "error" : statusFor(complete, active, researchCanRun);
+    };
+    const traderBackendStatus = normalizeStatus(groupStatus("trading", "Trader"));
+    const investmentPlanReady = hasSection("investment_plan") && flowSectionCompleted("investment_plan");
+    const investmentExtractorReady = hasStructuredPayload("investment_plan") && flowSectionCompleted("investment_plan_structured");
+    const traderReady = hasSection("trader_investment_plan") && flowSectionCompleted("trader_investment_plan");
+    const traderExtractorReady = hasStructuredPayload("trader_investment_plan") && flowSectionCompleted("trader_investment_plan_structured");
+    const riskCount = Number(state.run.risk?.count || 0);
+    const expectedRiskTurns = depthRounds * 3;
+    const portfolioBackendStatus = normalizeStatus(groupStatus("portfolio", "Portfolio Manager"));
+    const riskDebateReady = (hasSection("final_trade_decision") && flowSectionCompleted("final_trade_decision"))
+        || riskCount >= expectedRiskTurns
+        || portfolioBackendStatus === "completed";
+    const riskCanRun = traderExtractorReady;
+    const riskNodeStatus = (blockKey, label, hasContent) => {
+        const backendStatus = normalizeStatus(groupStatus("risk", label));
+        const active = backendStatus === "in_progress" || isCurrent(label);
+        const complete = Boolean(riskDebateReady && hasContent);
+        return getLiveFlowBlockError(blockKey) ? "error" : statusFor(complete, active, riskCanRun);
+    };
+    const finalDecisionReady = hasSection("final_trade_decision") && flowSectionCompleted("final_trade_decision");
+    const decisionExtractorReady = hasStructuredPayload("final_trade_decision") && flowSectionCompleted("final_trade_decision_structured");
+    const verifierReady = hasSection("verification_report") && flowSectionCompleted("verification_report");
+    const persistenceReady = Boolean(state.run.complete);
 
     return {
         sourceNodes: [
             {
                 visible: sourceVisible("market", ccxtReady),
-                data: buildLiveSourceDataNode("ccxt", "CCXT Market Data", ccxtReady, nodeState(ccxtReady, ["Market Analyst"]), "signal", "liveCcxtData", "ccxt_data"),
-                summary: buildLiveSourceSummaryNode("ccxt", "Market Summary", marketSummaryReady, nodeState(marketSummaryReady, ["Market Analyst"]), "market_summary"),
+                data: buildLiveSourceDataNode("ccxt", "CCXT Market Data", ccxtReady, sourceStatus("ccxt", "market", "Market Analyst", ccxtReady), "signal", "liveCcxtData", "ccxt_data"),
+                summary: buildLiveSourceSummaryNode("ccxt", "Market Summary", marketSummaryReady && ccxtReady, sourceStatus("ccxt", "market", "Market Analyst", marketSummaryReady && ccxtReady), "market_summary"),
             },
             {
                 visible: sourceVisible("fundamentals", coinglassReady),
-                data: buildLiveSourceDataNode("coinglass", "CoinGlass Data", coinglassReady, nodeState(coinglassReady, ["Flow Analyst"]), "evidence", "liveCoinGlassData", "coinglass_data"),
-                summary: buildLiveSourceSummaryNode("coinglass", "Derivatives / Flow Summary", coinglassSummaryReady, nodeState(coinglassSummaryReady, ["Flow Analyst"]), "coinglass_summary"),
+                data: buildLiveSourceDataNode("coinglass", "CoinGlass Data", coinglassReady, sourceStatus("coinglass", "fundamentals", "Flow Analyst", coinglassReady), "evidence", "liveCoinGlassData", "coinglass_data"),
+                summary: buildLiveSourceSummaryNode("coinglass", "Derivatives / Flow Summary", coinglassSummaryReady && coinglassReady, sourceStatus("coinglass", "fundamentals", "Flow Analyst", coinglassSummaryReady && coinglassReady), "coinglass_summary"),
             },
             {
                 visible: sourceVisible("news", newsSourceReady),
-                data: buildLiveSourceDataNode("news", "News Data", newsSourceReady, nodeState(newsSourceReady, ["News Analyst"]), "signal", "liveNewsData", "news_data"),
-                summary: buildLiveSourceSummaryNode("news", "News Summary", newsSummaryReady, nodeState(newsSummaryReady, ["News Analyst"]), "news_summary"),
+                data: buildLiveSourceDataNode("news", "News Data", newsSourceReady, sourceStatus("news", "news", "News Analyst", newsSourceReady), "signal", "liveNewsData", "news_data"),
+                summary: buildLiveSourceSummaryNode("news", "News Summary", newsSummaryReady && newsSourceReady, sourceStatus("news", "news", "News Analyst", newsSummaryReady && newsSourceReady), "news_summary"),
             },
             {
                 visible: sourceVisible("social", socialSourceReady),
-                data: buildLiveSourceDataNode("social", "Social / Web Data", socialSourceReady, nodeState(socialSourceReady, ["Social Analyst"]), "signal", "liveSocialData", "social_data"),
-                summary: buildLiveSourceSummaryNode("social", "Social Summary", socialSummaryReady, nodeState(socialSummaryReady, ["Social Analyst"]), "social_summary"),
+                data: buildLiveSourceDataNode("social", "Social / Web Data", socialSourceReady, sourceStatus("social", "social", "Social Analyst", socialSourceReady), "signal", "liveSocialData", "social_data"),
+                summary: buildLiveSourceSummaryNode("social", "Social Summary", socialSummaryReady && socialSourceReady, sourceStatus("social", "social", "Social Analyst", socialSummaryReady && socialSourceReady), "social_summary"),
             },
             {
                 visible: sourceVisible("fundamentals", flowSourceReady),
-                data: buildLiveSourceDataNode("flow", "On-chain / Liquidity Data", flowSourceReady, nodeState(flowSourceReady, ["Flow Analyst"]), "signal", "liveFlowData", "flow_data"),
-                summary: buildLiveSourceSummaryNode("flow", "Flow Summary", flowSummaryReady, nodeState(flowSummaryReady, ["Flow Analyst"]), "flow_summary"),
+                data: buildLiveSourceDataNode("flow", "On-chain / Liquidity Data", flowSourceReady, sourceStatus("flow", "fundamentals", "Flow Analyst", flowSourceReady), "signal", "liveFlowData", "flow_data"),
+                summary: buildLiveSourceSummaryNode("flow", "Flow Summary", flowSummaryReady && flowSourceReady, sourceStatus("flow", "fundamentals", "Flow Analyst", flowSummaryReady && flowSourceReady), "flow_summary"),
             },
         ],
-        evidenceExtractor: { blockKey: "evidence_extractor", title: "Evidence Extractor", ready: evidenceReady, status: getLiveFlowBlockError("evidence_extractor") ? "error" : nodeState(evidenceReady, ["Evidence Extractor"], evidenceReady ? "completed" : ccxtReady || coinglassReady || newsSourceReady || socialSourceReady || flowSourceReady ? "in_progress" : "pending"), tone: "evidence", detail: { key: "evidenceExtractor" }, error: getLiveFlowBlockError("evidence_extractor") },
-        analystNodes: [
-            ["market", "market_report", "Market Analyst", "market_analyst", groupStatus("analysts", "Market Analyst")],
-            ["social", "sentiment_report", "Social Analyst", "social_analyst", groupStatus("analysts", "Social Analyst")],
-            ["news", "news_report", "News Analyst", "news_analyst", groupStatus("analysts", "News Analyst")],
-            ["fundamentals", "flow_report", "Flow Analyst", "flow_analyst", groupStatus("analysts", "Flow Analyst")],
-        ].map(([analystKey, sectionKey, title, blockKey, status]) => ({
-            blockKey,
-            title,
-            ready: hasSection(sectionKey),
-            status: getLiveFlowBlockError(blockKey) ? "error" : status || nodeState(hasSection(sectionKey), [title]),
-            visible: selectedAnalysts.has(analystKey) || hasSection(sectionKey),
-            tone: "signal",
-            detail: { type: "report", section: sectionKey, title, subtitle: "Analyst report" },
-            error: getLiveFlowBlockError(blockKey),
-        })),
-        evidenceLedger: { blockKey: "evidence_ledger", title: "Evidence Ledger", ready: evidenceReady, status: getLiveFlowBlockError("evidence_ledger") ? "error" : evidenceReady ? "completed" : "pending", tone: "evidence", detail: { key: "evidenceLedger" }, error: getLiveFlowBlockError("evidence_ledger") },
-        bullResearcher: { blockKey: "bull_researcher", title: "Bull Researcher", ready: Boolean(state.run.research?.bull_history), status: getLiveFlowBlockError("bull_researcher") ? "error" : groupStatus("research", "Bull Researcher") || nodeState(Boolean(state.run.research?.bull_history), ["Bull Researcher"]), tone: "bull", detail: { key: "bullResearch" }, error: getLiveFlowBlockError("bull_researcher") },
-        bearResearcher: { blockKey: "bear_researcher", title: "Bear Researcher", ready: Boolean(state.run.research?.bear_history), status: getLiveFlowBlockError("bear_researcher") ? "error" : groupStatus("research", "Bear Researcher") || nodeState(Boolean(state.run.research?.bear_history), ["Bear Researcher"]), tone: "bear", detail: { key: "bearResearch" }, error: getLiveFlowBlockError("bear_researcher") },
-        researchDebate: { blockKey: "research_debate", title: "Research Debate", ready: Boolean(state.run.research?.history), status: getLiveFlowBlockError("research_debate") ? "error" : state.run.research?.history ? "completed" : state.run.research?.bull_history || state.run.research?.bear_history ? "in_progress" : "pending", tone: "debate", detail: { key: "researchDebate" }, error: getLiveFlowBlockError("research_debate") },
+        evidenceExtractor: { blockKey: "evidence_extractor", title: "Evidence Extractor", ready: selectedSourcesComplete, status: getLiveFlowBlockError("evidence_extractor") ? "error" : statusFor(selectedSourcesComplete, false), tone: "evidence", detail: { key: "evidenceExtractor" }, error: getLiveFlowBlockError("evidence_extractor") },
+        analystNodes: analystSpecs.map(analystNode),
+        evidenceLedger: { blockKey: "evidence_ledger", title: "Evidence Ledger", ready: selectedAnalystReportsComplete, status: getLiveFlowBlockError("evidence_ledger") ? "error" : statusFor(selectedAnalystReportsComplete, false), tone: "evidence", detail: { key: "evidenceLedger" }, error: getLiveFlowBlockError("evidence_ledger") },
+        bullResearcher: { blockKey: "bull_researcher", title: "Bull Researcher", ready: Boolean(researchDebateReady && state.run.research?.bull_history), status: researchNodeStatus("bull_researcher", "Bull Researcher", state.run.research?.bull_history), tone: "bull", detail: { key: "bullResearch" }, error: getLiveFlowBlockError("bull_researcher") },
+        bearResearcher: { blockKey: "bear_researcher", title: "Bear Researcher", ready: Boolean(researchDebateReady && state.run.research?.bear_history), status: researchNodeStatus("bear_researcher", "Bear Researcher", state.run.research?.bear_history), tone: "bear", detail: { key: "bearResearch" }, error: getLiveFlowBlockError("bear_researcher") },
+        researchDebate: { blockKey: "research_debate", title: "Research Debate", ready: researchDebateReady, status: getLiveFlowBlockError("research_debate") ? "error" : statusFor(researchDebateReady, researchCanRun && Boolean(state.run.research?.history || groupStatus("research", "Bull Researcher") === "in_progress" || groupStatus("research", "Bear Researcher") === "in_progress"), researchCanRun), tone: "debate", detail: { key: "researchDebate" }, error: getLiveFlowBlockError("research_debate") },
         researchManager: {
             blockKey: "research_manager",
             title: "Research Manager",
-            ready: hasSection("investment_plan"),
-            status: getLiveFlowBlockError("research_manager") ? "error" : groupStatus("research", "Research Manager") || nodeState(hasSection("investment_plan"), ["Research Manager"]),
+            ready: investmentPlanReady,
+            status: getLiveFlowBlockError("research_manager") ? "error" : statusFor(investmentPlanReady, researchManagerBackendStatus === "in_progress" || isCurrent("Research Manager"), researchDebateReady),
             tone: "plan",
             detail: { type: "report", section: "investment_plan", title: "Research Manager", subtitle: "Investment plan" },
             error: getLiveFlowBlockError("research_manager"),
         },
-        investmentExtractor: { blockKey: "investment_extractor", title: "Investment Plan Extractor", ready: hasStructuredPayload("investment_plan"), status: getLiveFlowBlockError("investment_extractor") ? "error" : hasStructuredPayload("investment_plan") ? "completed" : hasSection("investment_plan") ? "in_progress" : "pending", tone: "evidence", detail: { key: "investmentExtractor" }, error: getLiveFlowBlockError("investment_extractor") },
+        investmentExtractor: { blockKey: "investment_extractor", title: "Investment Plan Extractor", ready: investmentExtractorReady, status: getLiveFlowBlockError("investment_extractor") ? "error" : statusFor(investmentExtractorReady, investmentPlanReady, investmentPlanReady), tone: "evidence", detail: { key: "investmentExtractor" }, error: getLiveFlowBlockError("investment_extractor") },
         trader: {
             blockKey: "trader",
             title: "Trader",
-            ready: hasSection("trader_investment_plan"),
-            status: getLiveFlowBlockError("trader") ? "error" : groupStatus("trading", "Trader") || nodeState(hasSection("trader_investment_plan"), ["Trader"]),
+            ready: traderReady,
+            status: getLiveFlowBlockError("trader") ? "error" : statusFor(traderReady, traderBackendStatus === "in_progress" || isCurrent("Trader"), investmentExtractorReady),
             tone: "trader",
             detail: { type: "report", section: "trader_investment_plan", title: "Trader", subtitle: "Transaction proposal" },
             error: getLiveFlowBlockError("trader"),
         },
-        traderExtractor: { blockKey: "trader_extractor", title: "Trader Plan Extractor", ready: hasStructuredPayload("trader_investment_plan"), status: getLiveFlowBlockError("trader_extractor") ? "error" : hasStructuredPayload("trader_investment_plan") ? "completed" : hasSection("trader_investment_plan") ? "in_progress" : "pending", tone: "evidence", detail: { key: "traderExtractor" }, error: getLiveFlowBlockError("trader_extractor") },
-        aggressiveRisk: { blockKey: "aggressive_risk", title: "Aggressive Analyst", ready: Boolean(state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response), status: getLiveFlowBlockError("aggressive_risk") ? "error" : groupStatus("risk", "Aggressive Analyst") || nodeState(Boolean(state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response), ["Aggressive Analyst"]), tone: "aggressive", detail: { key: "aggressiveRisk" }, error: getLiveFlowBlockError("aggressive_risk") },
-        conservativeRisk: { blockKey: "conservative_risk", title: "Conservative Analyst", ready: Boolean(state.run.risk?.conservative_history || state.run.risk?.current_conservative_response), status: getLiveFlowBlockError("conservative_risk") ? "error" : groupStatus("risk", "Conservative Analyst") || nodeState(Boolean(state.run.risk?.conservative_history || state.run.risk?.current_conservative_response), ["Conservative Analyst"]), tone: "conservative", detail: { key: "conservativeRisk" }, error: getLiveFlowBlockError("conservative_risk") },
-        neutralRisk: { blockKey: "neutral_risk", title: "Neutral Analyst", ready: Boolean(state.run.risk?.neutral_history || state.run.risk?.current_neutral_response), status: getLiveFlowBlockError("neutral_risk") ? "error" : groupStatus("risk", "Neutral Analyst") || nodeState(Boolean(state.run.risk?.neutral_history || state.run.risk?.current_neutral_response), ["Neutral Analyst"]), tone: "neutral", detail: { key: "neutralRisk" }, error: getLiveFlowBlockError("neutral_risk") },
-        riskDebate: { blockKey: "risk_debate", title: "Risk Debate", ready: Boolean(state.run.risk?.history), status: getLiveFlowBlockError("risk_debate") ? "error" : state.run.risk?.history ? "completed" : state.run.risk?.current_aggressive_response || state.run.risk?.current_conservative_response || state.run.risk?.current_neutral_response ? "in_progress" : "pending", tone: "risk", detail: { key: "riskDebate" }, error: getLiveFlowBlockError("risk_debate") },
+        traderExtractor: { blockKey: "trader_extractor", title: "Trader Plan Extractor", ready: traderExtractorReady, status: getLiveFlowBlockError("trader_extractor") ? "error" : statusFor(traderExtractorReady, traderReady, traderReady), tone: "evidence", detail: { key: "traderExtractor" }, error: getLiveFlowBlockError("trader_extractor") },
+        aggressiveRisk: { blockKey: "aggressive_risk", title: "Aggressive Analyst", ready: Boolean(riskDebateReady && (state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response)), status: riskNodeStatus("aggressive_risk", "Aggressive Analyst", state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response), tone: "aggressive", detail: { key: "aggressiveRisk" }, error: getLiveFlowBlockError("aggressive_risk") },
+        conservativeRisk: { blockKey: "conservative_risk", title: "Conservative Analyst", ready: Boolean(riskDebateReady && (state.run.risk?.conservative_history || state.run.risk?.current_conservative_response)), status: riskNodeStatus("conservative_risk", "Conservative Analyst", state.run.risk?.conservative_history || state.run.risk?.current_conservative_response), tone: "conservative", detail: { key: "conservativeRisk" }, error: getLiveFlowBlockError("conservative_risk") },
+        neutralRisk: { blockKey: "neutral_risk", title: "Neutral Analyst", ready: Boolean(riskDebateReady && (state.run.risk?.neutral_history || state.run.risk?.current_neutral_response)), status: riskNodeStatus("neutral_risk", "Neutral Analyst", state.run.risk?.neutral_history || state.run.risk?.current_neutral_response), tone: "neutral", detail: { key: "neutralRisk" }, error: getLiveFlowBlockError("neutral_risk") },
+        riskDebate: { blockKey: "risk_debate", title: "Risk Debate", ready: riskDebateReady, status: getLiveFlowBlockError("risk_debate") ? "error" : statusFor(riskDebateReady, riskCanRun && Boolean(state.run.risk?.history || groupStatus("risk", "Aggressive Analyst") === "in_progress" || groupStatus("risk", "Conservative Analyst") === "in_progress" || groupStatus("risk", "Neutral Analyst") === "in_progress"), riskCanRun), tone: "risk", detail: { key: "riskDebate" }, error: getLiveFlowBlockError("risk_debate") },
         portfolioManager: {
             blockKey: "portfolio_manager",
             title: "Portfolio Manager",
-            ready: hasSection("final_trade_decision"),
-            status: getLiveFlowBlockError("portfolio_manager") ? "error" : groupStatus("portfolio", "Portfolio Manager") || nodeState(hasSection("final_trade_decision"), ["Portfolio Manager"]),
+            ready: finalDecisionReady,
+            status: getLiveFlowBlockError("portfolio_manager") ? "error" : statusFor(finalDecisionReady, portfolioBackendStatus === "in_progress" || isCurrent("Portfolio Manager"), riskDebateReady),
             tone: "decision",
             detail: { type: "report", section: "final_trade_decision", title: "Portfolio Manager", subtitle: "Final decision" },
             error: getLiveFlowBlockError("portfolio_manager"),
         },
-        decisionExtractor: { blockKey: "decision_extractor", title: "Decision Extractor", ready: hasStructuredPayload("final_trade_decision"), status: getLiveFlowBlockError("decision_extractor") ? "error" : hasStructuredPayload("final_trade_decision") ? "completed" : hasSection("final_trade_decision") ? "in_progress" : "pending", tone: "evidence", detail: { key: "decisionExtractor" }, error: getLiveFlowBlockError("decision_extractor") },
+        decisionExtractor: { blockKey: "decision_extractor", title: "Decision Extractor", ready: decisionExtractorReady, status: getLiveFlowBlockError("decision_extractor") ? "error" : statusFor(decisionExtractorReady, finalDecisionReady, finalDecisionReady), tone: "evidence", detail: { key: "decisionExtractor" }, error: getLiveFlowBlockError("decision_extractor") },
         verifier: {
             blockKey: "verifier",
             title: "Verifier",
-            ready: hasSection("verification_report"),
-            status: getLiveFlowBlockError("verifier") ? "error" : groupStatus("portfolio", "Verifier") || nodeState(hasSection("verification_report"), ["Verifier"]),
+            ready: verifierReady,
+            status: getLiveFlowBlockError("verifier") ? "error" : statusFor(verifierReady, groupStatus("portfolio", "Verifier") === "in_progress" || isCurrent("Verifier"), decisionExtractorReady),
             tone: "review",
             detail: { type: "report", section: "verification_report", title: "Verifier", subtitle: "Decision audit" },
             error: getLiveFlowBlockError("verifier"),
         },
-        persistence: { blockKey: "persistence", title: "History + Decision Persistence", ready: Boolean(state.run.complete?.history_id), status: getLiveFlowBlockError("persistence") ? "error" : state.run.complete?.history_id ? "completed" : state.run.complete ? "in_progress" : "pending", tone: "evidence", detail: { key: "persistence" }, error: getLiveFlowBlockError("persistence") },
+        persistence: { blockKey: "persistence", title: "History + Decision Persistence", ready: persistenceReady, status: getLiveFlowBlockError("persistence") ? "error" : statusFor(persistenceReady, verifierReady, verifierReady), tone: "evidence", detail: { key: "persistence" }, error: getLiveFlowBlockError("persistence") },
     };
 }
 
@@ -857,86 +957,6 @@ function buildLiveFlowBoardState() {
     };
 }
 
-function getLiveFlowIconKey(node = {}) {
-    if (node.iconKey) {
-        return node.iconKey;
-    }
-
-    const title = String(node.title || "").toLowerCase();
-    const tone = String(node.tone || "").toLowerCase();
-
-    if (tone === "signal") {
-        if (title.includes("social")) {
-            return "social";
-        }
-        if (title.includes("news")) {
-            return "news";
-        }
-        if (title.includes("flow")) {
-            return "fund";
-        }
-        if (title.includes("coinglass") || title.includes("evidence")) {
-            return "evidence";
-        }
-        return "market";
-    }
-    if (tone === "evidence") {
-        return "evidence";
-    }
-    if (tone === "bull") {
-        return "bull";
-    }
-    if (tone === "bear") {
-        return "bear";
-    }
-    if (tone === "debate") {
-        return "debate";
-    }
-    if (tone === "plan") {
-        return "plan";
-    }
-    if (tone === "trader") {
-        return "trade";
-    }
-    if (tone === "aggressive") {
-        return "aggressive";
-    }
-    if (tone === "neutral") {
-        return "neutral";
-    }
-    if (tone === "conservative") {
-        return "conservative";
-    }
-    if (tone === "risk") {
-        return "review";
-    }
-    if (tone === "decision") {
-        return "decision";
-    }
-    if (tone === "review") {
-        return "verify";
-    }
-    return "default";
-}
-
-function renderLiveFlowDiagramIcon(iconKey = "default") {
-    return HISTORY_DIAGRAM_ICONS[iconKey] || HISTORY_DIAGRAM_ICONS.default;
-}
-
-function renderLiveFlowStatusIcon(status = "pending") {
-    const normalized = String(status || "pending") === "not_selected" ? "pending" : String(status || "pending");
-    if (normalized === "completed") {
-        return '<span class="live-flow-status-icon live-flow-status-icon--completed" title="Completed" aria-hidden="true"></span>';
-    }
-    if (normalized === "in_progress") {
-        return '<span class="live-flow-status-icon live-flow-status-icon--in_progress" title="Processing" aria-hidden="true"></span>';
-    }
-    if (normalized === "error") {
-        return '<span class="live-flow-status-icon live-flow-status-icon--error" title="Error" aria-hidden="true"></span>';
-    }
-    return '<span class="live-flow-status-icon live-flow-status-icon--pending" title="Pending" aria-hidden="true"></span>';
-}
-
 function renderLiveFlowCurveWire(paths = [], className = "", viewBox = "0 0 100 100") {
     if (!paths.length) {
         return "";
@@ -961,8 +981,8 @@ function renderLiveFlowCurveWire(paths = [], className = "", viewBox = "0 0 100 
     `;
 }
 
-const LIVE_FLOW_VERTICAL_WIRE_PATH = "M50 0 C36 7 64 15 50 22";
-const LIVE_FLOW_SHORT_WIRE_PATH = "M50 0 C42 5 58 11 50 16";
+const LIVE_FLOW_VERTICAL_WIRE_PATH = "M50 0 L50 22";
+const LIVE_FLOW_SHORT_WIRE_PATH = "M50 0 L50 16";
 
 function renderLiveFlowLeaf(node = {}, layout = {}) {
     const isReady = Boolean(node.ready);
@@ -992,9 +1012,7 @@ function renderLiveFlowLeaf(node = {}, layout = {}) {
     return `
         <${tag}${typeAttr} class="${classes}" data-flow-block-key="${escapeHtml(blockKey)}" data-flow-status="${escapeHtml(status)}" ${detailDataset} title="${escapeHtml(node.error || titleText)}" aria-label="${escapeHtml(detail ? `Open ${titleText} detail, ${status}` : `${titleText}, ${status}`)}"${!detail ? ' aria-disabled="true"' : ""}>
             <span class="history-diagram-node-head">
-                <span class="history-diagram-node-icon" aria-hidden="true">${renderLiveFlowDiagramIcon(getLiveFlowIconKey(node))}</span>
                 <strong>${escapeHtml(layout.shortTitle || titleText)}</strong>
-                ${renderLiveFlowStatusIcon(visualStatus)}
             </span>
         </${tag}>
     `;
@@ -1106,12 +1124,40 @@ function renderLiveFlowStageConnector(fromStage = null, toStage = null) {
     return '<span class="history-diagram-vertical-connector live-flow-vertical-connector" aria-hidden="true"></span>';
 }
 
-function getLiveFlowWireStatusClass() {
-    return state.isBusy ? "live-flow-wire--active" : state.run.complete ? "live-flow-wire--complete" : "live-flow-wire--pending";
+function getLiveFlowWireStatusClass(fromNode = null, toNode = null) {
+    if (!fromNode || !toNode || fromNode.visible === false || toNode.visible === false) {
+        return "live-flow-wire--pending";
+    }
+    if (fromNode.status === "error" || toNode.status === "error") {
+        return "live-flow-wire--error";
+    }
+    if (fromNode.status === "completed" && toNode.status === "completed") {
+        return "live-flow-wire--complete";
+    }
+    if (fromNode.status === "completed" && toNode.status === "in_progress") {
+        return "live-flow-wire--active";
+    }
+    return "live-flow-wire--pending";
 }
 
-function renderLiveFlowWire(className = "") {
-    const statusClass = getLiveFlowWireStatusClass();
+function combineLiveFlowNodes(nodes = []) {
+    const visibleNodes = nodes.filter((node) => node && node.visible !== false);
+    if (!visibleNodes.length) {
+        return { status: "pending", ready: false, visible: false };
+    }
+    const statuses = visibleNodes.map((node) => node.status || (node.ready ? "completed" : "pending"));
+    const allComplete = statuses.every((status) => status === "completed");
+    const anyActive = statuses.some((status) => status === "in_progress");
+    const anyError = statuses.some((status) => status === "error");
+    return {
+        status: anyError ? "error" : allComplete ? "completed" : anyActive ? "in_progress" : "pending",
+        ready: allComplete,
+        visible: true,
+    };
+}
+
+function renderLiveFlowWire(className = "", fromNode = null, toNode = null) {
+    const statusClass = getLiveFlowWireStatusClass(fromNode, toNode);
     const isPair = String(className || "").includes("--pair");
     return renderLiveFlowCurveWire(
         [isPair ? LIVE_FLOW_SHORT_WIRE_PATH : LIVE_FLOW_VERTICAL_WIRE_PATH],
@@ -1120,24 +1166,24 @@ function renderLiveFlowWire(className = "") {
     );
 }
 
-function renderLiveFlowFanInWire(sourceCount = 0, className = "") {
+function renderLiveFlowFanInWire(sourceCount = 0, className = "", fromNode = null, toNode = null) {
     const count = Math.max(1, Number(sourceCount || 0));
-    const statusClass = getLiveFlowWireStatusClass();
+    const statusClass = getLiveFlowWireStatusClass(fromNode, toNode);
     const step = 100 / count;
     const paths = Array.from({ length: count }, (_unused, index) => {
         const x = Math.round((step * index + step / 2) * 100) / 100;
-        return `M${x} 0 C${x} 12 50 16 50 34`;
+        return `M${x} 0 L${x} 14 L50 14 L50 34`;
     });
     return renderLiveFlowCurveWire(paths, `live-flow-wire live-flow-wire--fan-in ${className} ${statusClass}`, "0 0 100 36");
 }
 
-function renderLiveFlowFanOutWire(targetCount = 0, className = "") {
+function renderLiveFlowFanOutWire(targetCount = 0, className = "", fromNode = null, toNode = null) {
     const count = Math.max(1, Number(targetCount || 0));
-    const statusClass = getLiveFlowWireStatusClass();
+    const statusClass = getLiveFlowWireStatusClass(fromNode, toNode);
     const step = 100 / count;
     const paths = Array.from({ length: count }, (_unused, index) => {
         const x = Math.round((step * index + step / 2) * 100) / 100;
-        return `M50 0 C50 12 ${x} 16 ${x} 34`;
+        return `M50 0 L50 14 L${x} 14 L${x} 34`;
     });
     return renderLiveFlowCurveWire(paths, `live-flow-wire live-flow-wire--fan-out ${className} ${statusClass}`, "0 0 100 36");
 }
@@ -1153,7 +1199,7 @@ function renderLiveFlowSourceLayer(sourceNodes = []) {
                 ${visibleSources.map((source) => `
                     <div class="live-flow-source-column">
                         ${renderLiveFlowLeaf(source.data, { compact: true })}
-                        ${renderLiveFlowWire("live-flow-wire--pair")}
+                        ${renderLiveFlowWire("live-flow-wire--pair", source.data, source.summary)}
                         ${renderLiveFlowLeaf(source.summary, { compact: true })}
                     </div>
                 `).join("")}
@@ -1182,8 +1228,8 @@ function getVisibleLiveFlowRowCount(nodes = []) {
     return nodes.filter(isLiveFlowNodeVisible).length;
 }
 
-function renderLiveFlowWireIf(visible, className = "") {
-    return visible ? renderLiveFlowWire(className) : "";
+function renderLiveFlowWireIf(visible, className = "", fromNode = null, toNode = null) {
+    return visible ? renderLiveFlowWire(className, fromNode, toNode) : "";
 }
 
 function renderLiveFlowSingle(node = {}, className = "") {
@@ -1204,8 +1250,10 @@ function getLiveFlowSignature() {
         .map((source) => [
             source.data?.blockKey,
             isLiveFlowNodeVisible(source.data) ? "1" : "0",
+            source.data?.status || "",
             source.summary?.blockKey,
             isLiveFlowNodeVisible(source.summary) ? "1" : "0",
+            source.summary?.status || "",
         ].join(":"))
         .join("|");
     const rowKeys = [
@@ -1217,7 +1265,7 @@ function getLiveFlowSignature() {
         flow.neutralRisk,
     ]
         .filter(Boolean)
-        .map((node) => `${node.blockKey}:${isLiveFlowNodeVisible(node) ? "1" : "0"}`)
+        .map((node) => `${node.blockKey}:${isLiveFlowNodeVisible(node) ? "1" : "0"}:${node.status || ""}`)
         .join("|");
     const singletonKeys = [
         flow.evidenceExtractor,
@@ -1234,7 +1282,7 @@ function getLiveFlowSignature() {
         flow.persistence,
     ]
         .filter(Boolean)
-        .map((node) => `${node.blockKey}:${isLiveFlowNodeVisible(node) ? "1" : "0"}`)
+        .map((node) => `${node.blockKey}:${isLiveFlowNodeVisible(node) ? "1" : "0"}:${node.status || ""}`)
         .join("|");
     const selected = Array.from(new Set(state.run.meta?.selected_analysts || [])).sort().join(",");
     return `${selected}||${sourceKeys}||${rowKeys}||${singletonKeys}`;
@@ -1271,11 +1319,6 @@ function updateLiveFlowNodeDom(node = {}) {
         applyDetailAttributes(element, node.detail);
         element.dataset.flowDetailSignature = JSON.stringify(node.detail || {});
     }
-    const statusIcon = element.querySelector(".live-flow-status-icon");
-    if (statusIcon instanceof HTMLElement) {
-        statusIcon.className = `live-flow-status-icon live-flow-status-icon--${visualStatus}`;
-        statusIcon.title = visualStatus === "completed" ? "Completed" : visualStatus === "in_progress" ? "Processing" : visualStatus === "error" ? "Error" : "Pending";
-    }
 }
 
 function walkLiveFlowNodes(visitor) {
@@ -1308,15 +1351,6 @@ function walkLiveFlowNodes(visitor) {
 
 function syncLiveFlowDomState() {
     walkLiveFlowNodes(updateLiveFlowNodeDom);
-    const statusClass = getLiveFlowWireStatusClass();
-    elements.reportGrid?.querySelectorAll(".live-flow-wire").forEach((wire) => {
-        if (!(wire instanceof HTMLElement)) {
-            return;
-        }
-        wire.classList.toggle("live-flow-wire--pending", statusClass === "live-flow-wire--pending");
-        wire.classList.toggle("live-flow-wire--active", statusClass === "live-flow-wire--active");
-        wire.classList.toggle("live-flow-wire--complete", statusClass === "live-flow-wire--complete");
-    });
 }
 
 function renderLiveAgentFlow() {
@@ -1337,38 +1371,48 @@ function renderLiveAgentFlow() {
     const decisionExtractorVisible = isLiveFlowNodeVisible(flow.decisionExtractor);
     const verifierVisible = isLiveFlowNodeVisible(flow.verifier);
     const persistenceVisible = isLiveFlowNodeVisible(flow.persistence);
+    const sourceDataNodes = (flow.sourceNodes || [])
+        .filter((source) => source?.visible !== false && isLiveFlowNodeVisible(source.data))
+        .map((source) => source.data);
+    const sourceSummaryNodes = (flow.sourceNodes || [])
+        .filter((source) => source?.visible !== false && isLiveFlowNodeVisible(source.summary))
+        .map((source) => source.summary);
+    const sourceGroupNode = combineLiveFlowNodes(sourceSummaryNodes.length ? sourceSummaryNodes : sourceDataNodes);
+    const analystGroupNode = combineLiveFlowNodes(flow.analystNodes || []);
+    const researcherGroupNode = combineLiveFlowNodes([flow.bullResearcher, flow.bearResearcher]);
+    const riskGroupNode = combineLiveFlowNodes([flow.aggressiveRisk, flow.conservativeRisk, flow.neutralRisk]);
 
     const segments = [
         renderLiveFlowSourceLayer(flow.sourceNodes),
-        sourceCount && evidenceVisible ? renderLiveFlowFanInWire(sourceCount, "live-flow-wire--sources-to-evidence") : "",
+        sourceCount && evidenceVisible ? renderLiveFlowFanInWire(sourceCount, "live-flow-wire--sources-to-evidence", sourceGroupNode, flow.evidenceExtractor) : "",
         renderLiveFlowSingle(flow.evidenceExtractor, "live-flow-single--evidence"),
-        evidenceVisible && analystCount ? renderLiveFlowFanOutWire(analystCount, "live-flow-wire--evidence-to-analysts") : "",
+        evidenceVisible && analystCount ? renderLiveFlowFanOutWire(analystCount, "live-flow-wire--evidence-to-analysts", flow.evidenceExtractor, analystGroupNode) : "",
         renderLiveFlowRow(flow.analystNodes, "live-flow-row--analysts"),
-        analystCount && ledgerVisible ? renderLiveFlowFanInWire(analystCount, "live-flow-wire--analysts-to-ledger") : "",
+        analystCount && ledgerVisible ? renderLiveFlowFanInWire(analystCount, "live-flow-wire--analysts-to-ledger", analystGroupNode, flow.evidenceLedger) : "",
         renderLiveFlowSingle(flow.evidenceLedger, "live-flow-single--ledger"),
-        ledgerVisible && researcherCount ? renderLiveFlowFanOutWire(researcherCount, "live-flow-wire--ledger-to-researchers") : "",
+        ledgerVisible && researcherCount ? renderLiveFlowFanOutWire(researcherCount, "live-flow-wire--ledger-to-researchers", flow.evidenceLedger, researcherGroupNode) : "",
         renderLiveFlowRow([flow.bullResearcher, flow.bearResearcher], "live-flow-row--researchers"),
-        researcherCount && researchDebateVisible ? renderLiveFlowFanInWire(researcherCount, "live-flow-wire--research-to-debate") : "",
+        researcherCount && researchDebateVisible ? renderLiveFlowFanInWire(researcherCount, "live-flow-wire--research-to-debate", researcherGroupNode, flow.researchDebate) : "",
         renderLiveFlowSingle(flow.researchDebate, "live-flow-single--debate"),
-        renderLiveFlowWireIf(researchDebateVisible && researchManagerVisible, "live-flow-wire--debate-to-manager"),
+        renderLiveFlowWireIf(researchDebateVisible && researchManagerVisible, "live-flow-wire--debate-to-manager", flow.researchDebate, flow.researchManager),
         renderLiveFlowSingle(flow.researchManager, "live-flow-single--manager"),
-        renderLiveFlowWireIf(researchManagerVisible && investmentExtractorVisible, "live-flow-wire--manager-to-extractor"),
+        renderLiveFlowWireIf(researchManagerVisible && investmentExtractorVisible, "live-flow-wire--manager-to-extractor", flow.researchManager, flow.investmentExtractor),
         renderLiveFlowSingle(flow.investmentExtractor, "live-flow-single--extractor"),
-        renderLiveFlowWireIf(investmentExtractorVisible && traderVisible, "live-flow-wire--extractor-to-trader"),
+        renderLiveFlowWireIf(investmentExtractorVisible && traderVisible, "live-flow-wire--extractor-to-trader", flow.investmentExtractor, flow.trader),
         renderLiveFlowSingle(flow.trader, "live-flow-single--trader"),
-        renderLiveFlowWireIf(traderVisible && traderExtractorVisible, "live-flow-wire--trader-to-extractor"),
+        renderLiveFlowWireIf(traderVisible && traderExtractorVisible, "live-flow-wire--trader-to-extractor", flow.trader, flow.traderExtractor),
         renderLiveFlowSingle(flow.traderExtractor, "live-flow-single--extractor"),
-        traderExtractorVisible && riskCount ? renderLiveFlowFanOutWire(riskCount, "live-flow-wire--trader-to-risk") : "",
+        traderExtractorVisible && riskCount ? renderLiveFlowFanOutWire(riskCount, "live-flow-wire--trader-to-risk", flow.traderExtractor, riskGroupNode) : "",
         renderLiveFlowRow([flow.aggressiveRisk, flow.conservativeRisk, flow.neutralRisk], "live-flow-row--risk-analysts"),
-        riskCount && riskDebateVisible ? renderLiveFlowFanInWire(riskCount, "live-flow-wire--risk-to-debate") : "",
+        riskCount && riskDebateVisible ? renderLiveFlowFanInWire(riskCount, "live-flow-wire--risk-to-debate", riskGroupNode, flow.riskDebate) : "",
         renderLiveFlowSingle(flow.riskDebate, "live-flow-single--risk"),
-        renderLiveFlowWireIf(riskDebateVisible && portfolioVisible, "live-flow-wire--risk-to-portfolio"),
+        renderLiveFlowWireIf(riskDebateVisible && portfolioVisible, "live-flow-wire--risk-to-portfolio", flow.riskDebate, flow.portfolioManager),
         renderLiveFlowSingle(flow.portfolioManager, "live-flow-single--portfolio"),
-        renderLiveFlowWireIf(portfolioVisible && decisionExtractorVisible, "live-flow-wire--portfolio-to-extractor"),
+        renderLiveFlowWireIf(portfolioVisible && decisionExtractorVisible, "live-flow-wire--portfolio-to-extractor", flow.portfolioManager, flow.decisionExtractor),
         renderLiveFlowSingle(flow.decisionExtractor, "live-flow-single--extractor"),
-        renderLiveFlowWireIf(decisionExtractorVisible && verifierVisible, "live-flow-wire--extractor-to-verifier"),
+        renderLiveFlowWireIf(decisionExtractorVisible && verifierVisible, "live-flow-wire--extractor-to-verifier", flow.decisionExtractor, flow.verifier),
         renderLiveFlowSingle(flow.verifier, "live-flow-single--verifier"),
-        renderLiveFlowWireIf(verifierVisible && persistenceVisible, "live-flow-wire--verifier-to-persistence"),
+        renderLiveFlowWireIf(verifierVisible && persistenceVisible, "live-flow-wire--verifier-to-persistence", flow.verifier, flow.persistence),
         renderLiveFlowSingle(flow.persistence, "live-flow-single--persistence"),
     ];
 
