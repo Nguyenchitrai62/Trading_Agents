@@ -1219,7 +1219,6 @@
     height: 100%;
 }
 
-<<<<<<< HEAD
 .live-flow-board {
     gap: 12px;
     padding: 0;
@@ -1294,8 +1293,6 @@
     opacity: 0.68;
 }
 
-=======
->>>>>>> parent of 1535373 (feat: Enhance analysis and history management with structured decision feedback)
 .live-focus-actions {
     display: flex;
     align-items: center;

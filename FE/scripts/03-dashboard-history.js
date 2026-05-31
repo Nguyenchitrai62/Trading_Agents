@@ -731,40 +731,6 @@ function formatLiveSourceTraceMarkdown(groupKey = "", title = "Source Data") {
         .join("\n\n");
 }
 
-function renderLiveFlowLeaf(node = {}) {
-    const isReady = Boolean(node.ready);
-    const detail = isReady ? node.detail : null;
-    const dataset = detail ? buildDetailDataset(detail) : "";
-    const tag = detail ? "button" : "span";
-    const typeAttr = detail ? ' type="button"' : "";
-    const classes = [
-        "flow-section-item",
-        "live-flow-node",
-        node.tone ? `live-flow-node-${node.tone}` : "",
-        isReady ? "is-ready detail-trigger" : "is-pending is-disabled",
-    ].filter(Boolean).join(" ");
-    return `
-        <${tag}${typeAttr} class="${classes}" ${dataset} title="${escapeHtml(node.title || "Flow block")}">
-            <span class="flow-section-dot" aria-hidden="true"></span>
-            <span>${escapeHtml(node.title || "Flow")}</span>
-        </${tag}>
-    `;
-}
-
-function renderLiveFlowNode(node = {}) {
-    if (Array.isArray(node.nodes)) {
-        return `
-            <div class="live-flow-group live-flow-group-${escapeHtml(node.tone || "neutral")}">
-                <span class="live-flow-group-title">${escapeHtml(node.title || "Flow Stage")}</span>
-                <div class="live-flow-group-grid">
-                    ${node.nodes.map(renderLiveFlowLeaf).join("")}
-                </div>
-            </div>
-        `;
-    }
-    return renderLiveFlowLeaf(node);
-}
-
 function buildLiveFlowNodes() {
     const selectedAnalysts = new Set(state.run.meta?.selected_analysts || ["market", "social", "news", "fundamentals"]);
     const hasSection = (key) => Boolean(String(state.run.sections?.[key] || "").trim());
@@ -1007,19 +973,7 @@ function buildLiveFlowNodes() {
     };
 }
 
-function renderLiveAgentFlow() {
-    const nodes = buildLiveFlowNodes();
-    return nodes
-        .map((node, index) => `
-            <div class="live-flow-stage">
-                ${renderLiveFlowNode(node)}
-                ${index < nodes.length - 1 ? '<span class="live-flow-connector" aria-hidden="true"></span>' : ""}
-            </div>
-        `)
-        .join("");
-}
-
-function renderFlowInspectorMarkup() {
+function buildLiveFlowBoardState() {
     const complete = state.run.complete || {};
     const telemetry = complete.telemetry || {};
     const signal = complete.signal || (state.run.cancelled ? "Stopped" : state.isBusy ? "Running" : "Pending");
@@ -1029,8 +983,8 @@ function renderFlowInspectorMarkup() {
     const latestTool = [...state.run.traceFeed].reverse().find((item) => isToolTracePhase(item.phase));
     const currentFocus = state.run.status?.current_agent || "Waiting";
     const latestOutput = state.run.latestReportTitle || complete.signal || state.run.cancelled?.message || latestTool?.title || "-";
+    const tone = state.run.cancelled ? "warning" : state.isBusy ? "progress" : state.run.complete ? "completed" : "idle";
 
-<<<<<<< HEAD
     return {
         complete,
         telemetry,
@@ -1060,14 +1014,12 @@ function renderLiveFlowCurveWire(paths = [], className = "", viewBox = "0 0 100 
             `;
         })
         .join("");
-=======
->>>>>>> parent of 1535373 (feat: Enhance analysis and history management with structured decision feedback)
     return `
-        <div class="flow-inspector-header">
-            <span>Flow Snapshot</span>
-            <strong>${escapeHtml(signal)}</strong>
+        <div class="history-diagram-curve-wire ${className}" aria-hidden="true">
+            <svg viewBox="${viewBox}" preserveAspectRatio="none" focusable="false">
+                ${wireMarkup}
+            </svg>
         </div>
-<<<<<<< HEAD
     `;
 }
 
@@ -1527,33 +1479,6 @@ function renderFlowInspectorMarkup() {
                 </div>
             </div>
         </article>
-=======
-        <div class="flow-metric-grid">
-            ${renderFlowMetric("Verdict", verdict, verdict === "Revise" || verdict === "Caution" ? "warning" : "")}
-            ${renderFlowMetric("Action", verificationAction, verdict === "Revise" || verdict === "Caution" ? "warning" : "")}
-            ${renderFlowMetric("Sources", getLiveSourceArtifactCount() || "-")}
-            ${renderFlowMetric("Evidence", getLiveEvidenceCount() || "-")}
-            ${renderFlowMetric("Web Search", telemetry.web_search_calls ?? "-")}
-            ${renderFlowMetric("Model Calls", telemetry.model_calls ?? "-")}
-            ${renderFlowMetric("Tool Events", telemetry.tool_calls ?? "-")}
-        </div>
-        <div class="flow-latest">
-            <span>Current Focus</span>
-            <strong>${escapeHtml(currentFocus)}</strong>
-        </div>
-        <div class="flow-latest">
-            <span>Latest Output</span>
-            <strong>${escapeHtml(latestOutput)}</strong>
-        </div>
-        <div class="flow-section-list live-agent-flow" aria-label="Agent flow">
-            ${renderLiveAgentFlow()}
-        </div>
-        ${
-            warningItems.length
-                ? `<div class="flow-warning-list">${warningItems.map((warning) => `<span>${escapeHtml(compactText(warning, 96))}</span>`).join("")}</div>`
-                : ""
-        }
->>>>>>> parent of 1535373 (feat: Enhance analysis and history management with structured decision feedback)
     `;
 }
 
@@ -1590,35 +1515,10 @@ function applyDetailAttributes(element, detail) {
 }
 
 function renderReportGrid() {
-    const focus = getCurrentLivePanel();
-    const focusId = getFocusIdentity(focus);
-    const hasInspector = Boolean(elements.reportGrid.querySelector(".flow-inspector"));
-    let card = elements.reportGrid.querySelector(".live-focus-card");
-    if (!(card instanceof HTMLElement) || !hasInspector || card.dataset.focusId !== focusId) {
-        elements.reportGrid.innerHTML = `
-            <div class="live-layout live-layout-with-inspector">
-                <article class="live-focus-card live-focus-card-expanded">
-                    <div class="live-focus-topline">
-                        <span class="live-chip"></span>
-                        <div class="live-focus-actions">
-                            <span class="live-focus-status"></span>
-                            <button class="live-detail-button detail-trigger hidden" type="button">Open</button>
-                        </div>
-                    </div>
-                    <h3 class="live-focus-title"></h3>
-                    <div class="live-focus-body markdown-preview"></div>
-                </article>
-                <aside class="flow-inspector" aria-label="Flow snapshot"></aside>
-            </div>
-        `;
-        card = elements.reportGrid.querySelector(".live-focus-card");
-    }
-
-    if (!(card instanceof HTMLElement)) {
+    if (!(elements.reportGrid instanceof HTMLElement)) {
         return;
     }
 
-<<<<<<< HEAD
     const nextSignature = getLiveFlowSignature();
     const existingDiagram = elements.reportGrid.querySelector(".live-flow-diagram");
     if (!(existingDiagram instanceof HTMLElement) || state.run.liveFlowSignature !== nextSignature) {
@@ -1639,58 +1539,10 @@ function renderReportGrid() {
         syncLiveFlowDomState();
     } else {
         syncLiveFlowDomState();
-=======
-    const liveChip = card.querySelector(".live-chip");
-    const liveStatus = card.querySelector(".live-focus-status");
-    const detailButton = card.querySelector(".live-detail-button");
-    const liveTitle = card.querySelector(".live-focus-title");
-    const liveBody = card.querySelector(".live-focus-body");
-    const inspector = elements.reportGrid.querySelector(".flow-inspector");
-    const tone = focus.tone || "idle";
-    const bodyMarkup = formatBlock(focus.content, focus.fallback);
-    const bodyFingerprint = `${focusId}:${focus.content || ""}:${focus.fallback}`;
-
-    card.dataset.focusId = focusId;
-    card.className = `live-focus-card live-focus-card-expanded live-tone-${tone}`;
-    const isAwaitingFocus = state.isBusy && !String(focus.content || "").trim();
-    setElementLoadingState(card, isAwaitingFocus, state.run.status?.current_agent ? `Waiting ${getCompactAgentLabel(state.run.status.current_agent)}` : "Streaming");
-    card.removeAttribute("tabindex");
-    card.removeAttribute("role");
-    card.setAttribute("aria-label", focus.title);
-    clearDetailAttributes(card);
-
-    if (liveChip instanceof HTMLElement) {
-        liveChip.className = `live-chip live-chip-${tone}`;
-        liveChip.textContent = focus.badge || "Live";
-    }
-    if (liveStatus instanceof HTMLElement) {
-        liveStatus.textContent = focus.subtitle || "";
-    }
-    if (detailButton instanceof HTMLElement) {
-        detailButton.classList.toggle("hidden", !focus.detail);
-        detailButton.removeAttribute("aria-label");
-        applyDetailAttributes(detailButton, focus.detail);
-        if (focus.detail) {
-            detailButton.setAttribute("aria-label", `Open ${focus.title} detail`);
-        }
-    }
-    if (liveTitle instanceof HTMLElement) {
-        liveTitle.textContent = focus.title;
-    }
-    if (liveBody instanceof HTMLElement && liveBody.dataset.fingerprint !== bodyFingerprint) {
-        preserveScrollPosition(liveBody, () => {
-            liveBody.innerHTML = bodyMarkup;
-            liveBody.classList.toggle("is-empty", !focus.content);
-            liveBody.dataset.fingerprint = bodyFingerprint;
-        });
-    }
-    if (inspector instanceof HTMLElement) {
-        inspector.innerHTML = renderFlowInspectorMarkup();
->>>>>>> parent of 1535373 (feat: Enhance analysis and history management with structured decision feedback)
     }
 
     elements.activeReportText.textContent = state.run.cancelled?.message
-        || (state.isBusy ? "Live markdown stream" : state.run.complete?.signal || "Awaiting live stream");
+        || (state.isBusy ? "Live flow diagram" : state.run.complete?.signal || "Waiting for live stream");
 }
 
 function getLogEntryKey(item, index) {

@@ -34,7 +34,6 @@ function formatHistoryElapsedSeconds(value) {
     return `${minutes}m ${String(remainingSeconds).padStart(2, "0")}s`;
 }
 
-<<<<<<< HEAD
 function formatHistoryPrice(value) {
     if (value === null) {
         return "null";
@@ -49,8 +48,6 @@ function formatHistoryPrice(value) {
     return price.toLocaleString(undefined, { maximumFractionDigits: 8 });
 }
 
-=======
->>>>>>> parent of 1535373 (feat: Enhance analysis and history management with structured decision feedback)
 function getHistoryArchiveEntry(historyId = "") {
     if (!historyId) {
         return null;
