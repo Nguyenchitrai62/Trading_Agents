@@ -110,6 +110,11 @@ const DETAIL_PANEL_META = {
     liveNewsData: { title: "News Data", subtitle: "News and web source results" },
     liveSocialData: { title: "Social / Web Data", subtitle: "Social and web source results" },
     liveFlowData: { title: "On-chain Data", subtitle: "Flow and liquidity source results" },
+    liveCcxtSummary: { title: "Market Summary", subtitle: "Markdown summary from market source data" },
+    liveCoinglassSummary: { title: "Derivatives / Flow Summary", subtitle: "Markdown summary from CoinGlass endpoints" },
+    liveNewsSummary: { title: "News Summary", subtitle: "Markdown summary from news sources" },
+    liveSocialSummary: { title: "Social Summary", subtitle: "Markdown summary from social and web sources" },
+    liveFlowSummary: { title: "Flow Summary", subtitle: "Markdown summary from on-chain and liquidity sources" },
 };
 
 const HISTORY_FLOW_SECTION_ORDER = {
@@ -310,6 +315,9 @@ function createEmptyRunState() {
         sourceArtifactLists: {},
         sourceArtifactLoading: {},
         sourceArtifactErrors: {},
+        sourceSummaryMarkdown: {},
+        blockErrors: {},
+        liveFlowSignature: "",
         structured: {},
         seenLogFingerprints: new Set(),
         seenStreamFingerprints: new Set(),

@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
     config: null,
     apiBaseUrl: getConfiguredApiBaseUrl(),
     page: APP_SETTINGS.defaultPage || APP_SETTINGS.default_page || "agent",
@@ -15,6 +15,9 @@
     stopAvailableAt: 0,
     stopAvailabilityTimer: null,
     activeDetail: null,
+    detailBackStack: [],
+    renderFrame: null,
+    runtimeRenderFrame: null,
     run: createEmptyRunState(),
 };
 
@@ -102,6 +105,7 @@ const elements = {
     configForm: document.getElementById("configForm"),
     dashboard: document.querySelector(".dashboard"),
     detailModal: document.getElementById("detailModal"),
+    backDetailButton: document.getElementById("backDetailButton"),
     closeDetailButton: document.getElementById("closeDetailButton"),
     detailTitle: document.getElementById("detailTitle"),
     detailSubtitle: document.getElementById("detailSubtitle"),
@@ -134,6 +138,8 @@ const elements = {
 });
 
 function renderAll() {
+    state.renderFrame = null;
+    state.runtimeRenderFrame = null;
     renderPageShell();
     renderAuthState();
     renderHistoryPage();
@@ -147,6 +153,31 @@ function renderAll() {
     renderOperationsRail();
     renderSmartNotes();
     renderActiveDetail();
+}
+
+function renderRuntimePanels() {
+    state.runtimeRenderFrame = null;
+    renderTopNotice();
+    renderProgress();
+    renderTeamStatusGrid();
+    renderReportGrid();
+    renderOperationsRail();
+    renderSmartNotes();
+    renderActiveDetail();
+}
+
+function scheduleRenderAll() {
+    if (state.renderFrame !== null) {
+        return;
+    }
+    state.renderFrame = window.requestAnimationFrame(renderAll);
+}
+
+function scheduleRuntimeRender() {
+    if (state.renderFrame !== null || state.runtimeRenderFrame !== null) {
+        return;
+    }
+    state.runtimeRenderFrame = window.requestAnimationFrame(renderRuntimePanels);
 }
 
 function parseSseBlock(block) {
@@ -200,8 +231,11 @@ async function consumeEventStream(response) {
 }
 
 function handleServerEvent(event, data) {
+    const renderSoon = () => scheduleRuntimeRender();
+
     if (event === "analysis_meta") {
         state.run = createEmptyRunState();
+        state.detailBackStack = [];
         state.run.meta = data;
         state.run.status = data.initial_status || null;
         state.run.lastTrackedAgent = data.initial_status?.current_agent || null;
@@ -227,7 +261,7 @@ function handleServerEvent(event, data) {
                 tone: "progress",
             });
         }
-        renderAll();
+        renderSoon();
         return;
     }
 
@@ -239,7 +273,7 @@ function handleServerEvent(event, data) {
             content: compactText(`${data.agent} completed. Click the task in Execution Board to review the full output.`),
             tone: "completed",
         });
-        renderAll();
+        renderSoon();
         return;
     }
 
@@ -255,7 +289,7 @@ function handleServerEvent(event, data) {
             content: compactText(data.content, 260),
             tone: "live",
         });
-        renderAll();
+        renderSoon();
         return;
     }
 
@@ -267,7 +301,7 @@ function handleServerEvent(event, data) {
             content: compactText(`${items.length} endpoint summaries prepared for analyst prompts.`),
             tone: "progress",
         });
-        renderAll();
+        renderSoon();
         return;
     }
 
@@ -281,7 +315,7 @@ function handleServerEvent(event, data) {
             content: compactText(`${state.run.evidenceCount} structured evidence item(s) captured.`),
             tone: "live",
         });
-        renderAll();
+        renderSoon();
         return;
     }
 
@@ -292,7 +326,7 @@ function handleServerEvent(event, data) {
             content: compactText(data.message || data, 220),
             tone: "warning",
         });
-        renderAll();
+        renderSoon();
         return;
     }
 
@@ -305,19 +339,13 @@ function handleServerEvent(event, data) {
             });
         }
         appendLog(data.phase || event, data, { source: "backend" });
-        renderTopNotice();
-        renderProgress();
-        renderReportGrid();
-        renderOperationsRail();
+        renderSoon();
         return;
     }
 
     if (event === "agent_trace") {
         pushAgentTrace(data);
-        renderTopNotice();
-        renderProgress();
-        renderReportGrid();
-        renderOperationsRail();
+        renderSoon();
         return;
     }
 
@@ -362,6 +390,38 @@ function handleServerEvent(event, data) {
 
     if (event === "error") {
         state.run.warnings.unshift(data.error || "Unknown error");
+        state.run.blockErrors = state.run.blockErrors || {};
+        const currentAgent = String(state.run.status?.current_agent || "").toLowerCase();
+        const errorBlockKey = currentAgent.includes("market")
+            ? "market_analyst"
+            : currentAgent.includes("social")
+            ? "social_analyst"
+            : currentAgent.includes("news")
+            ? "news_analyst"
+            : currentAgent.includes("flow")
+            ? "flow_analyst"
+            : currentAgent.includes("bull")
+            ? "bull_researcher"
+            : currentAgent.includes("bear")
+            ? "bear_researcher"
+            : currentAgent.includes("research")
+            ? "research_manager"
+            : currentAgent.includes("trader")
+            ? "trader"
+            : currentAgent.includes("aggressive")
+            ? "aggressive_risk"
+            : currentAgent.includes("conservative")
+            ? "conservative_risk"
+            : currentAgent.includes("neutral")
+            ? "neutral_risk"
+            : currentAgent.includes("risk")
+            ? "risk_debate"
+            : currentAgent.includes("portfolio")
+            ? "portfolio_manager"
+            : currentAgent.includes("verifier")
+            ? "verifier"
+            : "runtime";
+        state.run.blockErrors[errorBlockKey] = data.error || "Unknown error";
         pushStreamFeed({
             title: "Error",
             content: compactText(data.error || data, 220),
@@ -953,6 +1013,7 @@ elements.configModal.addEventListener("click", (event) => {
         closeConfigModal();
     }
 });
+elements.backDetailButton?.addEventListener("click", goBackDetailModal);
 elements.closeDetailButton.addEventListener("click", closeDetailModal);
 elements.closeAlertButton.addEventListener("click", closeAlertModal);
 elements.confirmAlertButton.addEventListener("click", closeAlertModal);
@@ -996,7 +1057,7 @@ elements.detailModal.addEventListener("click", (event) => {
                 content: "",
                 fallback: error instanceof Error ? error.message : String(error || "Could not load source artifact."),
                 mode: "markdown",
-            });
+            }, { pushHistory: false });
         });
     }
 });

@@ -249,10 +249,31 @@ def create_app() -> FastAPI:
         if not history_store.configured:
             raise HTTPException(status_code=503, detail="Turso history database is not configured.")
         user = await auth_service.require_history_reader(http_request)
+        if section_key.startswith("flow_block_"):
+            result = await asyncio.to_thread(history_store.get_run_section, run_id, section_key, user.get("history_access_days"))
+            if result is None:
+                raise HTTPException(status_code=404, detail="Flow block was not found for this run.")
+            return {"item": result["item"], "artifact": result["section"]}
         result = await asyncio.to_thread(history_store.get_source_artifact, run_id, section_key, user.get("history_access_days"))
         if result is None:
             raise HTTPException(status_code=404, detail="Source artifact was not found for this run.")
         return result
+
+    @app.get("/api/history/{run_id}/flow-blocks")
+    async def list_analysis_history_flow_blocks(run_id: str, http_request: Request, flow_group: str | None = None) -> dict:
+        if not history_store.configured:
+            raise HTTPException(status_code=503, detail="Turso history database is not configured.")
+        user = await auth_service.require_history_reader(http_request)
+        result = await asyncio.to_thread(
+            history_store.list_source_artifacts,
+            run_id,
+            user.get("history_access_days"),
+            flow_group,
+            "flow_block",
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Analysis history item was not found.")
+        return {"item": result["item"], "flow_blocks": result["artifacts"]}
 
     @app.get("/api/history/{run_id}/sections")
     async def list_analysis_history_sections(run_id: str, http_request: Request) -> dict:

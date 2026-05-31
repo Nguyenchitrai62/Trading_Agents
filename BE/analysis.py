@@ -2467,6 +2467,7 @@ class AnalysisService:
                     "research_patch": completed_research_patch,
                     "risk_patch": completed_risk_patch,
                     "status": completed_status,
+                    "flow_block_count": sum(1 for section in history_sections if section.get("artifact_type") == "flow_block"),
                 },
             )
         finally:

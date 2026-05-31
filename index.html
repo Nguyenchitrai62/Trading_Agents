@@ -391,7 +391,10 @@
                     <p id="detailSubtitle" class="window-kicker">Analysis detail</p>
                     <h2 id="detailTitle">Panel Detail</h2>
                 </div>
-                <button id="closeDetailButton" class="icon-button" type="button" aria-label="Close detail">X</button>
+                <div class="modal-header-actions">
+                    <button id="backDetailButton" class="icon-button detail-back-button" type="button" aria-label="Back to previous detail" hidden>&lt;</button>
+                    <button id="closeDetailButton" class="icon-button" type="button" aria-label="Close detail">X</button>
+                </div>
             </div>
             <div id="detailBody" class="detail-body markdown-preview"></div>
         </div>

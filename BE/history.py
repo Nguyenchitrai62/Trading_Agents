@@ -908,13 +908,14 @@ class TursoHistoryStore:
         if item is None:
             return None
 
-        where = ["run_id = ?", "artifact_type = 'source'"]
+        normalized_source_kind = str(source_kind or "").strip()
+        artifact_filter = "artifact_type = 'flow_block'" if normalized_source_kind == "flow_block" else "artifact_type = 'source'"
+        where = ["run_id = ?", artifact_filter]
         args: list[object] = [run_id]
         normalized_flow_group = str(flow_group or "").strip()
         if normalized_flow_group:
             where.append("flow_group = ?")
             args.append(normalized_flow_group)
-        normalized_source_kind = str(source_kind or "").strip()
         if normalized_source_kind:
             where.append("source_kind = ?")
             args.append(normalized_source_kind)
@@ -941,7 +942,7 @@ class TursoHistoryStore:
             FROM analysis_sections
             WHERE run_id = ?
               AND section_key = ?
-              AND artifact_type = 'source'
+              AND artifact_type IN ('source', 'flow_block')
             LIMIT 1
             """,
             [run_id, section_key],
@@ -1093,6 +1094,60 @@ def _endpoint_summaries_to_markdown(endpoint_summaries: object) -> str:
     return "\n\n".join(["# Endpoint Summaries", prompt_block, "\n".join(rows)]).strip()
 
 
+def _endpoint_summary_bucket(item: dict) -> str:
+    text = " ".join(
+        str(item.get(key) or "").lower()
+        for key in ("package", "package_label", "endpoint_name", "title", "source", "source_type")
+    )
+    if any(token in text for token in ("coinglass", "derivative", "funding", "liquidation", "open interest")):
+        return "coinglass"
+    if any(token in text for token in ("news", "article", "global")):
+        return "news"
+    if any(token in text for token in ("social", "reddit", "stocktwits", "web")):
+        return "social"
+    if any(token in text for token in ("flow", "on-chain", "liquidity", "stablecoin", "tvl")):
+        return "flow"
+    if any(token in text for token in ("ccxt", "ohlcv", "indicator", "market")):
+        return "ccxt"
+    return ""
+
+
+def _filter_endpoint_summaries(endpoint_summaries: object, bucket: str) -> list[dict]:
+    if not isinstance(endpoint_summaries, list):
+        return []
+    return [
+        item
+        for item in endpoint_summaries
+        if isinstance(item, dict) and _endpoint_summary_bucket(item) == bucket
+    ]
+
+
+def _source_group_artifacts(flow_artifacts: object, flow_group: str) -> list[dict]:
+    if not isinstance(flow_artifacts, list):
+        return []
+    return [
+        artifact
+        for artifact in flow_artifacts
+        if isinstance(artifact, dict) and artifact.get("flow_group") == flow_group
+    ]
+
+
+def _source_group_summary_markdown(title: str, endpoint_summaries: list[dict], artifacts: list[dict]) -> str:
+    if endpoint_summaries:
+        return _endpoint_summaries_to_markdown(endpoint_summaries).replace("# Endpoint Summaries", f"# {title}", 1)
+    if not artifacts:
+        return ""
+    lines = [f"# {title}", "", "| Source | Kind | Summary |", "| --- | --- | --- |"]
+    for artifact in artifacts[:24]:
+        cells = [
+            artifact.get("title") or artifact.get("source_key") or "",
+            artifact.get("source_kind") or artifact.get("artifact_type") or "",
+            artifact.get("summary") or artifact.get("source_key") or "",
+        ]
+        lines.append("| " + " | ".join(str(value).replace("|", "\\|").replace("\n", " ") for value in cells) + " |")
+    return "\n".join(lines).strip()
+
+
 def _flow_block_markdown(title: str, status: str, summary: str, payload: dict) -> str:
     related_sections = payload.get("related_sections") if isinstance(payload, dict) else []
     related_sources = payload.get("source_groups") if isinstance(payload, dict) else []
@@ -1115,6 +1170,8 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
     sections: list[dict] = []
     selected_analysts = set(final_state.get("selected_analysts") or ["market", "social", "news", "fundamentals"])
     source_group_counts = final_state.get("source_artifact_groups") or {}
+    flow_artifacts = final_state.get("flow_artifacts") or []
+    endpoint_summaries = final_state.get("endpoint_summaries") or []
 
     def has_text(key: str) -> bool:
         return bool(str(final_state.get(key) or "").strip())
@@ -1143,6 +1200,8 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
         related_sections: list[str] | None = None,
         source_groups: list[str] | None = None,
         detail_type: str = "section",
+        payload_extra: dict | None = None,
+        markdown: str | None = None,
         agent: str = "Flow Runtime",
         team: str = "Main View",
     ) -> None:
@@ -1157,13 +1216,15 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
             "related_sections": related_sections or [],
             "source_groups": source_groups or [],
         }
+        if payload_extra:
+            payload.update(payload_extra)
         sections.append(
             {
                 "section_key": f"flow_block_{block_key}",
                 "title": title,
                 "agent": agent,
                 "team": team,
-                "markdown": _flow_block_markdown(title, status, summary, payload),
+                "markdown": markdown or _flow_block_markdown(title, status, summary, payload),
                 "artifact_type": "flow_block",
                 "flow_stage": stage,
                 "flow_group": group,
@@ -1175,19 +1236,30 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
         )
 
     source_specs = [
-        ("ccxt_data", "CCXT Market Data", "market", "ccxt_market_data", ["ccxt_market_data"], source_ready("ccxt_market_data")),
-        ("market_summary", "Market Summary", "market", "ccxt_market_data", ["ccxt_market_data"], source_ready("ccxt_market_data")),
-        ("coinglass_data", "CoinGlass Data", "fundamentals", "coinglass_data", ["coinglass_data"], source_ready("coinglass_data") or bool(final_state.get("endpoint_summaries"))),
-        ("coinglass_summary", "Derivatives / Flow Summary", "fundamentals", "coinglass_data", ["coinglass_data", "endpoint_summaries"], source_ready("coinglass_data") or bool(final_state.get("endpoint_summaries"))),
-        ("news_data", "News Data", "news", "news_data", ["news_data"], source_ready("news_data")),
-        ("news_summary", "News Summary", "news", "news_data", ["news_data"], source_ready("news_data")),
-        ("social_data", "Social / Web Data", "social", "social_web_data", ["social_web_data"], source_ready("social_web_data")),
-        ("social_summary", "Social Summary", "social", "social_web_data", ["social_web_data"], source_ready("social_web_data")),
-        ("flow_data", "On-chain / Liquidity Data", "fundamentals", "flow_data", ["flow_data"], source_ready("flow_data")),
-        ("flow_summary", "Flow Summary", "fundamentals", "flow_data", ["flow_data"], source_ready("flow_data")),
+        ("ccxt_data", "CCXT Market Data", "market", "ccxt_market_data", "ccxt", ["ccxt_market_data"], False),
+        ("market_summary", "Market Summary", "market", "ccxt_market_data", "ccxt", ["ccxt_market_data"], True),
+        ("coinglass_data", "CoinGlass Data", "fundamentals", "coinglass_data", "coinglass", ["coinglass_data"], False),
+        ("coinglass_summary", "Derivatives / Flow Summary", "fundamentals", "coinglass_data", "coinglass", ["coinglass_data", "endpoint_summaries"], True),
+        ("news_data", "News Data", "news", "news_data", "news", ["news_data"], False),
+        ("news_summary", "News Summary", "news", "news_data", "news", ["news_data"], True),
+        ("social_data", "Social / Web Data", "social", "social_web_data", "social", ["social_web_data"], False),
+        ("social_summary", "Social Summary", "social", "social_web_data", "social", ["social_web_data"], True),
+        ("flow_data", "On-chain / Liquidity Data", "fundamentals", "flow_data", "flow", ["flow_data"], False),
+        ("flow_summary", "Flow Summary", "fundamentals", "flow_data", "flow", ["flow_data"], True),
     ]
-    for block_key, title, analyst_key, group, source_groups, ready in source_specs:
+    for block_key, title, analyst_key, group, bucket, source_groups, is_summary in source_specs:
+        artifacts = _source_group_artifacts(flow_artifacts, group)
+        summaries = _filter_endpoint_summaries(endpoint_summaries, bucket)
+        ready = bool(summaries or artifacts or source_ready(group))
         selected = analyst_key in selected_analysts
+        block_markdown = None
+        detail_type = "source_summary" if is_summary else "source_group"
+        block_summary = f"{title} source package for Main View."
+        if is_summary:
+            block_markdown = _source_group_summary_markdown(title, summaries, artifacts)
+            block_summary = f"{len(summaries)} endpoint summary item(s), {len(artifacts)} source artifact(s)."
+        else:
+            block_summary = f"{len(artifacts)} source artifact(s) captured for {title}."
         add(
             block_key,
             title,
@@ -1195,9 +1267,26 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
             group,
             status_for(ready, selected),
             "source",
-            summary=f"{title} source package for Main View.",
+            summary=block_summary,
             source_groups=source_groups,
-            detail_type="source_group",
+            detail_type=detail_type,
+            payload_extra={
+                "endpoint_summary_count": len(summaries),
+                "source_artifact_count": len(artifacts),
+                "source_artifact_keys": [str(item.get("section_key") or "") for item in artifacts if item.get("section_key")],
+                "source_artifacts": [
+                    {
+                        "section_key": str(item.get("section_key") or ""),
+                        "title": str(item.get("title") or ""),
+                        "source_kind": str(item.get("source_kind") or ""),
+                        "source_key": str(item.get("source_key") or ""),
+                        "summary": str(item.get("summary") or ""),
+                    }
+                    for item in artifacts[:48]
+                ],
+                "endpoint_summaries": summaries[:24],
+            },
+            markdown=block_markdown,
             agent="Source Layer",
             team="Source Layer",
         )

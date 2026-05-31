@@ -1101,6 +1101,17 @@ body {
     border-bottom: 1px solid var(--line);
 }
 
+.modal-header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.detail-back-button[hidden] {
+    display: none;
+}
+
 .detail-body {
     border-radius: 16px;
 }

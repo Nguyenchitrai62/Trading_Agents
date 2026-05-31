@@ -330,6 +330,10 @@ function renderFlowMetric(label, value, tone = "") {
     `;
 }
 
+function getLiveFlowBlockError(blockKey = "") {
+    return state.run.blockErrors?.[blockKey] || "";
+}
+
 function getLiveEvidenceCount() {
     const completeCount = state.run.complete?.evidence_count;
     if (completeCount !== undefined && completeCount !== null) {
@@ -339,12 +343,64 @@ function getLiveEvidenceCount() {
 }
 
 const SOURCE_ARTIFACT_GROUPS = {
-    ccxt: { flowGroup: "ccxt_market_data", title: "CCXT Market Data" },
-    coinglass: { flowGroup: "coinglass_data", title: "CoinGlass Data" },
-    news: { flowGroup: "news_data", title: "News Data" },
-    social: { flowGroup: "social_web_data", title: "Social / Web Data" },
-    flow: { flowGroup: "flow_data", title: "On-chain Data" },
+    ccxt: {
+        flowGroup: "ccxt_market_data",
+        title: "CCXT Market Data",
+        summaryTitle: "Market Summary",
+        summaryFilter: (item) => ["ccxt", "market"].includes(getEndpointSummaryBucket(item)),
+    },
+    coinglass: {
+        flowGroup: "coinglass_data",
+        title: "CoinGlass Data",
+        summaryTitle: "Derivatives / Flow Summary",
+        summaryFilter: (item) => getEndpointSummaryBucket(item) === "coinglass",
+    },
+    news: {
+        flowGroup: "news_data",
+        title: "News Data",
+        summaryTitle: "News Summary",
+        summaryFilter: (item) => getEndpointSummaryBucket(item) === "news",
+    },
+    social: {
+        flowGroup: "social_web_data",
+        title: "Social / Web Data",
+        summaryTitle: "Social Summary",
+        summaryFilter: (item) => getEndpointSummaryBucket(item) === "social",
+    },
+    flow: {
+        flowGroup: "flow_data",
+        title: "On-chain Data",
+        summaryTitle: "Flow Summary",
+        summaryFilter: (item) => getEndpointSummaryBucket(item) === "flow",
+    },
 };
+
+function getEndpointSummaryBucket(item = {}) {
+    const text = [
+        item.package,
+        item.package_label,
+        item.endpoint_name,
+        item.title,
+        item.source,
+        item.source_type,
+    ].map((value) => String(value || "").toLowerCase()).join(" ");
+    if (text.includes("coinglass") || text.includes("derivative") || text.includes("funding") || text.includes("liquidation") || text.includes("open interest")) {
+        return "coinglass";
+    }
+    if (text.includes("news") || text.includes("article") || text.includes("global")) {
+        return "news";
+    }
+    if (text.includes("social") || text.includes("reddit") || text.includes("stocktwits") || text.includes("web")) {
+        return "social";
+    }
+    if (text.includes("flow") || text.includes("on-chain") || text.includes("liquidity") || text.includes("stablecoin") || text.includes("tvl")) {
+        return "flow";
+    }
+    if (text.includes("ccxt") || text.includes("ohlcv") || text.includes("indicator") || text.includes("market")) {
+        return "ccxt";
+    }
+    return "";
+}
 
 function getLiveSourceArtifactCount() {
     if (state.run.complete?.source_artifact_count !== undefined && state.run.complete?.source_artifact_count !== null) {
@@ -386,6 +442,84 @@ function getLiveSourceTraceEntries(groupKey = "") {
         }
         return false;
     });
+}
+
+function getEndpointSummariesForGroup(groupKey = "") {
+    const config = SOURCE_ARTIFACT_GROUPS[groupKey];
+    const items = Array.isArray(state.run.endpointSummaries) ? state.run.endpointSummaries : [];
+    if (!config || typeof config.summaryFilter !== "function") {
+        return [];
+    }
+    return items.filter(config.summaryFilter);
+}
+
+function getLiveSourceSummaryMarkdown(groupKey = "") {
+    requestSavedSourceArtifacts(groupKey);
+    const groupedSummaries = getEndpointSummariesForGroup(groupKey);
+    if (groupedSummaries.length) {
+        return formatEndpointSummariesMarkdown(groupedSummaries);
+    }
+    const config = SOURCE_ARTIFACT_GROUPS[groupKey] || {};
+    const entries = getLiveSourceTraceEntries(groupKey);
+    const savedArtifacts = (state.run.sourceArtifactLists?.[groupKey] || []).filter((item) => item.source_kind !== "flow_block");
+    if (!entries.length && savedArtifacts.length) {
+        const rows = [
+            `# ${config.summaryTitle || config.title || "Source Summary"}`,
+            "",
+            "| Source | Kind | Summary |",
+            "| --- | --- | --- |",
+        ];
+        savedArtifacts.slice(0, 24).forEach((item) => {
+            rows.push(`| ${markdownCell(item.title || item.source_key || "")} | ${markdownCell(item.source_kind || item.artifact_type || "")} | ${markdownCell(item.summary || item.source_key || "")} |`);
+        });
+        return rows.join("\n");
+    }
+    if (!entries.length) {
+        return "";
+    }
+    const lines = [`# ${config.summaryTitle || config.title || "Source Summary"}`, ""];
+    entries.slice(-8).forEach((entry) => {
+        const plain = compactText(stripMarkdownToPlainText(entry.toolResultContent || entry.content || ""), 240);
+        if (!plain) {
+            return;
+        }
+        lines.push(`- **${entry.title || "Tool"}:** ${plain}`);
+    });
+    return lines.length > 2 ? lines.join("\n") : "";
+}
+
+function getLiveSourceSummaryReady(groupKey = "") {
+    return Boolean(
+        getEndpointSummariesForGroup(groupKey).length
+        || getLiveSourceTraceEntries(groupKey).length
+        || (state.run.sourceArtifactLists?.[groupKey] || []).some((item) => item.source_kind !== "flow_block")
+    );
+}
+
+function buildLiveSourceDataNode(groupKey, title, ready, status, tone, detailKey, blockKey) {
+    const error = getLiveFlowBlockError(blockKey);
+    return {
+        blockKey,
+        title,
+        ready: Boolean(ready),
+        status: error ? "error" : status,
+        tone,
+        detail: { key: detailKey },
+        error,
+    };
+}
+
+function buildLiveSourceSummaryNode(groupKey, title, ready, status, blockKey) {
+    const error = getLiveFlowBlockError(blockKey);
+    return {
+        blockKey,
+        title,
+        ready: Boolean(ready),
+        status: error ? "error" : status,
+        tone: "evidence",
+        detail: { key: `live${groupKey[0].toUpperCase()}${groupKey.slice(1)}Summary` },
+        error,
+    };
 }
 
 function requestSavedSourceArtifacts(groupKey = "") {
@@ -439,7 +573,7 @@ function buildSourceArtifactRows(groupKey = "") {
         sourceKey: item.source_key || "-",
         query: item.summary || item.source_key || "-",
         result: item.created_at ? `Saved ${formatHistoryTimestamp(item.created_at)}` : "Saved artifact",
-    }));
+    })).filter((item) => item.sourceKind !== "flow_block");
     if (savedRows.length) {
         return savedRows;
     }
@@ -508,12 +642,34 @@ function setSourceArtifactTablePreview(element, rows = [], fallback = "", groupK
     element.classList.toggle("is-empty", !rows.length);
 }
 
+function setDetailPayload(detail, detailContent) {
+    if (!detail || !detailContent || detail.payload !== undefined) {
+        return;
+    }
+    if (detailContent.payload !== undefined) {
+        detail.payload = detailContent.payload;
+        return;
+    }
+    if (detail.type === "report") {
+        detail.payload = {
+            section: detail.section || "",
+            title: detail.title || "",
+            markdown: state.run.sections?.[detail.section] || "",
+        };
+        return;
+    }
+    if (detail.key) {
+        detail.payload = getLiveFlowBlockPayload(detail.key, DETAIL_PANEL_META[detail.key]?.title || detail.key, "pending", { key: detail.key }, detailContent.content || detailContent.fallback || "");
+    }
+}
+
 function getSourceArtifactDetailContent(groupKey = "", fallback = "") {
     const rows = buildSourceArtifactRows(groupKey);
     return {
         mode: "source-table",
         rows,
         groupKey,
+        payload: getSourceGroupArtifactRows(groupKey),
         fallback: state.run.sourceArtifactLoading?.[groupKey] && !rows.length
             ? "Loading saved source artifacts..."
             : fallback,
@@ -573,90 +729,105 @@ function buildLiveFlowNodes() {
     const newsSourceReady = getLiveSourceTraceEntries("news").length > 0 || savedGroupReady("news");
     const socialSourceReady = getLiveSourceTraceEntries("social").length > 0 || savedGroupReady("social");
     const flowSourceReady = getLiveSourceTraceEntries("flow").length > 0 || savedGroupReady("flow");
+    const marketSummaryReady = getLiveSourceSummaryReady("ccxt");
+    const coinglassSummaryReady = getLiveSourceSummaryReady("coinglass");
+    const newsSummaryReady = getLiveSourceSummaryReady("news");
+    const socialSummaryReady = getLiveSourceSummaryReady("social");
+    const flowSummaryReady = getLiveSourceSummaryReady("flow");
     const sourceVisible = (analystKey, ready) => Boolean(ready || selectedAnalysts.has(analystKey) || state.isBusy || state.run.complete);
 
     return {
         sourceNodes: [
             {
                 visible: sourceVisible("market", ccxtReady),
-                data: { title: "CCXT Market Data", ready: ccxtReady, status: nodeState(ccxtReady, ["Market Analyst"]), tone: "signal", detail: { key: "liveCcxtData" } },
-                summary: { title: "Market Summary", ready: ccxtReady, status: nodeState(ccxtReady, ["Market Analyst"]), tone: "evidence", detail: { key: "liveCcxtData" } },
+                data: buildLiveSourceDataNode("ccxt", "CCXT Market Data", ccxtReady, nodeState(ccxtReady, ["Market Analyst"]), "signal", "liveCcxtData", "ccxt_data"),
+                summary: buildLiveSourceSummaryNode("ccxt", "Market Summary", marketSummaryReady, nodeState(marketSummaryReady, ["Market Analyst"]), "market_summary"),
             },
             {
                 visible: sourceVisible("fundamentals", coinglassReady),
-                data: { title: "CoinGlass Data", ready: coinglassReady, status: nodeState(coinglassReady, ["Flow Analyst"]), tone: "evidence", detail: { key: "liveCoinGlassData" } },
-                summary: { title: "Derivatives / Flow Summary", ready: coinglassReady, status: nodeState(coinglassReady, ["Flow Analyst"]), tone: "evidence", detail: { key: "liveCoinGlassData" } },
+                data: buildLiveSourceDataNode("coinglass", "CoinGlass Data", coinglassReady, nodeState(coinglassReady, ["Flow Analyst"]), "evidence", "liveCoinGlassData", "coinglass_data"),
+                summary: buildLiveSourceSummaryNode("coinglass", "Derivatives / Flow Summary", coinglassSummaryReady, nodeState(coinglassSummaryReady, ["Flow Analyst"]), "coinglass_summary"),
             },
             {
                 visible: sourceVisible("news", newsSourceReady),
-                data: { title: "News Data", ready: newsSourceReady, status: nodeState(newsSourceReady, ["News Analyst"]), tone: "signal", detail: { key: "liveNewsData" } },
-                summary: { title: "News Summary", ready: newsSourceReady, status: nodeState(newsSourceReady, ["News Analyst"]), tone: "evidence", detail: { key: "liveNewsData" } },
+                data: buildLiveSourceDataNode("news", "News Data", newsSourceReady, nodeState(newsSourceReady, ["News Analyst"]), "signal", "liveNewsData", "news_data"),
+                summary: buildLiveSourceSummaryNode("news", "News Summary", newsSummaryReady, nodeState(newsSummaryReady, ["News Analyst"]), "news_summary"),
             },
             {
                 visible: sourceVisible("social", socialSourceReady),
-                data: { title: "Social / Web Data", ready: socialSourceReady, status: nodeState(socialSourceReady, ["Social Analyst"]), tone: "signal", detail: { key: "liveSocialData" } },
-                summary: { title: "Social Summary", ready: socialSourceReady, status: nodeState(socialSourceReady, ["Social Analyst"]), tone: "evidence", detail: { key: "liveSocialData" } },
+                data: buildLiveSourceDataNode("social", "Social / Web Data", socialSourceReady, nodeState(socialSourceReady, ["Social Analyst"]), "signal", "liveSocialData", "social_data"),
+                summary: buildLiveSourceSummaryNode("social", "Social Summary", socialSummaryReady, nodeState(socialSummaryReady, ["Social Analyst"]), "social_summary"),
             },
             {
                 visible: sourceVisible("fundamentals", flowSourceReady),
-                data: { title: "On-chain / Liquidity Data", ready: flowSourceReady, status: nodeState(flowSourceReady, ["Flow Analyst"]), tone: "signal", detail: { key: "liveFlowData" } },
-                summary: { title: "Flow Summary", ready: flowSourceReady, status: nodeState(flowSourceReady, ["Flow Analyst"]), tone: "evidence", detail: { key: "liveFlowData" } },
+                data: buildLiveSourceDataNode("flow", "On-chain / Liquidity Data", flowSourceReady, nodeState(flowSourceReady, ["Flow Analyst"]), "signal", "liveFlowData", "flow_data"),
+                summary: buildLiveSourceSummaryNode("flow", "Flow Summary", flowSummaryReady, nodeState(flowSummaryReady, ["Flow Analyst"]), "flow_summary"),
             },
         ],
-        evidenceExtractor: { title: "Evidence Extractor", ready: evidenceReady, status: nodeState(evidenceReady, ["Evidence Extractor"], evidenceReady ? "completed" : ccxtReady || coinglassReady || newsSourceReady || socialSourceReady || flowSourceReady ? "in_progress" : "pending"), tone: "evidence", detail: { key: "evidenceExtractor" } },
+        evidenceExtractor: { blockKey: "evidence_extractor", title: "Evidence Extractor", ready: evidenceReady, status: getLiveFlowBlockError("evidence_extractor") ? "error" : nodeState(evidenceReady, ["Evidence Extractor"], evidenceReady ? "completed" : ccxtReady || coinglassReady || newsSourceReady || socialSourceReady || flowSourceReady ? "in_progress" : "pending"), tone: "evidence", detail: { key: "evidenceExtractor" }, error: getLiveFlowBlockError("evidence_extractor") },
         analystNodes: [
-            ["market", "market_report", "Market Analyst", groupStatus("analysts", "Market Analyst")],
-            ["social", "sentiment_report", "Social Analyst", groupStatus("analysts", "Social Analyst")],
-            ["news", "news_report", "News Analyst", groupStatus("analysts", "News Analyst")],
-            ["fundamentals", "flow_report", "Flow Analyst", groupStatus("analysts", "Flow Analyst")],
-        ].map(([analystKey, sectionKey, title, status]) => ({
+            ["market", "market_report", "Market Analyst", "market_analyst", groupStatus("analysts", "Market Analyst")],
+            ["social", "sentiment_report", "Social Analyst", "social_analyst", groupStatus("analysts", "Social Analyst")],
+            ["news", "news_report", "News Analyst", "news_analyst", groupStatus("analysts", "News Analyst")],
+            ["fundamentals", "flow_report", "Flow Analyst", "flow_analyst", groupStatus("analysts", "Flow Analyst")],
+        ].map(([analystKey, sectionKey, title, blockKey, status]) => ({
+            blockKey,
             title,
             ready: hasSection(sectionKey),
-            status: status || nodeState(hasSection(sectionKey), [title]),
+            status: getLiveFlowBlockError(blockKey) ? "error" : status || nodeState(hasSection(sectionKey), [title]),
             visible: selectedAnalysts.has(analystKey) || hasSection(sectionKey),
             tone: "signal",
             detail: { type: "report", section: sectionKey, title, subtitle: "Analyst report" },
+            error: getLiveFlowBlockError(blockKey),
         })),
-        evidenceLedger: { title: "Evidence Ledger", ready: evidenceReady, status: evidenceReady ? "completed" : "pending", tone: "evidence", detail: { key: "evidenceLedger" } },
-        bullResearcher: { title: "Bull Researcher", ready: Boolean(state.run.research?.bull_history), status: groupStatus("research", "Bull Researcher") || nodeState(Boolean(state.run.research?.bull_history), ["Bull Researcher"]), tone: "bull", detail: { key: "bullResearch" } },
-        bearResearcher: { title: "Bear Researcher", ready: Boolean(state.run.research?.bear_history), status: groupStatus("research", "Bear Researcher") || nodeState(Boolean(state.run.research?.bear_history), ["Bear Researcher"]), tone: "bear", detail: { key: "bearResearch" } },
-        researchDebate: { title: "Research Debate", ready: Boolean(state.run.research?.history), status: state.run.research?.history ? "completed" : state.run.research?.bull_history || state.run.research?.bear_history ? "in_progress" : "pending", tone: "debate", detail: { key: "researchDebate" } },
+        evidenceLedger: { blockKey: "evidence_ledger", title: "Evidence Ledger", ready: evidenceReady, status: getLiveFlowBlockError("evidence_ledger") ? "error" : evidenceReady ? "completed" : "pending", tone: "evidence", detail: { key: "evidenceLedger" }, error: getLiveFlowBlockError("evidence_ledger") },
+        bullResearcher: { blockKey: "bull_researcher", title: "Bull Researcher", ready: Boolean(state.run.research?.bull_history), status: getLiveFlowBlockError("bull_researcher") ? "error" : groupStatus("research", "Bull Researcher") || nodeState(Boolean(state.run.research?.bull_history), ["Bull Researcher"]), tone: "bull", detail: { key: "bullResearch" }, error: getLiveFlowBlockError("bull_researcher") },
+        bearResearcher: { blockKey: "bear_researcher", title: "Bear Researcher", ready: Boolean(state.run.research?.bear_history), status: getLiveFlowBlockError("bear_researcher") ? "error" : groupStatus("research", "Bear Researcher") || nodeState(Boolean(state.run.research?.bear_history), ["Bear Researcher"]), tone: "bear", detail: { key: "bearResearch" }, error: getLiveFlowBlockError("bear_researcher") },
+        researchDebate: { blockKey: "research_debate", title: "Research Debate", ready: Boolean(state.run.research?.history), status: getLiveFlowBlockError("research_debate") ? "error" : state.run.research?.history ? "completed" : state.run.research?.bull_history || state.run.research?.bear_history ? "in_progress" : "pending", tone: "debate", detail: { key: "researchDebate" }, error: getLiveFlowBlockError("research_debate") },
         researchManager: {
+            blockKey: "research_manager",
             title: "Research Manager",
             ready: hasSection("investment_plan"),
-            status: groupStatus("research", "Research Manager") || nodeState(hasSection("investment_plan"), ["Research Manager"]),
+            status: getLiveFlowBlockError("research_manager") ? "error" : groupStatus("research", "Research Manager") || nodeState(hasSection("investment_plan"), ["Research Manager"]),
             tone: "plan",
             detail: { type: "report", section: "investment_plan", title: "Research Manager", subtitle: "Investment plan" },
+            error: getLiveFlowBlockError("research_manager"),
         },
-        investmentExtractor: { title: "Investment Plan Extractor", ready: hasStructuredPayload("investment_plan"), status: hasStructuredPayload("investment_plan") ? "completed" : hasSection("investment_plan") ? "in_progress" : "pending", tone: "evidence", detail: { key: "investmentExtractor" } },
+        investmentExtractor: { blockKey: "investment_extractor", title: "Investment Plan Extractor", ready: hasStructuredPayload("investment_plan"), status: getLiveFlowBlockError("investment_extractor") ? "error" : hasStructuredPayload("investment_plan") ? "completed" : hasSection("investment_plan") ? "in_progress" : "pending", tone: "evidence", detail: { key: "investmentExtractor" }, error: getLiveFlowBlockError("investment_extractor") },
         trader: {
+            blockKey: "trader",
             title: "Trader",
             ready: hasSection("trader_investment_plan"),
-            status: groupStatus("trading", "Trader") || nodeState(hasSection("trader_investment_plan"), ["Trader"]),
+            status: getLiveFlowBlockError("trader") ? "error" : groupStatus("trading", "Trader") || nodeState(hasSection("trader_investment_plan"), ["Trader"]),
             tone: "trader",
             detail: { type: "report", section: "trader_investment_plan", title: "Trader", subtitle: "Transaction proposal" },
+            error: getLiveFlowBlockError("trader"),
         },
-        traderExtractor: { title: "Trader Plan Extractor", ready: hasStructuredPayload("trader_investment_plan"), status: hasStructuredPayload("trader_investment_plan") ? "completed" : hasSection("trader_investment_plan") ? "in_progress" : "pending", tone: "evidence", detail: { key: "traderExtractor" } },
-        aggressiveRisk: { title: "Aggressive Analyst", ready: Boolean(state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response), status: groupStatus("risk", "Aggressive Analyst") || nodeState(Boolean(state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response), ["Aggressive Analyst"]), tone: "aggressive", detail: { key: "aggressiveRisk" } },
-        conservativeRisk: { title: "Conservative Analyst", ready: Boolean(state.run.risk?.conservative_history || state.run.risk?.current_conservative_response), status: groupStatus("risk", "Conservative Analyst") || nodeState(Boolean(state.run.risk?.conservative_history || state.run.risk?.current_conservative_response), ["Conservative Analyst"]), tone: "conservative", detail: { key: "conservativeRisk" } },
-        neutralRisk: { title: "Neutral Analyst", ready: Boolean(state.run.risk?.neutral_history || state.run.risk?.current_neutral_response), status: groupStatus("risk", "Neutral Analyst") || nodeState(Boolean(state.run.risk?.neutral_history || state.run.risk?.current_neutral_response), ["Neutral Analyst"]), tone: "neutral", detail: { key: "neutralRisk" } },
-        riskDebate: { title: "Risk Debate", ready: Boolean(state.run.risk?.history), status: state.run.risk?.history ? "completed" : state.run.risk?.current_aggressive_response || state.run.risk?.current_conservative_response || state.run.risk?.current_neutral_response ? "in_progress" : "pending", tone: "risk", detail: { key: "riskDebate" } },
+        traderExtractor: { blockKey: "trader_extractor", title: "Trader Plan Extractor", ready: hasStructuredPayload("trader_investment_plan"), status: getLiveFlowBlockError("trader_extractor") ? "error" : hasStructuredPayload("trader_investment_plan") ? "completed" : hasSection("trader_investment_plan") ? "in_progress" : "pending", tone: "evidence", detail: { key: "traderExtractor" }, error: getLiveFlowBlockError("trader_extractor") },
+        aggressiveRisk: { blockKey: "aggressive_risk", title: "Aggressive Analyst", ready: Boolean(state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response), status: getLiveFlowBlockError("aggressive_risk") ? "error" : groupStatus("risk", "Aggressive Analyst") || nodeState(Boolean(state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response), ["Aggressive Analyst"]), tone: "aggressive", detail: { key: "aggressiveRisk" }, error: getLiveFlowBlockError("aggressive_risk") },
+        conservativeRisk: { blockKey: "conservative_risk", title: "Conservative Analyst", ready: Boolean(state.run.risk?.conservative_history || state.run.risk?.current_conservative_response), status: getLiveFlowBlockError("conservative_risk") ? "error" : groupStatus("risk", "Conservative Analyst") || nodeState(Boolean(state.run.risk?.conservative_history || state.run.risk?.current_conservative_response), ["Conservative Analyst"]), tone: "conservative", detail: { key: "conservativeRisk" }, error: getLiveFlowBlockError("conservative_risk") },
+        neutralRisk: { blockKey: "neutral_risk", title: "Neutral Analyst", ready: Boolean(state.run.risk?.neutral_history || state.run.risk?.current_neutral_response), status: getLiveFlowBlockError("neutral_risk") ? "error" : groupStatus("risk", "Neutral Analyst") || nodeState(Boolean(state.run.risk?.neutral_history || state.run.risk?.current_neutral_response), ["Neutral Analyst"]), tone: "neutral", detail: { key: "neutralRisk" }, error: getLiveFlowBlockError("neutral_risk") },
+        riskDebate: { blockKey: "risk_debate", title: "Risk Debate", ready: Boolean(state.run.risk?.history), status: getLiveFlowBlockError("risk_debate") ? "error" : state.run.risk?.history ? "completed" : state.run.risk?.current_aggressive_response || state.run.risk?.current_conservative_response || state.run.risk?.current_neutral_response ? "in_progress" : "pending", tone: "risk", detail: { key: "riskDebate" }, error: getLiveFlowBlockError("risk_debate") },
         portfolioManager: {
+            blockKey: "portfolio_manager",
             title: "Portfolio Manager",
             ready: hasSection("final_trade_decision"),
-            status: groupStatus("portfolio", "Portfolio Manager") || nodeState(hasSection("final_trade_decision"), ["Portfolio Manager"]),
+            status: getLiveFlowBlockError("portfolio_manager") ? "error" : groupStatus("portfolio", "Portfolio Manager") || nodeState(hasSection("final_trade_decision"), ["Portfolio Manager"]),
             tone: "decision",
             detail: { type: "report", section: "final_trade_decision", title: "Portfolio Manager", subtitle: "Final decision" },
+            error: getLiveFlowBlockError("portfolio_manager"),
         },
-        decisionExtractor: { title: "Decision Extractor", ready: hasStructuredPayload("final_trade_decision"), status: hasStructuredPayload("final_trade_decision") ? "completed" : hasSection("final_trade_decision") ? "in_progress" : "pending", tone: "evidence", detail: { key: "decisionExtractor" } },
+        decisionExtractor: { blockKey: "decision_extractor", title: "Decision Extractor", ready: hasStructuredPayload("final_trade_decision"), status: getLiveFlowBlockError("decision_extractor") ? "error" : hasStructuredPayload("final_trade_decision") ? "completed" : hasSection("final_trade_decision") ? "in_progress" : "pending", tone: "evidence", detail: { key: "decisionExtractor" }, error: getLiveFlowBlockError("decision_extractor") },
         verifier: {
+            blockKey: "verifier",
             title: "Verifier",
             ready: hasSection("verification_report"),
-            status: groupStatus("portfolio", "Verifier") || nodeState(hasSection("verification_report"), ["Verifier"]),
+            status: getLiveFlowBlockError("verifier") ? "error" : groupStatus("portfolio", "Verifier") || nodeState(hasSection("verification_report"), ["Verifier"]),
             tone: "review",
             detail: { type: "report", section: "verification_report", title: "Verifier", subtitle: "Decision audit" },
+            error: getLiveFlowBlockError("verifier"),
         },
-        persistence: { title: "History + Decision Persistence", ready: Boolean(state.run.complete?.history_id), status: state.run.complete?.history_id ? "completed" : state.run.complete ? "in_progress" : "pending", tone: "evidence", detail: { key: "persistence" } },
+        persistence: { blockKey: "persistence", title: "History + Decision Persistence", ready: Boolean(state.run.complete?.history_id), status: getLiveFlowBlockError("persistence") ? "error" : state.run.complete?.history_id ? "completed" : state.run.complete ? "in_progress" : "pending", tone: "evidence", detail: { key: "persistence" }, error: getLiveFlowBlockError("persistence") },
     };
 }
 
@@ -752,6 +923,20 @@ function renderLiveFlowDiagramIcon(iconKey = "default") {
     return HISTORY_DIAGRAM_ICONS[iconKey] || HISTORY_DIAGRAM_ICONS.default;
 }
 
+function renderLiveFlowStatusIcon(status = "pending") {
+    const normalized = String(status || "pending") === "not_selected" ? "pending" : String(status || "pending");
+    if (normalized === "completed") {
+        return '<span class="live-flow-status-icon live-flow-status-icon--completed" title="Completed" aria-hidden="true"></span>';
+    }
+    if (normalized === "in_progress") {
+        return '<span class="live-flow-status-icon live-flow-status-icon--in_progress" title="Processing" aria-hidden="true"></span>';
+    }
+    if (normalized === "error") {
+        return '<span class="live-flow-status-icon live-flow-status-icon--error" title="Error" aria-hidden="true"></span>';
+    }
+    return '<span class="live-flow-status-icon live-flow-status-icon--pending" title="Pending" aria-hidden="true"></span>';
+}
+
 function renderLiveFlowCurveWire(paths = [], className = "", viewBox = "0 0 100 100") {
     if (!paths.length) {
         return "";
@@ -776,8 +961,8 @@ function renderLiveFlowCurveWire(paths = [], className = "", viewBox = "0 0 100 
     `;
 }
 
-const LIVE_FLOW_VERTICAL_WIRE_PATH = "M50 0 C18 16 82 42 50 60";
-const LIVE_FLOW_SHORT_WIRE_PATH = "M50 0 C36 12 64 26 50 42";
+const LIVE_FLOW_VERTICAL_WIRE_PATH = "M50 0 C36 7 64 15 50 22";
+const LIVE_FLOW_SHORT_WIRE_PATH = "M50 0 C42 5 58 11 50 16";
 
 function renderLiveFlowLeaf(node = {}, layout = {}) {
     const isReady = Boolean(node.ready);
@@ -787,12 +972,15 @@ function renderLiveFlowLeaf(node = {}, layout = {}) {
     const typeAttr = detail ? ' type="button"' : "";
     const currentAgent = String(state.run.status?.current_agent || "");
     const status = String(node.status || (isReady ? "completed" : "pending"));
+    const visualStatus = status === "not_selected" ? "pending" : status;
     const isActive = Boolean(status === "in_progress" || (currentAgent && currentAgent === node.title));
     const titleText = node.title || layout.shortTitle || "Flow block";
+    const blockKey = node.blockKey || titleText.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    const detailDataset = dataset ? `${dataset} data-flow-detail-signature="${escapeHtml(JSON.stringify(detail || {}))}"` : "";
     const classes = [
         "history-diagram-node",
         node.tone ? `history-diagram-node--${node.tone}` : "",
-        `live-flow-node--${status}`,
+        `live-flow-node--${visualStatus}`,
         layout.compact ? "history-diagram-node--compact" : "",
         layout.output ? "history-diagram-node--output" : "",
         detail ? "detail-trigger" : "",
@@ -802,11 +990,11 @@ function renderLiveFlowLeaf(node = {}, layout = {}) {
         layout.loading ? "is-loading" : "",
     ].filter(Boolean).join(" ");
     return `
-        <${tag}${typeAttr} class="${classes}" ${dataset} title="${escapeHtml(titleText)}" aria-label="${escapeHtml(detail ? `Open ${titleText} detail` : titleText)}"${!detail ? ' aria-disabled="true"' : ""}>
+        <${tag}${typeAttr} class="${classes}" data-flow-block-key="${escapeHtml(blockKey)}" data-flow-status="${escapeHtml(status)}" ${detailDataset} title="${escapeHtml(node.error || titleText)}" aria-label="${escapeHtml(detail ? `Open ${titleText} detail, ${status}` : `${titleText}, ${status}`)}"${!detail ? ' aria-disabled="true"' : ""}>
             <span class="history-diagram-node-head">
                 <span class="history-diagram-node-icon" aria-hidden="true">${renderLiveFlowDiagramIcon(getLiveFlowIconKey(node))}</span>
                 <strong>${escapeHtml(layout.shortTitle || titleText)}</strong>
-                <span class="history-diagram-node-dot" aria-hidden="true"></span>
+                ${renderLiveFlowStatusIcon(visualStatus)}
             </span>
         </${tag}>
     `;
@@ -928,7 +1116,7 @@ function renderLiveFlowWire(className = "") {
     return renderLiveFlowCurveWire(
         [isPair ? LIVE_FLOW_SHORT_WIRE_PATH : LIVE_FLOW_VERTICAL_WIRE_PATH],
         `live-flow-wire ${className} ${statusClass}`,
-        isPair ? "0 0 100 42" : "0 0 100 60",
+        isPair ? "0 0 100 16" : "0 0 100 22",
     );
 }
 
@@ -938,9 +1126,9 @@ function renderLiveFlowFanInWire(sourceCount = 0, className = "") {
     const step = 100 / count;
     const paths = Array.from({ length: count }, (_unused, index) => {
         const x = Math.round((step * index + step / 2) * 100) / 100;
-        return `M${x} 0 C${x} 18 50 22 50 54`;
+        return `M${x} 0 C${x} 12 50 16 50 34`;
     });
-    return renderLiveFlowCurveWire(paths, `live-flow-wire live-flow-wire--fan-in ${className} ${statusClass}`, "0 0 100 58");
+    return renderLiveFlowCurveWire(paths, `live-flow-wire live-flow-wire--fan-in ${className} ${statusClass}`, "0 0 100 36");
 }
 
 function renderLiveFlowFanOutWire(targetCount = 0, className = "") {
@@ -949,9 +1137,9 @@ function renderLiveFlowFanOutWire(targetCount = 0, className = "") {
     const step = 100 / count;
     const paths = Array.from({ length: count }, (_unused, index) => {
         const x = Math.round((step * index + step / 2) * 100) / 100;
-        return `M50 0 C50 18 ${x} 22 ${x} 54`;
+        return `M50 0 C50 12 ${x} 16 ${x} 34`;
     });
-    return renderLiveFlowCurveWire(paths, `live-flow-wire live-flow-wire--fan-out ${className} ${statusClass}`, "0 0 100 58");
+    return renderLiveFlowCurveWire(paths, `live-flow-wire live-flow-wire--fan-out ${className} ${statusClass}`, "0 0 100 36");
 }
 
 function renderLiveFlowSourceLayer(sourceNodes = []) {
@@ -1007,6 +1195,128 @@ function renderLiveFlowSingle(node = {}, className = "") {
             ${renderLiveFlowLeaf(node, { compact: true })}
         </section>
     `;
+}
+
+function getLiveFlowSignature() {
+    const flow = buildLiveFlowNodes();
+    const sourceKeys = (flow.sourceNodes || [])
+        .filter((source) => source?.visible !== false)
+        .map((source) => [
+            source.data?.blockKey,
+            isLiveFlowNodeVisible(source.data) ? "1" : "0",
+            source.summary?.blockKey,
+            isLiveFlowNodeVisible(source.summary) ? "1" : "0",
+        ].join(":"))
+        .join("|");
+    const rowKeys = [
+        ...(flow.analystNodes || []),
+        flow.bullResearcher,
+        flow.bearResearcher,
+        flow.aggressiveRisk,
+        flow.conservativeRisk,
+        flow.neutralRisk,
+    ]
+        .filter(Boolean)
+        .map((node) => `${node.blockKey}:${isLiveFlowNodeVisible(node) ? "1" : "0"}`)
+        .join("|");
+    const singletonKeys = [
+        flow.evidenceExtractor,
+        flow.evidenceLedger,
+        flow.researchDebate,
+        flow.researchManager,
+        flow.investmentExtractor,
+        flow.trader,
+        flow.traderExtractor,
+        flow.riskDebate,
+        flow.portfolioManager,
+        flow.decisionExtractor,
+        flow.verifier,
+        flow.persistence,
+    ]
+        .filter(Boolean)
+        .map((node) => `${node.blockKey}:${isLiveFlowNodeVisible(node) ? "1" : "0"}`)
+        .join("|");
+    const selected = Array.from(new Set(state.run.meta?.selected_analysts || [])).sort().join(",");
+    return `${selected}||${sourceKeys}||${rowKeys}||${singletonKeys}`;
+}
+
+function updateLiveFlowNodeDom(node = {}) {
+    if (!node?.blockKey) {
+        return;
+    }
+    const escapedBlockKey = window.CSS?.escape
+        ? CSS.escape(node.blockKey)
+        : String(node.blockKey).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const element = elements.reportGrid?.querySelector(`[data-flow-block-key="${escapedBlockKey}"]`);
+    if (!(element instanceof HTMLElement)) {
+        return;
+    }
+    const status = String(node.status || (node.ready ? "completed" : "pending"));
+    const visualStatus = status === "not_selected" ? "pending" : status;
+    const isReady = Boolean(node.ready);
+    const isActive = Boolean(status === "in_progress" || state.run.status?.current_agent === node.title);
+    ["pending", "in_progress", "completed", "error"].forEach((value) => {
+        element.classList.toggle(`live-flow-node--${value}`, visualStatus === value);
+    });
+    element.classList.toggle("is-ready", isReady);
+    element.classList.toggle("is-pending", !isReady);
+    element.classList.toggle("is-active", isActive);
+    element.dataset.flowStatus = status;
+    if (node.error) {
+        element.title = node.error;
+    } else {
+        element.title = node.title || element.title;
+    }
+    if (node.detail) {
+        applyDetailAttributes(element, node.detail);
+        element.dataset.flowDetailSignature = JSON.stringify(node.detail || {});
+    }
+    const statusIcon = element.querySelector(".live-flow-status-icon");
+    if (statusIcon instanceof HTMLElement) {
+        statusIcon.className = `live-flow-status-icon live-flow-status-icon--${visualStatus}`;
+        statusIcon.title = visualStatus === "completed" ? "Completed" : visualStatus === "in_progress" ? "Processing" : visualStatus === "error" ? "Error" : "Pending";
+    }
+}
+
+function walkLiveFlowNodes(visitor) {
+    const flow = buildLiveFlowNodes();
+    (flow.sourceNodes || []).forEach((source) => {
+        visitor(source.data);
+        visitor(source.summary);
+    });
+    [
+        ...(flow.analystNodes || []),
+        flow.evidenceExtractor,
+        flow.evidenceLedger,
+        flow.bullResearcher,
+        flow.bearResearcher,
+        flow.researchDebate,
+        flow.researchManager,
+        flow.investmentExtractor,
+        flow.trader,
+        flow.traderExtractor,
+        flow.aggressiveRisk,
+        flow.conservativeRisk,
+        flow.neutralRisk,
+        flow.riskDebate,
+        flow.portfolioManager,
+        flow.decisionExtractor,
+        flow.verifier,
+        flow.persistence,
+    ].filter(Boolean).forEach(visitor);
+}
+
+function syncLiveFlowDomState() {
+    walkLiveFlowNodes(updateLiveFlowNodeDom);
+    const statusClass = getLiveFlowWireStatusClass();
+    elements.reportGrid?.querySelectorAll(".live-flow-wire").forEach((wire) => {
+        if (!(wire instanceof HTMLElement)) {
+            return;
+        }
+        wire.classList.toggle("live-flow-wire--pending", statusClass === "live-flow-wire--pending");
+        wire.classList.toggle("live-flow-wire--active", statusClass === "live-flow-wire--active");
+        wire.classList.toggle("live-flow-wire--complete", statusClass === "live-flow-wire--complete");
+    });
 }
 
 function renderLiveAgentFlow() {
@@ -1078,7 +1388,7 @@ function renderFlowInspectorMarkup() {
 }
 
 function clearDetailAttributes(element) {
-    ["data-detail-key", "data-detail-section", "data-detail-title", "data-detail-subtitle"].forEach((attribute) => {
+    ["data-detail-key", "data-detail-section", "data-detail-title", "data-detail-subtitle", "data-detail-mode", "data-detail-trace-id"].forEach((attribute) => {
         element.removeAttribute(attribute);
     });
 }
@@ -1092,6 +1402,16 @@ function applyDetailAttributes(element, detail) {
         element.dataset.detailSection = detail.section || "";
         element.dataset.detailTitle = detail.title || "Report Detail";
         element.dataset.detailSubtitle = detail.subtitle || detail.title || "Agent report";
+        if (detail.mode) {
+            element.dataset.detailMode = detail.mode;
+        }
+        return;
+    }
+    if (detail.type === "trace") {
+        element.dataset.detailTraceId = detail.traceId || "";
+        element.dataset.detailTitle = detail.title || "Tool Detail";
+        element.dataset.detailSubtitle = detail.subtitle || "Agent tool trace";
+        element.dataset.detailMode = detail.mode || "markdown";
         return;
     }
     if (detail.key) {
@@ -1104,11 +1424,26 @@ function renderReportGrid() {
         return;
     }
 
-    elements.reportGrid.innerHTML = `
-        <div class="live-layout live-layout-single">
-            ${renderFlowInspectorMarkup()}
-        </div>
-    `;
+    const nextSignature = getLiveFlowSignature();
+    const existingDiagram = elements.reportGrid.querySelector(".live-flow-diagram");
+    if (!(existingDiagram instanceof HTMLElement) || state.run.liveFlowSignature !== nextSignature) {
+        const scrollHost = elements.reportGrid.querySelector(".live-flow-diagram-wrap");
+        const previousScrollTop = scrollHost instanceof HTMLElement ? scrollHost.scrollTop : 0;
+        const previousScrollLeft = scrollHost instanceof HTMLElement ? scrollHost.scrollLeft : 0;
+        elements.reportGrid.innerHTML = `
+            <div class="live-layout live-layout-single">
+                ${renderFlowInspectorMarkup()}
+            </div>
+        `;
+        state.run.liveFlowSignature = nextSignature;
+        const nextScrollHost = elements.reportGrid.querySelector(".live-flow-diagram-wrap");
+        if (nextScrollHost instanceof HTMLElement) {
+            nextScrollHost.scrollTop = previousScrollTop;
+            nextScrollHost.scrollLeft = previousScrollLeft;
+        }
+    } else {
+        syncLiveFlowDomState();
+    }
 
     elements.activeReportText.textContent = state.run.cancelled?.message
         || (state.isBusy ? "Live flow diagram" : state.run.complete?.signal || "Waiting for live stream");
@@ -1433,18 +1768,73 @@ function formatEndpointSummariesMarkdown(items = []) {
     }).join("\n\n");
 }
 
+function getSourceGroupArtifactRows(groupKey = "") {
+    const config = SOURCE_ARTIFACT_GROUPS[groupKey] || {};
+    const savedRows = (state.run.sourceArtifactLists?.[groupKey] || []).filter((item) => item.source_kind !== "flow_block");
+    return {
+        groupKey,
+        flowGroup: config.flowGroup || "",
+        saved: savedRows.map((item) => ({
+            section_key: item.section_key || "",
+            title: item.title || item.source_key || "",
+            source_kind: item.source_kind || item.artifact_type || "",
+            source_key: item.source_key || "",
+            summary: item.summary || "",
+            created_at: item.created_at || "",
+        })),
+        live: getLiveSourceTraceEntries(groupKey).map((entry) => ({
+            id: entry.id || "",
+            title: entry.title || "",
+            agent: entry.agent || "",
+            phase: entry.phase || "",
+            trace_id: entry.traceId || "",
+            query: entry.toolCallContent || "",
+            result: entry.toolResultContent || entry.content || "",
+            timestamp: entry.timestamp || "",
+        })),
+    };
+}
+
+function getLiveFlowBlockPayload(blockKey = "", title = "", status = "pending", detail = null, summary = "") {
+    const relatedSections = [];
+    if (detail?.section) {
+        relatedSections.push(detail.section);
+    }
+    if (detail?.key) {
+        relatedSections.push(detail.key);
+    }
+    return {
+        block_key: blockKey,
+        title,
+        status,
+        summary,
+        detail,
+        related_sections: relatedSections,
+        error: getLiveFlowBlockError(blockKey),
+    };
+}
+
 function formatStructuredPayloadMarkdown(payload = {}, title = "Structured Payload") {
     if (!payload || typeof payload !== "object" || Array.isArray(payload) || Object.keys(payload).length === 0) {
         return "";
     }
+    const renderStructuredFieldValue = (value) => {
+        if (value === null) {
+            return "null";
+        }
+        if (value === undefined) {
+            return "";
+        }
+        if (typeof value === "object") {
+            return JSON.stringify(value, null, 2);
+        }
+        return value;
+    };
     const rows = [
         "| Field | Value |",
         "| --- | --- |",
         ...Object.entries(payload).map(([key, value]) => {
-            const rendered = typeof value === "object" && value !== null
-                ? JSON.stringify(value, null, 2)
-                : value;
-            return `| ${markdownCell(key)} | ${markdownCell(rendered)} |`;
+            return `| ${markdownCell(key)} | ${markdownCell(renderStructuredFieldValue(value))} |`;
         }),
     ];
     return [`### ${title}`, rows.join("\n")].join("\n\n");
@@ -1529,6 +1919,36 @@ function getDetailContent(detail) {
             return getSourceArtifactDetailContent("social", "Social or web source results have not appeared yet.");
         case "liveFlowData":
             return getSourceArtifactDetailContent("flow", "Flow source results have not appeared yet.");
+        case "liveCcxtSummary":
+            return {
+                content: getLiveSourceSummaryMarkdown("ccxt"),
+                fallback: "Market summary markdown is not available yet.",
+                payload: getSourceGroupArtifactRows("ccxt"),
+            };
+        case "liveCoinglassSummary":
+            return {
+                content: getLiveSourceSummaryMarkdown("coinglass"),
+                fallback: "Derivatives / flow summary markdown is not available yet.",
+                payload: getSourceGroupArtifactRows("coinglass"),
+            };
+        case "liveNewsSummary":
+            return {
+                content: getLiveSourceSummaryMarkdown("news"),
+                fallback: "News summary markdown is not available yet.",
+                payload: getSourceGroupArtifactRows("news"),
+            };
+        case "liveSocialSummary":
+            return {
+                content: getLiveSourceSummaryMarkdown("social"),
+                fallback: "Social summary markdown is not available yet.",
+                payload: getSourceGroupArtifactRows("social"),
+            };
+        case "liveFlowSummary":
+            return {
+                content: getLiveSourceSummaryMarkdown("flow"),
+                fallback: "Flow summary markdown is not available yet.",
+                payload: getSourceGroupArtifactRows("flow"),
+            };
         case "evidenceExtractor":
         case "evidenceLedger":
             return {
@@ -1767,8 +2187,14 @@ function renderActiveDetail() {
     const directMetaTypes = ["report", "trace", "history-section", "source-artifact", "history-final-decision"];
     const meta = directMetaTypes.includes(detail.type) ? detail : DETAIL_PANEL_META[detail.key] || {};
     const detailContent = getDetailContent(detail);
+    setDetailPayload(detail, detailContent);
     const { content, fallback, toolResult, traceEntry } = detailContent;
     const mode = detailContent.mode || (toolResult ? "tool-result" : detail.mode || meta.mode || "markdown");
+    const canGoBack = Array.isArray(state.detailBackStack) && state.detailBackStack.length > 0;
+    if (elements.backDetailButton instanceof HTMLElement) {
+        elements.backDetailButton.hidden = !canGoBack;
+        elements.backDetailButton.disabled = !canGoBack;
+    }
     elements.detailTitle.textContent = meta.title || "Panel Detail";
     elements.detailSubtitle.textContent = meta.subtitle || "Analysis detail";
     elements.detailBody.classList.toggle("plain-log", mode === "text");
@@ -1787,9 +2213,21 @@ function renderActiveDetail() {
     }
 }
 
-function openDetailModal(detail) {
+function openDetailModal(detail, options = {}) {
+    if (options.pushHistory !== false && state.activeDetail && !elements.detailModal.classList.contains("hidden")) {
+        state.detailBackStack = [...(state.detailBackStack || []), state.activeDetail].slice(-12);
+    }
     state.activeDetail = detail;
     showModal(elements.detailModal);
+    renderActiveDetail();
+}
+
+function goBackDetailModal() {
+    const previousDetail = state.detailBackStack?.pop();
+    if (!previousDetail) {
+        return;
+    }
+    state.activeDetail = previousDetail;
     renderActiveDetail();
 }
 
@@ -1823,12 +2261,13 @@ async function openSavedSourceArtifactDetail(runId = "", sectionKey = "") {
         content: artifact.markdown || "",
         fallback: "This artifact has no markdown content.",
         mode: "markdown",
-    });
+    }, { pushHistory: false });
 }
 
 function closeDetailModal() {
     hideModal(elements.detailModal);
     state.activeDetail = null;
+    state.detailBackStack = [];
 }
 
 function renderPageShell() {
