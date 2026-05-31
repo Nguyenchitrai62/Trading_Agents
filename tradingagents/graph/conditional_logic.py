@@ -1,5 +1,7 @@
 # TradingAgents/graph/conditional_logic.py
 
+from langgraph.graph import END
+
 from tradingagents.agents.utils.agent_states import AgentState
 
 
@@ -69,3 +71,12 @@ class ConditionalLogic:
         if state["risk_debate_state"]["latest_speaker"].startswith("Conservative"):
             return "Neutral Analyst"
         return "Aggressive Analyst"
+
+    def should_continue_portfolio_verification(self, state: AgentState) -> str:
+        """Reroute a non-approved verification back to the Portfolio Manager once."""
+        verification = state.get("verification_report_structured") or {}
+        verdict = str(verification.get("verdict") or "").strip().lower()
+        revision_count = int(state.get("decision_revision_count") or 0)
+        if verdict != "approved" and revision_count < 2:
+            return "Portfolio Manager"
+        return END

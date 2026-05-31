@@ -125,6 +125,25 @@ def create_portfolio_manager(llm):
                 ("Position Sizing", "position_sizing"),
             ],
         )
+        verification_feedback = _format_structured_context(
+            state.get("verification_report_structured") or {},
+            state.get("verification_report") or "",
+            [
+                ("Verdict", "verdict"),
+                ("Deterministic Checks", "deterministic_checks"),
+                ("Evidence Support", "evidence_support"),
+                ("Unsupported Claims", "unsupported_claims"),
+                ("Confidence Note", "confidence_note"),
+                ("Recommended Action", "recommended_action"),
+            ],
+        )
+        verification_feedback_block = ""
+        if verification_feedback:
+            verification_feedback_block = (
+                "Verifier feedback from the previous pass:\n"
+                f"{verification_feedback}\n\n"
+                "If the verifier asked for a revision, correct the signal and the structured price fields before you write the final decision again.\n"
+            )
 
         past_context = state.get("past_context", "")
         lessons_line = (
@@ -169,6 +188,7 @@ def create_portfolio_manager(llm):
 - Structured evidence ledger:\n{evidence_ledger}
 {coinglass_context}
 {lessons_line}
+{verification_feedback_block}
 **Risk Analysts Debate History:**
 {history}
 

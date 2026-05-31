@@ -33,24 +33,6 @@ class AuthService:
         self.cache: dict[str, tuple[float, dict]] = {}
         self.cache_lock = threading.Lock()
 
-    @staticmethod
-    def local_admin_user() -> dict:
-        return {
-            "email": "local-admin@tradingagents.local",
-            "sub": "local-auth-disabled",
-            "name": "Local Admin",
-            "picture": "",
-            "email_verified": True,
-            "authorized": True,
-            "is_admin": True,
-            "role": "admin",
-            "can_run_analysis": True,
-            "history_access_days": None,
-            "history_access_unlimited": True,
-            "can_read_history": True,
-            "auth_disabled": True,
-        }
-
     def _extract_auth_token(self, request: Request) -> str:
         bearer = request.headers.get("Authorization", "").strip()
         if bearer.lower().startswith("bearer "):
@@ -333,13 +315,6 @@ class AuthService:
         return user
 
     async def create_session(self, google_id_token: str) -> dict:
-        if not self.settings.auth_enabled:
-            user = self.local_admin_user()
-            return {
-                "session_token": "",
-                "expires_at": None,
-                "user": user,
-            }
         user = await asyncio.to_thread(self._validate_google_id_token, google_id_token)
         session_token, expires_at = await asyncio.to_thread(self._create_session_token, user)
         await self._persist_user_if_possible(user)
@@ -354,11 +329,6 @@ class AuthService:
         existing_user = getattr(request.state, "auth_user", None)
         if existing_user is not None:
             return existing_user
-
-        if not self.settings.auth_enabled:
-            user = self.local_admin_user()
-            request.state.auth_user = user
-            return user
 
         token = self._extract_auth_token(request)
         if not token:

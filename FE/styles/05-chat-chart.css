@@ -2231,6 +2231,15 @@ button.flow-section-item:focus-visible {
     .flow-section-list {
         grid-template-columns: 1fr;
     }
+
+    .live-flow-board-topline {
+        flex-direction: column;
+    }
+
+    .live-flow-board-summary {
+        justify-items: start;
+        text-align: left;
+    }
 }
 
 @media (max-width: 1180px) {

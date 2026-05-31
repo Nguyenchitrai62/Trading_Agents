@@ -2491,8 +2491,9 @@ class AnalysisService:
             for structured_key, payload in (completed_snapshot.get("structured") or {}).items():
                 if payload and payload != previous_structured.get(structured_key):
                     final_progress_keys.add(f"{structured_key}_structured")
-            signal = graph.process_signal(final_state["final_trade_decision"])
             verification_payload = final_state.get("verification_report_structured") or {}
+            decision_payload = final_state.get("final_trade_decision_structured") or {}
+            signal = str(decision_payload.get("signal") or graph.process_signal(final_state["final_trade_decision"])).strip()
             verification_verdict = str(verification_payload.get("verdict") or "").strip()
             verification_action = str(verification_payload.get("recommended_action") or "").strip()
             elapsed_seconds = round(time.time() - started_at, 2)

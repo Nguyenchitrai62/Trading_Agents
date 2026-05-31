@@ -259,7 +259,8 @@
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
-    overflow-x: hidden;
+    overflow-x: auto;
+    width: 100%;
     border: 1px solid var(--line);
     border-radius: 14px;
     background: rgba(8, 14, 13, 0.78);
@@ -268,14 +269,14 @@
 }
 
 .history-table {
-    width: max-content;
-    min-width: 0;
-    max-width: 100%;
+    width: 100%;
+    min-width: 1320px;
+    max-width: none;
     align-self: flex-start;
     height: auto;
     border-collapse: separate;
     border-spacing: 0;
-    table-layout: auto;
+    table-layout: fixed;
 }
 
 .history-table th,
@@ -304,27 +305,40 @@
 
 .history-table th:nth-child(3),
 .history-table td:nth-child(3) {
-    width: 9.5rem;
+    width: 8.5rem;
 }
 
 .history-table th:nth-child(4),
-.history-table td:nth-child(4) {
+.history-table td:nth-child(4),
+.history-table th:nth-child(5),
+.history-table td:nth-child(5),
+.history-table th:nth-child(6),
+.history-table td:nth-child(6),
+.history-table th:nth-child(7),
+.history-table td:nth-child(7),
+.history-table th:nth-child(8),
+.history-table td:nth-child(8) {
+    width: 9.5rem;
+}
+
+.history-table th:nth-child(9),
+.history-table td:nth-child(9) {
     width: 14.5rem;
 }
 
-.history-table th:nth-child(5),
-.history-table td:nth-child(5) {
+.history-table th:nth-child(10),
+.history-table td:nth-child(10) {
     width: 8rem;
 }
 
-.history-table th:nth-child(6),
-.history-table td:nth-child(6) {
+.history-table th:nth-child(11),
+.history-table td:nth-child(11) {
     width: 7rem;
     font-variant-numeric: tabular-nums;
 }
 
-.history-table th:nth-child(7),
-.history-table td:nth-child(7) {
+.history-table th:nth-child(12),
+.history-table td:nth-child(12) {
     width: 9.5rem;
     font-variant-numeric: tabular-nums;
 }
@@ -365,6 +379,13 @@
 .history-table tbody td:nth-child(6),
 .history-table tbody td:nth-child(7) {
     text-align: right;
+}
+
+.history-table tbody td:nth-child(n + 4):nth-child(-n + 8),
+.history-table tbody td:nth-child(11),
+.history-table tbody td:nth-child(12) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 
 .history-table tbody tr:last-child td {
