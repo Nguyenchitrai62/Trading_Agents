@@ -365,6 +365,12 @@ body {
     text-transform: uppercase;
 }
 
+.trace-phase-badge-web {
+    background: rgba(95, 226, 194, 0.14);
+    border-color: rgba(95, 226, 194, 0.24);
+    color: var(--secondary);
+}
+
 .tool-trace-item span {
     white-space: nowrap;
     font-size: 0.72rem;
@@ -376,8 +382,49 @@ body {
     line-height: 1.48;
     display: -webkit-box;
     -webkit-line-clamp: 4;
+    line-clamp: 4;
     -webkit-box-orient: vertical;
     overflow: hidden;
+}
+
+.tool-trace-snippet {
+    display: grid;
+    gap: 5px;
+    margin-top: 9px;
+    padding: 9px 10px;
+    border: 1px solid rgba(115, 142, 178, 0.14);
+    border-radius: 12px;
+    background: rgba(6, 13, 22, 0.5);
+}
+
+.tool-trace-snippet span {
+    color: var(--muted);
+    font-size: 0.66rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.tool-trace-snippet p,
+.tool-trace-fallback {
+    margin: 0;
+    color: #d5e4f1;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.tool-trace-snippet-result {
+    border-color: rgba(95, 226, 194, 0.2);
+    background: rgba(22, 51, 52, 0.4);
+}
+
+.trace-tool-web {
+    border-left-color: var(--secondary);
+    background: linear-gradient(180deg, rgba(16, 36, 43, 0.84), rgba(12, 22, 34, 0.9));
 }
 
 .trace-tone-progress {
@@ -394,6 +441,10 @@ body {
 
 .trace-tone-warning {
     border-left: 3px solid var(--warning);
+}
+
+.tool-trace-item.trace-tool-web {
+    border-left-color: var(--secondary);
 }
 
 .live-layout {
@@ -1065,6 +1116,7 @@ body {
     font-size: 0.78rem;
     line-height: 1.42;
     -webkit-line-clamp: 3;
+    line-clamp: 3;
 }
 
 #eventLog.event-log {

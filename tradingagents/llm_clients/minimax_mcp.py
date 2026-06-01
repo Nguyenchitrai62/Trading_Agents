@@ -125,10 +125,24 @@ class MiniMaxMCPChatModel(Runnable[Any, Any]):
         llm: Any,
         settings: MiniMaxMCPSettings,
         reference_sources: Sequence[Any] | None = None,
+        trace_callback: Callable[[dict[str, Any]], None] | None = None,
+        trace_agent: str = "",
     ):
         self.llm = llm
         self.settings = settings
-        self.instruction = build_mcp_reference_sources_instruction(reference_sources)
+        self.reference_sources = tuple(reference_sources or ())
+        self.instruction = build_mcp_reference_sources_instruction(self.reference_sources)
+        self.trace_callback = trace_callback
+        self.trace_agent = str(trace_agent or "").strip()
+
+    def with_trace_context(self, trace_agent: str) -> "MiniMaxMCPChatModel":
+        return MiniMaxMCPChatModel(
+            self.llm,
+            settings=self.settings,
+            reference_sources=self.reference_sources,
+            trace_callback=self.trace_callback,
+            trace_agent=trace_agent,
+        )
 
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
         return self._invoke_with_mcp_loop(input, config=config, **kwargs)
@@ -171,14 +185,27 @@ class MiniMaxMCPChatModel(Runnable[Any, Any]):
 
             messages.append(response)
             for tool_call in tool_calls:
-                tool_name = str(tool_call.get("name") or "")
+                requested_tool_name = str(tool_call.get("name") or "")
+                tool_name = _resolve_canonical_tool_name(requested_tool_name)
                 tool_args = tool_call.get("args") or {}
                 tool_call_id = str(tool_call.get("id") or tool_name)
+                self._emit_tool_trace(
+                    phase="tool_call",
+                    tool_name=tool_name,
+                    trace_id=tool_call_id,
+                    content=self._tool_call_summary(tool_name, tool_args),
+                )
                 try:
-                    content = call_mcp_tool_sync(self.settings, tool_name, tool_args)
+                    content = call_mcp_tool_sync(self.settings, requested_tool_name, tool_args)
                 except Exception as exc:  # pragma: no cover - external MCP failure path
-                    logger.warning("MiniMax MCP tool %s failed: %s", tool_name, exc)
-                    content = f"MiniMax MCP tool {tool_name} failed: {exc}"
+                    logger.warning("MiniMax MCP tool %s failed: %s", requested_tool_name, exc)
+                    content = f"MiniMax MCP tool {requested_tool_name} failed: {exc}"
+                self._emit_tool_trace(
+                    phase="tool_result",
+                    tool_name=tool_name,
+                    trace_id=tool_call_id,
+                    content=content,
+                )
                 messages.append(
                     ToolMessage(content=content, name=tool_name, tool_call_id=tool_call_id)
                 )
@@ -192,6 +219,33 @@ class MiniMaxMCPChatModel(Runnable[Any, Any]):
             )
         )
         return normalize_content(self.llm.invoke(messages, config=config, **kwargs))
+
+    @staticmethod
+    def _tool_call_summary(tool_name: str, args: Any) -> str:
+        if not args:
+            return f"{tool_name}()"
+        if isinstance(args, dict):
+            try:
+                return f"{tool_name}({json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)})"
+            except TypeError:
+                items = ", ".join(f"{key}={value}" for key, value in list(args.items())[:6])
+                return f"{tool_name}({items})"
+        return f"{tool_name}({args})"
+
+    def _emit_tool_trace(self, *, phase: str, tool_name: str, trace_id: str, content: Any) -> None:
+        if self.trace_callback is None:
+            return
+        payload = {
+            "agent": self.trace_agent or "MiniMax MCP",
+            "phase": phase,
+            "title": tool_name or "tool",
+            "trace_id": trace_id or tool_name or "tool",
+            "content": content,
+        }
+        try:
+            self.trace_callback(payload)
+        except Exception as exc:  # pragma: no cover - trace should never break model flow
+            logger.debug("MiniMax MCP trace callback failed: %s", exc)
 
 
 def _env_bool(name: str, default: bool) -> bool:

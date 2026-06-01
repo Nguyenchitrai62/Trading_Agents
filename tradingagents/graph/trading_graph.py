@@ -175,6 +175,7 @@ class TradingAgentsGraph:
                         "mcp_call_timeout_seconds": self.config.get("minimax_mcp_call_timeout_seconds"),
                         "mcp_list_timeout_seconds": self.config.get("minimax_mcp_list_timeout_seconds"),
                         "mcp_reference_sources": self.config.get("preferred_reference_sources"),
+                        "mcp_trace_callback": self.config.get("analysis_trace_callback"),
                     }
                 )
 

@@ -91,6 +91,7 @@ def create_sentiment_analyst(llm):
         instrument_context = build_instrument_context(ticker, asset_type)
         prefer_mcp_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
         has_mcp_web_search = prefer_mcp_web_search and has_minimax_mcp_tool(llm.settings, "web_search")
+        active_llm = llm.with_trace_context("Social Analyst") if isinstance(llm, MiniMaxMCPChatModel) else llm
 
         has_live_web_search = bool(has_mcp_web_search)
 
@@ -154,10 +155,10 @@ def create_sentiment_analyst(llm):
         prompt = prompt.partial(current_date=end_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        if isinstance(llm, MiniMaxMCPChatModel) and not has_live_web_search:
-            chain = prompt | llm.bind_tools([get_news])
+        if isinstance(active_llm, MiniMaxMCPChatModel) and not has_live_web_search:
+            chain = prompt | active_llm.bind_tools([get_news])
         else:
-            chain = prompt | llm
+            chain = prompt | active_llm
         result = chain.invoke(state["messages"])
 
         evidence_items = []

@@ -103,10 +103,12 @@ const DETAIL_PANEL_META = {
     liveCoinGlassData: { title: "CoinGlass Data", subtitle: "Endpoint source results" },
     liveNewsData: { title: "News Data", subtitle: "News and web source results" },
     liveSocialData: { title: "Social / Web Data", subtitle: "Social and web source results" },
+    liveWebSearchData: { title: "MCP Web Search", subtitle: "Live MiniMax web_search calls and results" },
     liveCcxtSummary: { title: "Market Summary", subtitle: "Markdown summary from market source data" },
     liveCoinglassSummary: { title: "Onchain Endpoint Summary", subtitle: "Markdown summary from CoinGlass endpoints" },
     liveNewsSummary: { title: "News Summary", subtitle: "Markdown summary from news sources" },
     liveSocialSummary: { title: "Social Summary", subtitle: "Markdown summary from social and web sources" },
+    liveWebSearchSummary: { title: "Web Evidence Summary", subtitle: "Compact view of web_search evidence" },
 };
 
 const HISTORY_FLOW_SECTION_ORDER = {

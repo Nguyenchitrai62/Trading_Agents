@@ -387,6 +387,12 @@ const SOURCE_ARTIFACT_GROUPS = {
         summaryTitle: "Social Summary",
         summaryFilter: (item) => getEndpointSummaryBucket(item) === "social",
     },
+    web: {
+        flowGroup: "",
+        title: "MCP Web Search",
+        summaryTitle: "Web Evidence Summary",
+        summaryFilter: (item) => getEndpointSummaryBucket(item) === "web_search",
+    },
 };
 
 function getEndpointSummaryBucket(item = {}) {
@@ -398,6 +404,9 @@ function getEndpointSummaryBucket(item = {}) {
         item.source,
         item.source_type,
     ].map((value) => String(value || "").toLowerCase()).join(" ");
+    if (text.includes("web_search") || text.includes("web search") || text.includes("web-search")) {
+        return "web_search";
+    }
     if (text.includes("coinglass") || text.includes("derivative") || text.includes("funding") || text.includes("liquidation") || text.includes("open interest")) {
         return "coinglass";
     }
@@ -424,10 +433,22 @@ function getLiveSourceArtifactCount() {
         return Number(state.run.sourceArtifactCount || 0);
     }
     const keys = new Set();
-    ["ccxt", "coinglass", "news", "social"].forEach((groupKey) => {
+    ["ccxt", "coinglass", "news", "social", "web"].forEach((groupKey) => {
         getLiveSourceTraceEntries(groupKey).forEach((entry) => keys.add(entry.id || `${entry.agent}:${entry.title}:${entry.traceId}`));
     });
     return keys.size;
+}
+
+function isWebSearchTraceEntry(entry = {}) {
+    const title = String(entry.title || "").toLowerCase();
+    const traceId = String(entry.traceId || entry.trace_id || "").toLowerCase();
+    const content = String(entry.toolCallContent || entry.content || "").toLowerCase();
+    return title === "web_search"
+        || title === "web search"
+        || title.includes("web_search")
+        || title.includes("web-search")
+        || traceId.includes("web_search")
+        || /^web_search\s*\(/.test(content);
 }
 
 function isLiveSourceTraceEntryForGroup(entry = {}, groupKey = "", phases = ["tool_result", "tool_trace"]) {
@@ -437,6 +458,10 @@ function isLiveSourceTraceEntryForGroup(entry = {}, groupKey = "", phases = ["to
     const title = String(entry.title || "").toLowerCase();
     const agent = String(entry.agent || "").toLowerCase();
     const traceId = String(entry.traceId || entry.trace_id || "").toLowerCase();
+    const isWebSearch = isWebSearchTraceEntry(entry);
+    if (groupKey === "web") {
+        return isWebSearch;
+    }
     if (groupKey === "ccxt") {
         return title === "get_crypto_ohlcv" || title === "get_crypto_indicators";
     }
@@ -444,10 +469,10 @@ function isLiveSourceTraceEntryForGroup(entry = {}, groupKey = "", phases = ["to
         return traceId.startsWith("coinglass:") || title.includes("coinglass");
     }
     if (groupKey === "news") {
-        return agent.includes("news") || title.includes("news") || title === "get_global_news";
+        return !isWebSearch && (agent.includes("news") || title.includes("news") || title === "get_global_news");
     }
     if (groupKey === "social") {
-        return agent.includes("social") || title.includes("reddit") || title.includes("stocktwits");
+        return !isWebSearch && (agent.includes("social") || title.includes("reddit") || title.includes("stocktwits"));
     }
     return false;
 }
@@ -549,7 +574,7 @@ function buildLiveSourceSummaryNode(groupKey, title, ready, status, blockKey) {
 function requestSavedSourceArtifacts(groupKey = "") {
     const config = SOURCE_ARTIFACT_GROUPS[groupKey];
     const historyId = state.run.complete?.history_id;
-    if (!config || !historyId || !canReadHistory()) {
+    if (!config || !config.flowGroup || !historyId || !canReadHistory()) {
         return;
     }
     state.run.sourceArtifactLists = state.run.sourceArtifactLists || {};
@@ -809,11 +834,14 @@ function buildLiveFlowNodes() {
     const coinglassReady = sourceDoneForGroup("coinglass");
     const newsSourceReady = sourceDoneForGroup("news");
     const socialSourceReady = sourceDoneForGroup("social");
+    const webSearchReady = sourceDoneForGroup("web");
     const marketSummaryReady = getLiveSourceSummaryReady("ccxt");
     const coinglassSummaryReady = getLiveSourceSummaryReady("coinglass");
     const newsSummaryReady = getLiveSourceSummaryReady("news");
     const socialSummaryReady = getLiveSourceSummaryReady("social");
+    const webSearchSummaryReady = getLiveSourceSummaryReady("web");
     const sourceVisible = (analystKey, ready) => Boolean(ready || selectedAnalysts.has(analystKey) || state.isBusy || state.run.complete);
+    const webSearchVisible = Boolean(webSearchReady || selectedAnalysts.has("social") || selectedAnalysts.has("news") || state.isBusy || state.run.complete);
     const sourceStatus = (groupKey, analystKey, title, rawReady) => {
         const selected = selectedAnalysts.has(analystKey);
         const active = selected && sourceActiveForGroup(groupKey, analystKey, title);
@@ -885,6 +913,11 @@ function buildLiveFlowNodes() {
                 visible: sourceVisible("onchain", coinglassReady),
                 data: buildLiveSourceDataNode("coinglass", "CoinGlass Data", coinglassReady, sourceStatus("coinglass", "onchain", "Onchain Analyst", coinglassReady), "evidence", "liveCoinGlassData", "coinglass_data"),
                 summary: buildLiveSourceSummaryNode("coinglass", "Onchain Endpoint Summary", coinglassSummaryReady && coinglassReady, sourceSummaryStatus("coinglass", "onchain", "Onchain Analyst", coinglassReady), "coinglass_summary"),
+            },
+            {
+                visible: webSearchVisible,
+                data: buildLiveSourceDataNode("web", "MCP Web Search", webSearchReady, statusFor(webSearchReady, sourceActiveForGroup("web", "", ""), true), "evidence", "liveWebSearchData", "web_search_data"),
+                summary: buildLiveSourceSummaryNode("web", "Web Evidence Summary", webSearchSummaryReady && webSearchReady, statusFor(webSearchSummaryReady && webSearchReady, sourceActiveForGroup("web", "", ""), true), "web_search_summary"),
             },
             {
                 visible: sourceVisible("news", newsSourceReady),
@@ -1522,6 +1555,32 @@ function createLogEmptyNode(emptyText) {
     return node;
 }
 
+function getToolTraceStateLabel(item = {}) {
+    if (item.phase === "tool_trace") {
+        return "Result ready";
+    }
+    if (item.phase === "tool_call") {
+        return "Calling";
+    }
+    if (item.phase === "tool_result") {
+        return "Result";
+    }
+    return formatTracePhaseLabel(item.phase);
+}
+
+function getToolTracePreviewMarkup(item = {}) {
+    const callText = compactText(stripMarkdownToPlainText(item.toolCallContent || ""), 180);
+    const resultText = compactText(stripMarkdownToPlainText(item.toolResultContent || (item.phase !== "tool_call" ? item.content : "") || ""), 260);
+    if (callText || resultText) {
+        return `
+            ${callText ? `<div class="tool-trace-snippet tool-trace-snippet-call"><span>Input</span><p>${escapeHtml(callText)}</p></div>` : ""}
+            ${resultText ? `<div class="tool-trace-snippet tool-trace-snippet-result"><span>Output</span><p>${escapeHtml(resultText)}</p></div>` : ""}
+        `;
+    }
+    const fallbackText = compactText(stripMarkdownToPlainText(item.previewContent || item.content || ""), 320);
+    return fallbackText ? `<p class="tool-trace-fallback">${escapeHtml(fallbackText)}</p>` : "";
+}
+
 function renderLogEntries(element, entries, emptyText, options = {}) {
     if (!(element instanceof HTMLElement)) {
         return;
@@ -1646,8 +1705,9 @@ function renderOperationsRail() {
             ? feed
                   .map((item) => {
                       const shouldFlash = flashLatestTrace && item.id === state.run.latestTraceId;
+                      const isWebSearch = isWebSearchTraceEntry(item);
                       return `
-                    <article class="tool-trace-item trace-tone-${escapeHtml(item.tone || "progress")} ${shouldFlash ? "tool-trace-new" : ""} detail-trigger"
+                    <article class="tool-trace-item trace-tone-${escapeHtml(item.tone || "progress")} ${isWebSearch ? "trace-tool-web" : ""} ${shouldFlash ? "tool-trace-new" : ""} detail-trigger"
                         tabindex="0"
                         role="button"
                         data-detail-trace-id="${escapeHtml(item.id || "")}"
@@ -1659,10 +1719,10 @@ function renderOperationsRail() {
                             <span>${escapeHtml(item.timestamp || "")}</span>
                         </div>
                         <div class="tool-trace-meta">
-                            <span class="trace-phase-badge">${escapeHtml(formatTracePhaseLabel(item.phase))}</span>
+                            <span class="trace-phase-badge ${isWebSearch ? "trace-phase-badge-web" : ""}">${escapeHtml(getToolTraceStateLabel(item))}</span>
                             <span>${escapeHtml(item.title || "Live update")}</span>
                         </div>
-                        <p>${escapeHtml(compactText(stripMarkdownToPlainText(item.previewContent || item.content || ""), 320))}</p>
+                        ${getToolTracePreviewMarkup(item)}
                     </article>
                                 `;
                                     })
@@ -1935,6 +1995,8 @@ function getDetailContent(detail) {
             return getSourceArtifactDetailContent("news", "News source results have not appeared yet.");
         case "liveSocialData":
             return getSourceArtifactDetailContent("social", "Social or web source results have not appeared yet.");
+        case "liveWebSearchData":
+            return getSourceArtifactDetailContent("web", "MiniMax web_search results have not appeared yet.");
         case "liveCcxtSummary":
             return {
                 content: getLiveSourceSummaryMarkdown("ccxt"),
@@ -1958,6 +2020,12 @@ function getDetailContent(detail) {
                 content: getLiveSourceSummaryMarkdown("social"),
                 fallback: "Social summary markdown is not available yet.",
                 payload: getSourceGroupArtifactRows("social"),
+            };
+        case "liveWebSearchSummary":
+            return {
+                content: getLiveSourceSummaryMarkdown("web"),
+                fallback: "Web evidence summary is not available yet.",
+                payload: getSourceGroupArtifactRows("web"),
             };
         case "evidenceExtractor":
         case "evidenceLedger":

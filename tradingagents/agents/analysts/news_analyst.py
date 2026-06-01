@@ -26,6 +26,7 @@ def create_news_analyst(llm):
             and isinstance(llm, MiniMaxMCPChatModel)
             and has_minimax_mcp_tool(llm.settings, "web_search")
         )
+        active_llm = llm.with_trace_context("News Analyst") if isinstance(llm, MiniMaxMCPChatModel) else llm
 
         tools = [
             get_news,
@@ -74,7 +75,7 @@ def create_news_analyst(llm):
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        chain = (prompt | llm) if use_web_search_only else (prompt | llm.bind_tools(tools))
+        chain = (prompt | active_llm) if use_web_search_only else (prompt | active_llm.bind_tools(tools))
         result = chain.invoke(state["messages"])
 
         report = ""

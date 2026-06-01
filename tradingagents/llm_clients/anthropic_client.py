@@ -19,7 +19,7 @@ _MCP_KWARGS = (
     "mcp_enabled", "mcp_command", "mcp_args", "mcp_tool_names",
     "mcp_max_tool_rounds", "mcp_tool_result_char_limit",
     "mcp_call_timeout_seconds", "mcp_list_timeout_seconds",
-    "mcp_reference_sources",
+    "mcp_reference_sources", "mcp_trace_callback",
 )
 
 # Anthropic's extended-thinking ``effort`` parameter is accepted by Opus 4.5+
@@ -134,6 +134,7 @@ class AnthropicClient(BaseLLMClient):
                 llm,
                 settings=mcp_settings,
                 reference_sources=mcp_kwargs.get("mcp_reference_sources"),
+                trace_callback=mcp_kwargs.get("mcp_trace_callback"),
             )
 
         return llm
