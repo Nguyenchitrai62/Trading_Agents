@@ -1091,10 +1091,7 @@ class AnalysisService:
                 "minimax_mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
                 "minimax_mcp_enabled": False if is_deepseek else config.get("minimax_mcp_enabled", True),
                 "analyst_concurrency_limit": analyst_parallelism,
-<<<<<<< HEAD
                 "openai_reasoning_effort": request.reasoning_effort,
-=======
->>>>>>> 4578f11b166d5bc79300c4cbde97afeaa4561bf7
                 "checkpoint_enabled": request.checkpoint_enabled,
                 "memory_log_path": None,
                 "historical_decision_context_enabled": False,
