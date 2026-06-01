@@ -120,9 +120,8 @@ const elements = {
     lookbackPresetSelect: document.getElementById("lookbackPresetSelect"),
     lookbackDaysField: document.getElementById("lookbackDaysField"),
     lookbackDaysInput: document.getElementById("lookbackDaysInput"),
-    languageSelect: document.getElementById("languageSelect"),
-    customLanguageField: document.getElementById("customLanguageField"),
-    customLanguageInput: document.getElementById("customLanguageInput"),
+    languageInput: document.getElementById("languageInput"),
+    reasoningEffortSelect: document.getElementById("reasoningEffortSelect"),
     analystOptions: document.getElementById("analystOptions"),
     depthOptions: document.getElementById("depthOptions"),
     configPreview: document.getElementById("configPreview"),
@@ -484,21 +483,26 @@ function handleServerEvent(event, data) {
 
 function populateLanguageOptions(config) {
     const currentValue = config.analysis_defaults.output_language;
-    const knownLanguages = config.analysis_options.output_languages;
-    elements.languageSelect.innerHTML = knownLanguages
-        .map((language) => `<option value="${escapeHtml(language)}">${escapeHtml(language)}</option>`)
-        .concat('<option value="__custom__">Custom</option>')
-        .join("");
+    elements.languageInput.value = currentValue || "vietnamese";
+}
 
-    if (knownLanguages.includes(currentValue)) {
-        elements.languageSelect.value = currentValue;
-        elements.customLanguageInput.value = "";
-    } else {
-        elements.languageSelect.value = "__custom__";
-        elements.customLanguageInput.value = currentValue;
+function populateReasoningEffortOptions(config) {
+    const defaultValue = config.analysis_defaults.reasoning_effort || "max";
+    const efforts = config.analysis_options.reasoning_efforts || [
+        { value: "low", label: "low" },
+        { value: "medium", label: "medium" },
+        { value: "high", label: "high" },
+        { value: "xhigh", label: "xhigh" },
+        { value: "max", label: "max" },
+    ];
+    if (elements.reasoningEffortSelect instanceof HTMLSelectElement) {
+        elements.reasoningEffortSelect.innerHTML = efforts
+            .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
+            .join("");
+        if (efforts.some((item) => item.value === defaultValue)) {
+            elements.reasoningEffortSelect.value = defaultValue;
+        }
     }
-
-    syncLanguageControls();
 }
 
 function populateLookbackPresets(config) {
@@ -583,7 +587,7 @@ function bindConfigInputListeners() {
         elements.symbolInput,
         elements.analysisDateInput,
         elements.lookbackDaysInput,
-        elements.customLanguageInput,
+        elements.languageInput,
     ].filter(Boolean).forEach((element) => element.addEventListener("input", sync));
     elements.lookbackPresetSelect.addEventListener("change", () => {
         if (elements.lookbackPresetSelect.value !== CUSTOM_LOOKBACK_VALUE) {
@@ -596,12 +600,10 @@ function bindConfigInputListeners() {
             elements.lookbackDaysInput.focus();
         }
     });
-    elements.languageSelect.addEventListener("change", () => {
+    elements.languageInput.addEventListener("input", () => {
         refreshConfigUi();
-        if (elements.languageSelect.value === "__custom__") {
-            elements.customLanguageInput.focus();
-        }
     });
+    elements.reasoningEffortSelect?.addEventListener("change", sync);
     elements.modelSelect?.addEventListener("change", sync);
     elements.analystOptions.addEventListener("change", sync);
     elements.depthOptions.addEventListener("change", sync);
@@ -625,6 +627,7 @@ async function loadConfig() {
     populateLookbackPresets(config);
     elements.lookbackDaysInput.value = config.analysis_defaults.lookback_days;
     populateLanguageOptions(config);
+    populateReasoningEffortOptions(config);
     populateModelOptions(config);
     populateAnalystOptions(config);
     populateDepthOptions(config);

@@ -33,10 +33,11 @@
         assetType: "crypto",
         analysisDate: "",
         lookbackDays: 14,
-        outputLanguage: "Vietnamese",
+        outputLanguage: "vietnamese",
         selectedAnalysts: ["market", "onchain", "social", "news"],
         researchDepth: "auto",
         model: "MiniMax-M2.5",
+        reasoningEffort: "max",
         checkpointEnabled: false,
     },
     analysisOptions: {
@@ -65,6 +66,13 @@
             { value: "MiniMax-M2.7", label: "MiniMax M2.7" },
             { value: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
             { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+        ],
+        reasoningEfforts: [
+            { value: "low", label: "low" },
+            { value: "medium", label: "medium" },
+            { value: "high", label: "high" },
+            { value: "xhigh", label: "xhigh" },
+            { value: "max", label: "max" },
         ],
         analysts: [
             { value: "market", label: "Market Analyst" },

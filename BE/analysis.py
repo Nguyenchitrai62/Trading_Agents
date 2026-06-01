@@ -1073,6 +1073,8 @@ class AnalysisService:
     ) -> dict:
         config = deepcopy(TRADINGAGENTS_DEFAULT_CONFIG)
         is_deepseek = is_deepseek_model(request.model)
+        analyst_count = len(selected_analysts)
+        analyst_parallelism = max(analyst_count, config.get("analyst_concurrency_limit", analyst_count))
         config.update(
             {
                 "llm_provider": provider_settings["provider"],
@@ -1088,6 +1090,8 @@ class AnalysisService:
                 "analysis_llm_max_tokens": runtime_profile["llm_max_tokens"],
                 "minimax_mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
                 "minimax_mcp_enabled": False if is_deepseek else config.get("minimax_mcp_enabled", True),
+                "analyst_concurrency_limit": analyst_parallelism,
+                "openai_reasoning_effort": request.reasoning_effort,
                 "checkpoint_enabled": request.checkpoint_enabled,
                 "memory_log_path": None,
                 "historical_decision_context_enabled": False,

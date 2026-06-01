@@ -8,10 +8,11 @@ function getSelectedDepth() {
 }
 
 function getOutputLanguage() {
-    if (elements.languageSelect.value === "__custom__") {
-        return elements.customLanguageInput.value.trim();
-    }
-    return elements.languageSelect.value;
+    return elements.languageInput.value.trim();
+}
+
+function getReasoningEffort() {
+    return String(elements.reasoningEffortSelect?.value || "max").trim();
 }
 
 function readConfigForm() {
@@ -28,10 +29,7 @@ function readConfigForm() {
 }
 
 function syncLanguageControls() {
-    const isCustom = elements.languageSelect.value === "__custom__";
-    elements.customLanguageField?.classList.toggle("field-muted", !isCustom);
-    elements.customLanguageInput.disabled = !isCustom;
-    elements.customLanguageInput.required = isCustom;
+    // No-op: language is now a free-text input.
 }
 
 function syncLookbackPreset() {

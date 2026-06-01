@@ -346,16 +346,22 @@
 
                 <div class="config-grid four-up compact-grid-secondary">
                     <label class="field">
+                        <span>Language</span>
+                        <input id="languageInput" type="text" placeholder="e.g. Vietnamese, English">
+                    </label>
+                    <label class="field">
                         <span>LLM model</span>
                         <select id="modelSelect"></select>
                     </label>
                     <label class="field">
-                        <span>Language</span>
-                        <select id="languageSelect"></select>
-                    </label>
-                    <label id="customLanguageField" class="field field-muted">
-                        <span>Custom language</span>
-                        <input id="customLanguageInput" type="text" placeholder="Use Custom language">
+                        <span>Reasoning effort</span>
+                        <select id="reasoningEffortSelect">
+                            <option value="low">low</option>
+                            <option value="medium">medium</option>
+                            <option value="high">high</option>
+                            <option value="xhigh">xhigh</option>
+                            <option value="max">max</option>
+                        </select>
                     </label>
                 </div>
 

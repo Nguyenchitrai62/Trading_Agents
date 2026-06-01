@@ -25,6 +25,7 @@ class AnalysisRequest(BaseModel):
     )
     research_depth: Literal["auto", "quick", "medium", "deep"] = SETTINGS.default_research_depth
     model: str = Field(default=SETTINGS.default_model, min_length=1)
+    reasoning_effort: str = Field(default="max", min_length=1)
     checkpoint_enabled: bool = SETTINGS.default_checkpoint_enabled
 
     @field_validator("symbol")

@@ -115,10 +115,11 @@ function normalizeFrontendConfig() {
             asset_type: "crypto",
             analysis_date: defaults.analysisDate || defaults.analysis_date || todayIsoDate(),
             lookback_days: Number(defaults.lookbackDays || defaults.lookback_days || 7),
-            output_language: defaults.outputLanguage || defaults.output_language || "Vietnamese",
+            output_language: defaults.outputLanguage || defaults.output_language || "vietnamese",
             selected_analysts: normalizeAnalystKeys(defaults.selectedAnalysts || defaults.selected_analysts),
             research_depth: defaults.researchDepth || defaults.research_depth || "auto",
             model: defaultModel,
+            reasoning_effort: String(defaults.reasoningEffort || defaults.reasoning_effort || "max"),
             checkpoint_enabled: Boolean(defaults.checkpointEnabled ?? defaults.checkpoint_enabled ?? false),
         },
         analysis_options: {
@@ -140,6 +141,13 @@ function normalizeFrontendConfig() {
                 { value: "quick", label: "Quick", rounds: 1, description: "Fast scan with minimal debate." },
                 { value: "medium", label: "Medium", rounds: 3, description: "Balanced research depth for regular analysis." },
                 { value: "deep", label: "Deep", rounds: 5, description: "More debate rounds before the final decision." },
+            ],
+            reasoning_efforts: options.reasoningEfforts || options.reasoning_efforts || [
+                { value: "low", label: "low" },
+                { value: "medium", label: "medium" },
+                { value: "high", label: "high" },
+                { value: "xhigh", label: "xhigh" },
+                { value: "max", label: "max" },
             ],
         },
     };
@@ -661,6 +669,7 @@ function collectConfigDraft() {
         selected_analysts: getCheckedAnalysts(),
         research_depth: getSelectedDepth(),
         model: String(elements.modelSelect?.value || "").trim(),
+        reasoning_effort: getReasoningEffort(),
         checkpoint_enabled: false,
     };
 }
@@ -701,6 +710,7 @@ function getConfigSnapshot() {
             selected_analysts: state.config.analysis_defaults.selected_analysts,
             research_depth: state.config.analysis_defaults.research_depth,
             model: state.config.analysis_defaults.model,
+            reasoning_effort: state.config.analysis_defaults.reasoning_effort || "max",
             checkpoint_enabled: false,
         };
     }
