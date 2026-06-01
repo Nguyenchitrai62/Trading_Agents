@@ -61,15 +61,15 @@ class ConditionalLogic:
         return "Bull Researcher"
 
     def should_continue_risk_analysis(self, state: AgentState) -> str:
-        """Legacy fallback for the fixed one-pass risk-scenario stage."""
-        if state["risk_debate_state"]["count"] >= 3:
+        """Determine if risk analysis should continue."""
+        if (
+            state["risk_debate_state"]["count"] >= 3 * self.max_risk_discuss_rounds
+        ):  # 3 rounds of back-and-forth between 3 agents
             return "Portfolio Manager"
         if state["risk_debate_state"]["latest_speaker"].startswith("Aggressive"):
             return "Conservative Analyst"
         if state["risk_debate_state"]["latest_speaker"].startswith("Conservative"):
             return "Neutral Analyst"
-        if state["risk_debate_state"]["latest_speaker"].startswith("Neutral"):
-            return "Portfolio Manager"
         return "Aggressive Analyst"
 
     def should_continue_portfolio_verification(self, state: AgentState) -> str:

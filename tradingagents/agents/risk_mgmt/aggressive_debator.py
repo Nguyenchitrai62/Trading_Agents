@@ -1,30 +1,23 @@
+from tradingagents.agents.schemas import DebateTurn, render_debate_turn
 from tradingagents.agents.utils.agent_utils import (
     get_coinglass_context_instruction,
     get_coinglass_packages_for_role,
     get_language_instruction,
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
-from tradingagents.agents.utils.structured import resolve_structured_base_llm
-from tradingagents.llm_clients.base_client import normalize_content
-
-
-def _response_text(response: object) -> str:
-    normalized = normalize_content(response)
-    content = getattr(normalized, "content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if content is None:
-        return ""
-    return str(content).strip()
+from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext
 
 
 def create_aggressive_debator(llm):
-    base_llm = resolve_structured_base_llm(llm)
+    structured_llm = bind_structured(llm, DebateTurn, "Aggressive Analyst")
 
     def aggressive_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
         aggressive_history = risk_debate_state.get("aggressive_history", "")
+
+        current_conservative_response = risk_debate_state.get("current_conservative_response", "")
+        current_neutral_response = risk_debate_state.get("current_neutral_response", "")
 
         market_research_report = state["market_report"]
         sentiment_report = state["sentiment_report"]
@@ -39,12 +32,12 @@ def create_aggressive_debator(llm):
         research_debate_state = state.get("investment_debate_state") or {}
         research_context = research_debate_state.get("history", "")
 
-        prompt = f"""As the Aggressive Risk Analyst, write one independent upside-risk scenario memo for the Portfolio Manager. This is not a debate. Do not rebut other risk analysts and do not ask for another round. Focus on the high-reward path, the conditions that make it valid, and the exact controls needed if the manager chooses to take risk.
+        prompt = f"""As the Aggressive Risk Analyst, actively champion high-reward, high-risk opportunities, emphasizing bold strategies and upside capture. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Use the four branch reports and research debate to challenge the opposing views without inventing unsupported facts.
 
     Research debate context:
     {research_context}
 
-    Use these sources only:
+    Your task is to create a compelling risk case by questioning and critiquing the conservative and neutral stances to demonstrate why your high-reward perspective offers the best path forward. Incorporate insights from the following sources into your arguments:
 
 Market Research Report: {market_research_report}
 Social Report: {sentiment_report}
@@ -52,19 +45,19 @@ Latest World Affairs Report: {news_report}
 Onchain Report: {onchain_report}
 Structured Evidence Ledger: {evidence_ledger}
 {coinglass_context}
+Here is the current conversation history: {history} Here are the last arguments from the conservative analyst: {current_conservative_response} Here are the last arguments from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
-Output concise markdown with these exact sections:
-## Upside Scenario
-## Conditions That Validate Risk-On
-## Positioning Bias
-## Invalidation And Stops
-## What The Portfolio Manager Should Watch
+Engage actively by addressing specific concerns, refuting weak logic, and asserting the benefits of calculated risk-taking. Make every field concrete and decision-useful.""" + get_language_instruction()
 
-Make the memo concrete and decision-useful. Preserve price levels, risk thresholds, and evidence caveats when available.""" + get_language_instruction()
+        response = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_debate_turn,
+            "Aggressive Analyst",
+        )
 
-        response = _response_text(base_llm.invoke(prompt))
-
-        argument = f"Aggressive Risk Scenario: {response}"
+        argument = f"Aggressive Analyst: {response}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

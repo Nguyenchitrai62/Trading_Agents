@@ -1081,7 +1081,7 @@ class AnalysisService:
                 "output_language": request.output_language,
                 "analysis_date": request.analysis_date,
                 "max_debate_rounds": runtime_profile["effective_rounds"],
-                "max_risk_discuss_rounds": 1,
+                "max_risk_discuss_rounds": runtime_profile["effective_rounds"],
                 "global_news_lookback_days": request.lookback_days,
                 "crypto_market_lookback_days": request.lookback_days,
                 "analysis_llm_max_tokens": runtime_profile["llm_max_tokens"],
@@ -1800,7 +1800,7 @@ class AnalysisService:
             return "Bull Researcher"
 
         risk = snapshot.get("risk", {})
-        expected_risk_turns = 3
+        expected_risk_turns = max(1, int(max_risk_rounds or 1)) * 3
         risk_count = int(risk.get("count") or 0)
         if risk_count < expected_risk_turns and not sections.get("final_trade_decision"):
             latest_speaker = str(risk.get("latest_speaker") or "")
@@ -1808,8 +1808,6 @@ class AnalysisService:
                 return "Conservative Analyst"
             if latest_speaker.startswith("Conservative"):
                 return "Neutral Analyst"
-            if latest_speaker.startswith("Neutral"):
-                return "Portfolio Manager"
             return "Aggressive Analyst"
 
         if not sections.get("final_trade_decision"):
@@ -1851,9 +1849,9 @@ class AnalysisService:
             turn = min(total, int((snapshot.get("investment") or {}).get("count") or 0) + 1)
             return f"{agent} started research debate turn {turn}/{total}; waiting for model response."
         if agent in {"Aggressive Analyst", "Conservative Analyst", "Neutral Analyst"}:
-            total = 3
+            total = max(1, int(max_risk_rounds or 1)) * 3
             turn = min(total, int((snapshot.get("risk") or {}).get("count") or 0) + 1)
-            return f"{agent} started risk scenario {turn}/{total}; waiting for model response."
+            return f"{agent} started risk debate turn {turn}/{total}; waiting for model response."
         return f"{agent} started; waiting for model response."
 
     @staticmethod
@@ -1928,31 +1926,36 @@ class AnalysisService:
         ]
 
         risk = snapshot["risk"]
-        expected_risk_turns = 3
+        expected_risk_turns = max(1, int(max_risk_rounds or 1)) * 3
         risk_turns_complete = bool(sections.get("final_trade_decision")) or int(risk.get("count") or 0) >= expected_risk_turns
         risk_active = research_turns_complete and not sections.get("final_trade_decision")
-        def risk_item_status(label: str, response: object, prerequisite_met: bool) -> str:
-            if response:
-                return "completed"
-            if risk_active and (current_agent == label or prerequisite_met):
-                return "in_progress"
-            return "pending"
-
         risk_items = [
             {
                 "key": "aggressive",
                 "label": "Aggressive Analyst",
-                "status": risk_item_status("Aggressive Analyst", risk["current_aggressive_response"], True),
+                "status": "completed"
+                if risk_turns_complete and risk["current_aggressive_response"]
+                else "in_progress"
+                if risk_active and (current_agent == "Aggressive Analyst" or not risk["current_aggressive_response"] or risk["history"])
+                else "pending",
             },
             {
                 "key": "conservative",
                 "label": "Conservative Analyst",
-                "status": risk_item_status("Conservative Analyst", risk["current_conservative_response"], bool(risk["current_aggressive_response"])),
+                "status": "completed"
+                if risk_turns_complete and risk["current_conservative_response"]
+                else "in_progress"
+                if risk_active and (current_agent == "Conservative Analyst" or risk["current_aggressive_response"])
+                else "pending",
             },
             {
                 "key": "neutral",
                 "label": "Neutral Analyst",
-                "status": risk_item_status("Neutral Analyst", risk["current_neutral_response"], bool(risk["current_conservative_response"])),
+                "status": "completed"
+                if risk_turns_complete and risk["current_neutral_response"]
+                else "in_progress"
+                if risk_active and (current_agent == "Neutral Analyst" or risk["current_conservative_response"])
+                else "pending",
             },
         ]
 

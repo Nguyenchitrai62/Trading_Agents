@@ -1,6 +1,6 @@
 # TradingAgents Crypto Dashboard
 
-TradingAgents Crypto Dashboard is a crypto-focused multi-agent market analysis platform. The FastAPI backend reuses the core orchestration under `tradingagents/`, runs the four-branch market/onchain/social/news flow through research debate, one-pass risk scenarios, portfolio decision, verification, and decision extraction, then streams progress to a browser dashboard with Server-Sent Events (SSE).
+TradingAgents Crypto Dashboard is a crypto-focused multi-agent market analysis platform. The FastAPI backend reuses the core orchestration under `tradingagents/`, runs the four-branch market/onchain/social/news flow through research debate, risk debate, portfolio decision, verification, and decision extraction, then streams progress to a browser dashboard with Server-Sent Events (SSE).
 
 This repository is no longer a CLI-first demo. The current product focus is a realtime dashboard, backend agent orchestration, and a deployable split frontend/backend architecture.
 
@@ -45,7 +45,7 @@ Key files:
 3. The user selects analysis settings and starts a run.
 4. The frontend calls `POST /api/analyze` with a JSON body and auth headers.
 5. The backend runs `TradingAgentsGraph`: Market collects CCXT/technical data for one LLM analysis, Onchain analyzes each CoinGlass endpoint once and then synthesizes, Social and News use MiniMax web search.
-6. The four branch reports feed Bull/Bear research debate, three one-pass Risk Room scenarios, Portfolio Manager markdown, Verifier markdown audit, and the Decision Extractor structured payload.
+6. The four branch reports feed Bull/Bear research debate, Risk Room debate, Portfolio Manager markdown, Verifier markdown audit, and the Decision Extractor structured payload.
 7. The dashboard renders progress, reports, debates, traces, logs, and the final decision in realtime.
 8. If Turso is configured, completed analysis sections and structured decision fields are saved to History.
 

@@ -95,7 +95,7 @@ const DETAIL_PANEL_META = {
     evidenceExtractor: { title: "Evidence Extractor", subtitle: "Structured evidence" },
     evidenceLedger: { title: "Evidence Ledger", subtitle: "Downstream prompt context" },
     researchDebate: { title: "Research Debate", subtitle: "Bull and Bear chamber" },
-    riskDebate: { title: "Risk Scenarios", subtitle: "Three risk scenario memos" },
+    riskDebate: { title: "Risk Debate", subtitle: "Risk room discussion" },
     decisionExtractor: { title: "Decision Extractor", subtitle: "Structured order fields" },
     verifierStructured: { title: "Verifier Payload", subtitle: "Structured verification" },
     persistence: { title: "History + Decision Persistence", subtitle: "Persistence status" },
@@ -198,10 +198,10 @@ const HISTORY_FLOW_SECTION_META = {
         description: "The capital-protection and drawdown-focused response.",
     },
     risk_debate: {
-        shortTitle: "Risk Scenarios",
+        shortTitle: "Risk Review",
         tone: "risk",
         icon: "review",
-        description: "Merged aggressive, neutral, and conservative scenario memos before the Portfolio Manager decision.",
+        description: "Merged risk discussion before the Portfolio Manager decision.",
     },
     final_trade_decision: {
         shortTitle: "Final Decision",

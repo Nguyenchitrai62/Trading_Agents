@@ -1,30 +1,23 @@
+from tradingagents.agents.schemas import DebateTurn, render_debate_turn
 from tradingagents.agents.utils.agent_utils import (
     get_coinglass_context_instruction,
     get_coinglass_packages_for_role,
     get_language_instruction,
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
-from tradingagents.agents.utils.structured import resolve_structured_base_llm
-from tradingagents.llm_clients.base_client import normalize_content
-
-
-def _response_text(response: object) -> str:
-    normalized = normalize_content(response)
-    content = getattr(normalized, "content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if content is None:
-        return ""
-    return str(content).strip()
+from tradingagents.agents.utils.structured import bind_structured, invoke_structured_or_freetext
 
 
 def create_neutral_debator(llm):
-    base_llm = resolve_structured_base_llm(llm)
+    structured_llm = bind_structured(llm, DebateTurn, "Neutral Analyst")
 
     def neutral_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
         neutral_history = risk_debate_state.get("neutral_history", "")
+
+        current_aggressive_response = risk_debate_state.get("current_aggressive_response", "")
+        current_conservative_response = risk_debate_state.get("current_conservative_response", "")
 
         market_research_report = state["market_report"]
         sentiment_report = state["sentiment_report"]
@@ -39,12 +32,12 @@ def create_neutral_debator(llm):
         research_debate_state = state.get("investment_debate_state") or {}
         research_context = research_debate_state.get("history", "")
 
-        prompt = f"""As the Neutral Risk Analyst, write one independent base-case scenario memo for the Portfolio Manager. This is not a debate. Do not rebut other risk analysts and do not ask for another round. Focus on the most balanced path, range of outcomes, sizing discipline, and what evidence would shift the decision.
+        prompt = f"""As the Neutral Risk Analyst, provide a balanced perspective that weighs upside against downside and identifies what would shift conviction either way. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Use only the provided evidence and keep the output decision-useful.
 
     Research debate context:
     {research_context}
 
-    Use these sources only:
+    Your task is to challenge both the Aggressive and Conservative Analysts, pointing out where each perspective may be overly optimistic or overly cautious. Use insights from the following data sources to support a moderate, sustainable strategy:
 
 Market Research Report: {market_research_report}
 Social Report: {sentiment_report}
@@ -52,19 +45,19 @@ Latest World Affairs Report: {news_report}
 Onchain Report: {onchain_report}
 Structured Evidence Ledger: {evidence_ledger}
 {coinglass_context}
+Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_aggressive_response} Here is the last response from the conservative analyst: {current_conservative_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
-Output concise markdown with these exact sections:
-## Base Scenario
-## Balanced Evidence Read
-## Positioning Bias
-## Confirmation And Invalidation
-## What The Portfolio Manager Should Watch
+Analyze both sides critically, identify the strongest evidence on each side, and explain what balanced positioning or confirmation threshold best fits the current setup.""" + get_language_instruction()
 
-Make the memo concrete and decision-useful. Preserve price levels, risk thresholds, and evidence caveats when available.""" + get_language_instruction()
+        response = invoke_structured_or_freetext(
+            structured_llm,
+            llm,
+            prompt,
+            render_debate_turn,
+            "Neutral Analyst",
+        )
 
-        response = _response_text(base_llm.invoke(prompt))
-
-        argument = f"Neutral Risk Scenario: {response}"
+        argument = f"Neutral Analyst: {response}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

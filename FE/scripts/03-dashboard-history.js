@@ -877,7 +877,7 @@ function buildLiveFlowNodes() {
         return getLiveFlowBlockError(blockKey) ? "error" : statusFor(complete, active, researchCanRun);
     };
     const riskCount = Number(state.run.risk?.count || 0);
-    const expectedRiskTurns = 3;
+    const expectedRiskTurns = depthRounds * 3;
     const portfolioBackendStatus = normalizeStatus(groupStatus("portfolio", "Portfolio Manager"));
     const riskDebateReady = (hasSection("final_trade_decision") && flowSectionCompleted("final_trade_decision"))
         || riskCount >= expectedRiskTurns
@@ -926,7 +926,7 @@ function buildLiveFlowNodes() {
         aggressiveRisk: { blockKey: "aggressive_risk", title: "Aggressive Analyst", ready: Boolean(riskDebateReady && (state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response)), status: riskNodeStatus("aggressive_risk", "Aggressive Analyst", state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response), tone: "aggressive", detail: { key: "aggressiveRisk" }, error: getLiveFlowBlockError("aggressive_risk") },
         conservativeRisk: { blockKey: "conservative_risk", title: "Conservative Analyst", ready: Boolean(riskDebateReady && (state.run.risk?.conservative_history || state.run.risk?.current_conservative_response)), status: riskNodeStatus("conservative_risk", "Conservative Analyst", state.run.risk?.conservative_history || state.run.risk?.current_conservative_response), tone: "conservative", detail: { key: "conservativeRisk" }, error: getLiveFlowBlockError("conservative_risk") },
         neutralRisk: { blockKey: "neutral_risk", title: "Neutral Analyst", ready: Boolean(riskDebateReady && (state.run.risk?.neutral_history || state.run.risk?.current_neutral_response)), status: riskNodeStatus("neutral_risk", "Neutral Analyst", state.run.risk?.neutral_history || state.run.risk?.current_neutral_response), tone: "neutral", detail: { key: "neutralRisk" }, error: getLiveFlowBlockError("neutral_risk") },
-        riskDebate: { blockKey: "risk_debate", title: "Risk Scenarios", ready: riskDebateReady, status: getLiveFlowBlockError("risk_debate") ? "error" : statusFor(riskDebateReady, riskCanRun && Boolean(state.run.risk?.history || groupStatus("risk", "Aggressive Analyst") === "in_progress" || groupStatus("risk", "Conservative Analyst") === "in_progress" || groupStatus("risk", "Neutral Analyst") === "in_progress"), riskCanRun), tone: "risk", detail: { key: "riskDebate" }, error: getLiveFlowBlockError("risk_debate") },
+        riskDebate: { blockKey: "risk_debate", title: "Risk Debate", ready: riskDebateReady, status: getLiveFlowBlockError("risk_debate") ? "error" : statusFor(riskDebateReady, riskCanRun && Boolean(state.run.risk?.history || groupStatus("risk", "Aggressive Analyst") === "in_progress" || groupStatus("risk", "Conservative Analyst") === "in_progress" || groupStatus("risk", "Neutral Analyst") === "in_progress"), riskCanRun), tone: "risk", detail: { key: "riskDebate" }, error: getLiveFlowBlockError("risk_debate") },
         portfolioManager: {
             blockKey: "portfolio_manager",
             title: "Portfolio Manager",
@@ -1770,7 +1770,7 @@ function renderRiskRoom() {
     elements.riskStatusText.textContent = state.run.sections.final_trade_decision
         ? "Risk loop completed"
         : risk.history
-        ? "Risk scenarios live"
+        ? "Risk debate live"
         : "Waiting for research debate";
 }
 
@@ -1951,7 +1951,7 @@ function formatRiskDebateMarkdown(risk = {}) {
         risk.aggressive_history ? `## Aggressive Analyst\n\n${risk.aggressive_history}` : "",
         risk.neutral_history ? `## Neutral Analyst\n\n${risk.neutral_history}` : "",
         risk.conservative_history ? `## Conservative Analyst\n\n${risk.conservative_history}` : "",
-        risk.history ? `## Scenario Synthesis\n\n${risk.history}` : "",
+        risk.history ? `## Debate\n\n${risk.history}` : "",
     ].filter(Boolean).join("\n\n");
 }
 
@@ -2053,7 +2053,7 @@ function getDetailContent(detail) {
         case "riskDebate":
             return {
                 content: formatRiskDebateMarkdown(risk),
-                fallback: "The risk scenarios have not produced content yet.",
+                fallback: "The risk debate has not produced content yet.",
             };
         case "decisionExtractor":
             return {

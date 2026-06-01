@@ -105,9 +105,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # past date, crypto OHLCV/indicator tools end their window at that date
     # instead of leaking current candles into historical analysis.
     "analysis_date": None,
-    # Debate and risk settings. Risk Room is fixed to one pass across the
-    # aggressive/conservative/neutral scenarios; max_risk_discuss_rounds is
-    # kept only for legacy config compatibility.
+    # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,
     "max_recur_limit": 100,

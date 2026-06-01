@@ -50,7 +50,7 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 
 1. `BE.models.AnalysisRequest` normalize symbol, date, lookback, selected analysts, depth, model, checkpoint.
 2. `BE.analysis.AnalysisService.run_trading_analysis()` resolve MiniMax config, reserve runtime slot, emit metadata/status ban dau.
-3. Backend build graph config tu `tradingagents.agent_config.DEFAULT_CONFIG`, override model, language, analysis date, lookback, research debate rounds, and MiniMax MCP tool budget. Risk Room luon la 3 scenario memos co dinh.
+3. Backend build graph config tu `tradingagents.agent_config.DEFAULT_CONFIG`, override model, language, analysis date, lookback, debate rounds, risk rounds, and MiniMax MCP tool budget.
 4. Backend prefetch CoinGlass snapshot neu configured. Hien tai prefetch toan bo high-value endpoints roi chia thanh package context cho cac role.
 5. `TradingAgentsGraph` tao quick/deep LLM clients, tool nodes, graph setup.
 6. Analyst phase chay 4 branch canonical, mac dinh co the chay song song theo `analyst_concurrency_limit`:
@@ -59,7 +59,7 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
   - Social Analyst: dung MiniMax MCP `web_search` lam live retrieval path.
   - News Analyst: dung MiniMax MCP `web_search` lam live retrieval path.
 7. Bon report Market/Onchain/Social/News vao Bull/Bear research debate trong `max_debate_rounds`.
-8. Research debate di thang vao Risk Room: Aggressive/Conservative/Neutral moi role tao 1 risk scenario memo duy nhat, khong lap debate theo depth.
+8. Research debate di thang vao Risk Room: Aggressive/Conservative/Neutral debate trong `max_risk_discuss_rounds`.
 9. Portfolio Manager tao markdown `final_trade_decision` voi signal dau tien la mot trong Market Buy, Limit Buy, Hold, Limit Sell, Market Sell.
 10. Verifier kiem tra markdown theo deterministic order logic va semantic support, tao `verification_report` va `verification_report_structured`; neu can sua thi route lai Portfolio Manager.
 11. Decision Extractor chi chay sau khi verifier chap nhan/canh bao hop le, trich `final_trade_decision_structured` de luu DB.
@@ -68,11 +68,11 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 ## Accuracy And Cost Notes
 
 - FE config hien dang mac dinh `lookbackDays: 30`, `researchDepth: deep`, va all analysts. Day la cau hinh ton LLM/API. Backend default la lookback 7 va depth medium, nhung FE default se override khi nguoi dung chay tu UI.
-- Depth tac dong truc tiep den so LLM calls o research debate va MCP/live retrieval budget:
-  - quick = 1 research round, risk scenarios van co dinh 3 role x 1 luot.
-  - medium = 3 research rounds, risk scenarios van co dinh 3 role x 1 luot.
-  - deep = 5 research rounds, risk scenarios van co dinh 3 role x 1 luot.
-- Research debate moi round gom Bull/Bear. Risk Room khong con debate loop; Aggressive/Conservative/Neutral chi tao 3 scenario memos mot lan roi Portfolio Manager quyet dinh. Deep them call chu yeu o research va retrieval, nen khong nen xem la default toi uu do chinh xac.
+- Depth tac dong truc tiep den so LLM calls:
+  - quick = 1 research round va 1 risk round.
+  - medium = 3 research rounds va 3 risk rounds.
+  - deep = 5 research rounds va 5 risk rounds.
+- Research debate moi round gom Bull/Bear, risk debate moi round gom Aggressive/Conservative/Neutral. Deep them rat nhieu call sau khi analyst reports da co, nen khong nen xem la default toi uu do chinh xac.
 - `mcp_max_tool_rounds` trong runtime profile chua phai hard cap chat cho analyst tool calls. Analyst loop hien duoc dat thanh `max(24, mcp_rounds * 6)`, nen cac prompt bat buoc `web_search` va cross-check trusted sources co the ton nhieu request hon mong doi.
 - Nen uu tien medium/quick cho default product flow, va chi dung deep khi co ly do ro rang hoac nguoi dung chu dong chon.
 - Nen tranh de moi analyst deu bi prompt "cross-check each trusted source" mot cach rieng le. Neu can tiet kiem request, nen co mot role so huu live web/source validation va chia lai structured evidence cho cac role sau.

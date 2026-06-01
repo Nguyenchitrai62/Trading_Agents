@@ -3,7 +3,7 @@
     // apiBaseUrl: "http://103.77.242.137:8001",
     // apiBaseUrl: "http://localhost:8000",
     provider: "minimax",
-    defaultModel: "MiniMax-M2.7",
+    defaultModel: "MiniMax-M2.5",
     app: {
         pages: ["agent", "history", "chart", "admin", "chat"],
         defaultPage: "agent",
@@ -36,7 +36,7 @@
         outputLanguage: "Vietnamese",
         selectedAnalysts: ["market", "onchain", "social", "news"],
         researchDepth: "auto",
-        model: "MiniMax-M2.7",
+        model: "MiniMax-M2.5",
         checkpointEnabled: false,
     },
     analysisOptions: {
@@ -71,10 +71,10 @@
             { value: "news", label: "News Analyst" },
         ],
         researchDepths: [
-            { value: "auto", label: "Auto", rounds: 3, effective_depth: "medium", description: "Backend-managed research depth with fixed one-pass risk scenarios." },
-            { value: "quick", label: "Quick", rounds: 1, description: "Fast scan with one research round and fixed risk scenarios." },
+            { value: "auto", label: "Auto", rounds: 3, effective_depth: "medium", description: "Backend-managed baseline with future evidence-driven escalation." },
+            { value: "quick", label: "Quick", rounds: 1, description: "Fast scan with minimal debate." },
             { value: "medium", label: "Medium", rounds: 3, description: "Balanced research depth for regular analysis." },
-            { value: "deep", label: "Deep", rounds: 5, description: "More research debate rounds before fixed risk scenarios and final decision." },
+            { value: "deep", label: "Deep", rounds: 5, description: "More debate rounds before the final decision." },
         ],
     },
 };

@@ -20,7 +20,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +114,50 @@ class VerificationReport(BaseModel):
             " current decision unsafe to trust as written."
         ),
     )
+
+    @field_validator("verdict", mode="before")
+    @classmethod
+    def normalize_verdict(cls, value):
+        text = str(value or "").strip().lower().replace("_", " ").replace("-", " ")
+        if text in {"approved", "approve", "pass", "passed", "ok", "okay", "proceed"}:
+            return VerificationVerdict.APPROVED
+        if text in {"caution", "cautious", "warning", "warn", "proceed with caution"}:
+            return VerificationVerdict.CAUTION
+        if text in {"revise", "revision", "needs revision", "requires revision", "reject", "rejected", "fail", "failed"}:
+            return VerificationVerdict.REVISE
+        return value
+
+    @field_validator(
+        "deterministic_checks",
+        "evidence_support",
+        "unsupported_claims",
+        "confidence_note",
+        "recommended_action",
+        mode="before",
+    )
+    @classmethod
+    def normalize_text_field(cls, value):
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple)):
+            return "\n".join(str(item) for item in value if item not in (None, ""))
+        if isinstance(value, dict):
+            return "; ".join(f"{key}: {item}" for key, item in value.items())
+        return str(value)
+
+    @field_validator("issues", mode="before")
+    @classmethod
+    def normalize_issues(cls, value):
+        if value in (None, ""):
+            return []
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.lower() in {"none", "no issues", "n/a", "na"}:
+                return []
+            return [line.strip("-• \t") for line in stripped.splitlines() if line.strip("-• \t")]
+        if isinstance(value, dict):
+            return [f"{key}: {item}" for key, item in value.items()]
+        return value
     deterministic_checks: str = Field(
         description=(
             "Summarize the deterministic order-logic checks, including current"

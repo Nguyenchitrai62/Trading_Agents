@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import re
+
 from langchain_core.messages import AIMessage
+from pydantic import ValidationError
 
 from tradingagents.agents.schemas import (
     VerificationReport,
@@ -23,10 +27,77 @@ from tradingagents.agents.utils.decision import (
 from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.market_price import fetch_current_binance_spot_price
 from tradingagents.agents.utils.rating import parse_rating
-from tradingagents.agents.utils.structured import (
-    bind_structured,
-    invoke_structured_or_freetext_result,
-)
+from tradingagents.agents.utils.structured import resolve_structured_base_llm
+from tradingagents.llm_clients.base_client import normalize_content
+
+
+def _response_text(response: object) -> str:
+    normalized = normalize_content(response)
+    content = getattr(normalized, "content", "")
+    if isinstance(content, str):
+        return content.strip()
+    if content is None:
+        return ""
+    return str(content).strip()
+
+
+def _extract_json_object(text: str) -> dict | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.DOTALL | re.IGNORECASE)
+    candidates = [fenced.group(1)] if fenced else []
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(raw[start:end + 1])
+    candidates.append(raw)
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _fallback_verification_payload(raw_text: str, deterministic: dict[str, object]) -> dict:
+    blockers = list(deterministic.get("blockers") or [])
+    warnings = list(deterministic.get("warnings") or [])
+    verdict = VerificationVerdict.REVISE.value if blockers else VerificationVerdict.CAUTION.value
+    issues = [f"Deterministic blocker: {blocker}" for blocker in blockers]
+    if not issues and warnings:
+        issues = [f"Warning to review: {warning}" for warning in warnings]
+    return {
+        "verdict": verdict,
+        "deterministic_checks": str(deterministic.get("summary") or ""),
+        "evidence_support": "Verifier JSON could not be parsed; review the free-text verifier output.",
+        "unsupported_claims": "Verifier JSON could not be parsed into structured unsupported-claim details.",
+        "issues": issues,
+        "confidence_note": "Structured verifier parsing fell back locally; deterministic checks were preserved.",
+        "recommended_action": "Revise the portfolio decision before acting." if blockers else "Proceed only after manually reviewing the verifier free-text output.",
+        "raw_verifier_output": raw_text,
+    }
+
+
+def _parse_verification_report(raw_text: str, deterministic: dict[str, object]) -> tuple[str, VerificationReport | None, dict]:
+    payload = _extract_json_object(raw_text)
+    if payload is not None:
+        try:
+            parsed = VerificationReport.model_validate(payload)
+            return render_verification_report(parsed), parsed, parsed.model_dump(mode="json")
+        except ValidationError:
+            pass
+
+    fallback_payload = _fallback_verification_payload(raw_text, deterministic)
+    try:
+        parsed = VerificationReport.model_validate(fallback_payload)
+        structured_payload = parsed.model_dump(mode="json")
+        structured_payload["raw_verifier_output"] = raw_text
+        return render_verification_report(parsed), parsed, structured_payload
+    except ValidationError:
+        return raw_text, None, fallback_payload
 
 
 def _format_structured_context(payload: dict, fallback: str, fields: list[tuple[str, str]]) -> str:
@@ -135,7 +206,7 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
 
 
 def create_verifier(llm):
-    structured_llm = bind_structured(llm, VerificationReport, "Verifier")
+    base_llm = resolve_structured_base_llm(llm)
 
     def verifier_node(state) -> dict:
         instrument_context = build_instrument_context(
@@ -189,7 +260,14 @@ Audit in two layers:
 1. Deterministic order logic: current price versus signal, limit prices, stop loss, and take profit.
 2. Semantic support: whether the final signal and thesis are actually supported by the analyst evidence and intermediate handoffs, and whether any important claim lacks source-backed support.
 
-Return a structured verification report with these fields only: verdict, deterministic_checks, evidence_support, unsupported_claims, issues, confidence_note, recommended_action. Use issues as the precise fix-list for Portfolio Manager revision. If no revision is needed, set issues to an empty list.
+Return JSON only, with no markdown fence and no extra prose. The JSON object must contain exactly these keys:
+- verdict: one of "Approved", "Caution", "Revise"
+- deterministic_checks: string
+- evidence_support: string
+- unsupported_claims: string
+- issues: array of strings; use as the precise fix-list for Portfolio Manager revision, or [] if no revision is needed
+- confidence_note: string
+- recommended_action: string
 
 Deterministic check summary:
 {deterministic['summary']}
@@ -219,15 +297,8 @@ Portfolio Manager decision:
 
 Be strict. If a strong claim is not grounded in the supplied evidence, call it out explicitly instead of smoothing over it.{get_language_instruction()}"""
 
-        verification_report, parsed_report = invoke_structured_or_freetext_result(
-            structured_llm,
-            llm,
-            prompt,
-            render_verification_report,
-            "Verifier",
-        )
-
-        structured_payload = parsed_report.model_dump(mode="json") if parsed_report is not None else {}
+        raw_verification = _response_text(base_llm.invoke(prompt))
+        verification_report, parsed_report, structured_payload = _parse_verification_report(raw_verification, deterministic)
         if parsed_report is not None and deterministic["blockers"] and parsed_report.verdict != VerificationVerdict.REVISE:
             parsed_report.verdict = VerificationVerdict.REVISE
             parsed_report.deterministic_checks = (
