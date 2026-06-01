@@ -1284,6 +1284,9 @@ function pushAgentTrace(trace) {
     const title = trace.title || agent;
     const traceId = normalizeTraceId(trace.trace_id || trace.traceId || "");
     const content = formatTraceContentForDisplay(phase, trace.content || "");
+    const sourceGroup = trace.source_group || trace.sourceGroup || "";
+    const sourceKind = trace.source_kind || trace.sourceKind || "";
+    const sourceLabel = trace.source_label || trace.sourceLabel || "";
     const toolResultData = phase === "tool_result" ? getStructuredToolResultData(trace.content || "") : null;
     const fingerprint = buildContentFingerprint(agent, phase, traceId || title, content);
     if (!content || (fingerprint && state.run.seenTraceFingerprints.has(fingerprint))) {
@@ -1301,6 +1304,9 @@ function pushAgentTrace(trace) {
             existingEntry.tone = getFeedToneForPhase("tool_trace");
             existingEntry.timestamp = new Date().toLocaleTimeString();
             existingEntry.traceId = existingEntry.traceId || traceId;
+            existingEntry.sourceGroup = existingEntry.sourceGroup || sourceGroup;
+            existingEntry.sourceKind = existingEntry.sourceKind || sourceKind;
+            existingEntry.sourceLabel = existingEntry.sourceLabel || sourceLabel;
             existingEntry.toolCallContent = existingEntry.toolCallContent || existingEntry.content || "";
             existingEntry.toolResultContent = content;
             existingEntry.content = buildToolTraceCombinedContent(existingEntry.toolCallContent, existingEntry.toolResultContent);
@@ -1325,6 +1331,9 @@ function pushAgentTrace(trace) {
         tone: getFeedToneForPhase(phase),
         title,
         traceId,
+        sourceGroup,
+        sourceKind,
+        sourceLabel,
         content,
         previewContent: content,
         toolCallContent: phase === "tool_call" ? content : "",

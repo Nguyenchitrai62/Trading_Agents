@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from langchain_core.messages import AIMessage
 
 from tradingagents.agents.utils.agent_utils import (
@@ -13,6 +15,7 @@ from tradingagents.agents.utils.evidence import (
     split_report_and_evidence,
 )
 from tradingagents.agents.utils.structured import resolve_structured_base_llm
+from tradingagents.dataflows.config import get_config
 from tradingagents.llm_clients.base_client import normalize_content
 
 
@@ -49,11 +52,38 @@ def _trim(value: object, limit: int) -> str:
     return text[: max(0, limit - 14)].rstrip() + "\n[truncated]"
 
 
-def _invoke_tool(tool, args: dict) -> str:
+def _format_tool_call(tool_name: str, args: dict) -> str:
     try:
-        return str(tool.invoke(args))
+        return f"{tool_name}({json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)})"
+    except TypeError:
+        items = ", ".join(f"{key}={value}" for key, value in list(args.items())[:6])
+        return f"{tool_name}({items})"
+
+
+def _emit_market_tool_trace(phase: str, title: str, trace_id: str, content: object) -> None:
+    callback = get_config().get("analysis_trace_callback")
+    if not callable(callback):
+        return
+    callback(
+        {
+            "agent": "Market Analyst",
+            "phase": phase,
+            "title": title,
+            "trace_id": trace_id,
+            "content": content,
+        }
+    )
+
+
+def _invoke_tool(tool, args: dict, trace_id: str) -> str:
+    tool_name = str(getattr(tool, "name", "tool") or "tool")
+    _emit_market_tool_trace("tool_call", tool_name, trace_id, _format_tool_call(tool_name, args))
+    try:
+        result = str(tool.invoke(args))
     except Exception as exc:
-        return f"Error: {getattr(tool, 'name', 'tool')} failed: {exc}"
+        result = f"Error: {tool_name} failed: {exc}"
+    _emit_market_tool_trace("tool_result", tool_name, trace_id, result)
+    return result
 
 
 def _collect_market_source_bundle(symbol: str) -> dict[str, object]:
@@ -65,6 +95,7 @@ def _collect_market_source_bundle(symbol: str) -> dict[str, object]:
             "limit": 96,
             "exchange_name": "binance",
         },
+        "market:get_crypto_ohlcv",
     )
     indicators = {
         indicator: _invoke_tool(
@@ -76,6 +107,7 @@ def _collect_market_source_bundle(symbol: str) -> dict[str, object]:
                 "limit": 48,
                 "exchange_name": "binance",
             },
+            f"market:get_crypto_indicators:{indicator}",
         )
         for indicator in MARKET_INDICATORS
     }

@@ -2332,19 +2332,32 @@ class AnalysisService:
             if cancel_event.is_set():
                 return
             phase = str(trace.get("phase") or "analysis")
-            telemetry.record_tool_trace(phase, trace.get("title") or trace.get("agent") or "Analysis")
+            agent = trace.get("agent") or "Analyst"
+            title = trace.get("title") or trace.get("agent") or "Analysis"
+            trace_id = trace.get("trace_id") or trace.get("tool_call_id") or ""
+            source_classification = self._classify_tool_source(agent=agent, title=title) or {}
+            source_payload = (
+                {
+                    "source_group": source_classification.get("flow_group") or "",
+                    "source_kind": source_classification.get("source_kind") or "",
+                    "source_label": source_classification.get("label") or "",
+                }
+                if source_classification
+                else {}
+            )
+            telemetry.record_tool_trace(phase, title)
             if phase == "tool_call":
                 record_tool_call_artifact_input(
-                    agent=trace.get("agent") or "Analyst",
-                    title=trace.get("title") or "tool",
-                    trace_id=trace.get("trace_id") or trace.get("tool_call_id") or trace.get("title") or "tool",
+                    agent=agent,
+                    title=title,
+                    trace_id=trace_id or title or "tool",
                     content=trace.get("content") or "",
                 )
             if phase == "tool_result":
                 record_tool_source_artifact(
-                    agent=trace.get("agent") or "Analyst",
-                    title=trace.get("title") or "tool",
-                    trace_id=trace.get("trace_id") or trace.get("tool_call_id") or trace.get("title") or "tool",
+                    agent=agent,
+                    title=title,
+                    trace_id=trace_id or title or "tool",
                     content=trace.get("content") or "",
                 )
             content = self._trim_text(
@@ -2358,11 +2371,12 @@ class AnalysisService:
             emit(
                 "agent_trace",
                 {
-                    "agent": trace.get("agent") or "Analyst",
+                    "agent": agent,
                     "phase": phase,
-                    "title": trace.get("title") or trace.get("agent") or "Analysis",
-                    "trace_id": trace.get("trace_id") or trace.get("tool_call_id") or "",
+                    "title": title,
+                    "trace_id": trace_id,
                     "content": content,
+                    **source_payload,
                 },
             )
 

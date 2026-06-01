@@ -1536,10 +1536,38 @@ button.flow-section-item:focus-visible {
 
 .live-flow-source-grid {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 13px;
     width: 100%;
     min-width: 0;
+}
+
+.live-flow-analyst-lanes {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 13px;
+    width: 100%;
+    min-width: 0;
+}
+
+.live-flow-analyst-lane {
+    display: grid;
+    align-items: start;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid rgba(139, 178, 160, 0.12);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.live-flow-lane-label {
+    margin: 0 0 6px;
+    color: rgba(217, 232, 223, 0.64);
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-align: center;
+    text-transform: uppercase;
 }
 
 .live-flow-source-column {
@@ -1599,6 +1627,13 @@ button.flow-section-item:focus-visible {
     width: 42%;
     min-width: 36px;
     height: 16px;
+    margin: -1px auto;
+}
+
+.live-flow-wire--source-to-analyst {
+    width: 42%;
+    min-width: 36px;
+    height: 20px;
     margin: -1px auto;
 }
 
@@ -1999,6 +2034,7 @@ button.flow-section-item:focus-visible {
 
 @media (max-width: 820px) {
     .live-flow-source-grid,
+    .live-flow-analyst-lanes,
     .live-flow-row--analysts {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -2006,6 +2042,7 @@ button.flow-section-item:focus-visible {
 
 @media (max-width: 520px) {
     .live-flow-source-grid,
+    .live-flow-analyst-lanes,
     .live-flow-row--analysts,
     .live-flow-row--researchers {
         grid-template-columns: minmax(0, 1fr);

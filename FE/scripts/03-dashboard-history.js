@@ -387,12 +387,6 @@ const SOURCE_ARTIFACT_GROUPS = {
         summaryTitle: "Social Summary",
         summaryFilter: (item) => getEndpointSummaryBucket(item) === "social",
     },
-    web: {
-        flowGroup: "",
-        title: "MCP Web Search",
-        summaryTitle: "Web Evidence Summary",
-        summaryFilter: (item) => getEndpointSummaryBucket(item) === "web_search",
-    },
 };
 
 function getEndpointSummaryBucket(item = {}) {
@@ -404,9 +398,6 @@ function getEndpointSummaryBucket(item = {}) {
         item.source,
         item.source_type,
     ].map((value) => String(value || "").toLowerCase()).join(" ");
-    if (text.includes("web_search") || text.includes("web search") || text.includes("web-search")) {
-        return "web_search";
-    }
     if (text.includes("coinglass") || text.includes("derivative") || text.includes("funding") || text.includes("liquidation") || text.includes("open interest")) {
         return "coinglass";
     }
@@ -433,7 +424,7 @@ function getLiveSourceArtifactCount() {
         return Number(state.run.sourceArtifactCount || 0);
     }
     const keys = new Set();
-    ["ccxt", "coinglass", "news", "social", "web"].forEach((groupKey) => {
+    ["ccxt", "coinglass", "news", "social"].forEach((groupKey) => {
         getLiveSourceTraceEntries(groupKey).forEach((entry) => keys.add(entry.id || `${entry.agent}:${entry.title}:${entry.traceId}`));
     });
     return keys.size;
@@ -458,10 +449,12 @@ function isLiveSourceTraceEntryForGroup(entry = {}, groupKey = "", phases = ["to
     const title = String(entry.title || "").toLowerCase();
     const agent = String(entry.agent || "").toLowerCase();
     const traceId = String(entry.traceId || entry.trace_id || "").toLowerCase();
-    const isWebSearch = isWebSearchTraceEntry(entry);
-    if (groupKey === "web") {
-        return isWebSearch;
+    const sourceGroup = String(entry.sourceGroup || entry.source_group || "").toLowerCase();
+    const configuredFlowGroup = String(SOURCE_ARTIFACT_GROUPS[groupKey]?.flowGroup || "").toLowerCase();
+    if (configuredFlowGroup && sourceGroup) {
+        return sourceGroup === configuredFlowGroup;
     }
+    const isWebSearch = isWebSearchTraceEntry(entry);
     if (groupKey === "ccxt") {
         return title === "get_crypto_ohlcv" || title === "get_crypto_indicators";
     }
@@ -469,10 +462,12 @@ function isLiveSourceTraceEntryForGroup(entry = {}, groupKey = "", phases = ["to
         return traceId.startsWith("coinglass:") || title.includes("coinglass");
     }
     if (groupKey === "news") {
-        return !isWebSearch && (agent.includes("news") || title.includes("news") || title === "get_global_news");
+        return (isWebSearch && agent.includes("news"))
+            || (!isWebSearch && (agent.includes("news") || title.includes("news") || title === "get_global_news"));
     }
     if (groupKey === "social") {
-        return !isWebSearch && (agent.includes("social") || title.includes("reddit") || title.includes("stocktwits"));
+        return (isWebSearch && agent.includes("social"))
+            || (!isWebSearch && (agent.includes("social") || title.includes("reddit") || title.includes("stocktwits")));
     }
     return false;
 }
@@ -834,14 +829,11 @@ function buildLiveFlowNodes() {
     const coinglassReady = sourceDoneForGroup("coinglass");
     const newsSourceReady = sourceDoneForGroup("news");
     const socialSourceReady = sourceDoneForGroup("social");
-    const webSearchReady = sourceDoneForGroup("web");
     const marketSummaryReady = getLiveSourceSummaryReady("ccxt");
     const coinglassSummaryReady = getLiveSourceSummaryReady("coinglass");
     const newsSummaryReady = getLiveSourceSummaryReady("news");
     const socialSummaryReady = getLiveSourceSummaryReady("social");
-    const webSearchSummaryReady = getLiveSourceSummaryReady("web");
     const sourceVisible = (analystKey, ready) => Boolean(ready || selectedAnalysts.has(analystKey) || state.isBusy || state.run.complete);
-    const webSearchVisible = Boolean(webSearchReady || selectedAnalysts.has("social") || selectedAnalysts.has("news") || state.isBusy || state.run.complete);
     const sourceStatus = (groupKey, analystKey, title, rawReady) => {
         const selected = selectedAnalysts.has(analystKey);
         const active = selected && sourceActiveForGroup(groupKey, analystKey, title);
@@ -915,19 +907,14 @@ function buildLiveFlowNodes() {
                 summary: buildLiveSourceSummaryNode("coinglass", "Onchain Endpoint Summary", coinglassSummaryReady && coinglassReady, sourceSummaryStatus("coinglass", "onchain", "Onchain Analyst", coinglassReady), "coinglass_summary"),
             },
             {
-                visible: webSearchVisible,
-                data: buildLiveSourceDataNode("web", "MCP Web Search", webSearchReady, statusFor(webSearchReady, sourceActiveForGroup("web", "", ""), true), "evidence", "liveWebSearchData", "web_search_data"),
-                summary: buildLiveSourceSummaryNode("web", "Web Evidence Summary", webSearchSummaryReady && webSearchReady, statusFor(webSearchSummaryReady && webSearchReady, sourceActiveForGroup("web", "", ""), true), "web_search_summary"),
+                visible: sourceVisible("social", socialSourceReady),
+                data: buildLiveSourceDataNode("social", "Social / Web Data", socialSourceReady, sourceStatus("social", "social", "Social Analyst", socialSourceReady), "signal", "liveSocialData", "social_data"),
+                summary: buildLiveSourceSummaryNode("social", "Social Summary", socialSummaryReady && socialSourceReady, sourceSummaryStatus("social", "social", "Social Analyst", socialSourceReady), "social_summary"),
             },
             {
                 visible: sourceVisible("news", newsSourceReady),
                 data: buildLiveSourceDataNode("news", "News Data", newsSourceReady, sourceStatus("news", "news", "News Analyst", newsSourceReady), "signal", "liveNewsData", "news_data"),
                 summary: buildLiveSourceSummaryNode("news", "News Summary", newsSummaryReady && newsSourceReady, sourceSummaryStatus("news", "news", "News Analyst", newsSourceReady), "news_summary"),
-            },
-            {
-                visible: sourceVisible("social", socialSourceReady),
-                data: buildLiveSourceDataNode("social", "Social / Web Data", socialSourceReady, sourceStatus("social", "social", "Social Analyst", socialSourceReady), "signal", "liveSocialData", "social_data"),
-                summary: buildLiveSourceSummaryNode("social", "Social Summary", socialSummaryReady && socialSourceReady, sourceSummaryStatus("social", "social", "Social Analyst", socialSourceReady), "social_summary"),
             },
         ],
         evidenceExtractor: { blockKey: "evidence_extractor", title: "Evidence Extractor", ready: selectedAnalystReportsComplete, status: getLiveFlowBlockError("evidence_extractor") ? "error" : statusFor(selectedAnalystReportsComplete, false), tone: "evidence", detail: { key: "evidenceExtractor" }, error: getLiveFlowBlockError("evidence_extractor") },
@@ -1266,6 +1253,49 @@ function getVisibleLiveFlowRowCount(nodes = []) {
     return nodes.filter(isLiveFlowNodeVisible).length;
 }
 
+function findLiveFlowSource(flow = {}, groupKey = "") {
+    return (flow.sourceNodes || []).find((source) => source?.data?.blockKey === `${groupKey}_data`) || null;
+}
+
+function findLiveFlowAnalyst(flow = {}, blockKey = "") {
+    return (flow.analystNodes || []).find((node) => node?.blockKey === blockKey) || null;
+}
+
+function renderLiveFlowAnalystLanes(flow = {}) {
+    const laneSpecs = [
+        { key: "market", label: "Market branch", source: findLiveFlowSource(flow, "ccxt"), analyst: findLiveFlowAnalyst(flow, "market_analyst") },
+        { key: "onchain", label: "Onchain branch", source: findLiveFlowSource(flow, "coinglass"), analyst: findLiveFlowAnalyst(flow, "onchain_analyst") },
+        { key: "social", label: "Social branch", source: findLiveFlowSource(flow, "social"), analyst: findLiveFlowAnalyst(flow, "social_analyst") },
+        { key: "news", label: "News branch", source: findLiveFlowSource(flow, "news"), analyst: findLiveFlowAnalyst(flow, "news_analyst") },
+    ];
+    const lanes = laneSpecs.filter((lane) => {
+        const sourceVisible = lane.source?.visible !== false && (isLiveFlowNodeVisible(lane.source?.data) || isLiveFlowNodeVisible(lane.source?.summary));
+        const analystVisible = isLiveFlowNodeVisible(lane.analyst);
+        return sourceVisible || analystVisible;
+    });
+    if (!lanes.length) {
+        return "";
+    }
+    return `
+        <section class="live-flow-analyst-lanes" aria-label="Parallel analyst source branches">
+            ${lanes.map((lane) => `
+                <div class="live-flow-analyst-lane live-flow-analyst-lane--${escapeHtml(lane.key)}">
+                    <span class="live-flow-lane-label">${escapeHtml(lane.label)}</span>
+                    ${lane.source?.data && isLiveFlowNodeVisible(lane.source.data) ? renderLiveFlowLeaf(lane.source.data, { compact: true }) : ""}
+                    ${lane.source?.data && lane.source?.summary && isLiveFlowNodeVisible(lane.source.data) && isLiveFlowNodeVisible(lane.source.summary)
+                        ? renderLiveFlowWire("live-flow-wire--pair", lane.source.data, lane.source.summary)
+                        : ""}
+                    ${lane.source?.summary && isLiveFlowNodeVisible(lane.source.summary) ? renderLiveFlowLeaf(lane.source.summary, { compact: true }) : ""}
+                    ${lane.source?.summary && lane.analyst && isLiveFlowNodeVisible(lane.source.summary) && isLiveFlowNodeVisible(lane.analyst)
+                        ? renderLiveFlowWire("live-flow-wire--source-to-analyst", lane.source.summary, lane.analyst)
+                        : ""}
+                    ${lane.analyst && isLiveFlowNodeVisible(lane.analyst) ? renderLiveFlowLeaf(lane.analyst, { compact: true }) : ""}
+                </div>
+            `).join("")}
+        </section>
+    `;
+}
+
 function renderLiveFlowWireIf(visible, className = "", fromNode = null, toNode = null) {
     return visible ? renderLiveFlowWire(className, fromNode, toNode) : "";
 }
@@ -1388,7 +1418,6 @@ function syncLiveFlowDomState() {
 
 function renderLiveAgentFlow() {
     const flow = buildLiveFlowNodes();
-    const sourceCount = getVisibleLiveFlowSourceCount(flow.sourceNodes);
     const analystCount = getVisibleLiveFlowRowCount(flow.analystNodes);
     const researcherCount = getVisibleLiveFlowRowCount([flow.bullResearcher, flow.bearResearcher]);
     const riskCount = getVisibleLiveFlowRowCount([flow.aggressiveRisk, flow.conservativeRisk, flow.neutralRisk]);
@@ -1400,21 +1429,12 @@ function renderLiveAgentFlow() {
     const verifierVisible = isLiveFlowNodeVisible(flow.verifier);
     const decisionExtractorVisible = isLiveFlowNodeVisible(flow.decisionExtractor);
     const persistenceVisible = isLiveFlowNodeVisible(flow.persistence);
-    const sourceDataNodes = (flow.sourceNodes || [])
-        .filter((source) => source?.visible !== false && isLiveFlowNodeVisible(source.data))
-        .map((source) => source.data);
-    const sourceSummaryNodes = (flow.sourceNodes || [])
-        .filter((source) => source?.visible !== false && isLiveFlowNodeVisible(source.summary))
-        .map((source) => source.summary);
-    const sourceGroupNode = combineLiveFlowNodes(sourceSummaryNodes.length ? sourceSummaryNodes : sourceDataNodes);
     const analystGroupNode = combineLiveFlowNodes(flow.analystNodes || []);
     const researcherGroupNode = combineLiveFlowNodes([flow.bullResearcher, flow.bearResearcher]);
     const riskGroupNode = combineLiveFlowNodes([flow.aggressiveRisk, flow.conservativeRisk, flow.neutralRisk]);
 
     const segments = [
-        renderLiveFlowSourceLayer(flow.sourceNodes),
-        sourceCount && analystCount ? renderLiveFlowFanOutWire(analystCount, "live-flow-wire--sources-to-analysts", sourceGroupNode, analystGroupNode) : "",
-        renderLiveFlowRow(flow.analystNodes, "live-flow-row--analysts"),
+        renderLiveFlowAnalystLanes(flow),
         analystCount && evidenceVisible ? renderLiveFlowFanInWire(analystCount, "live-flow-wire--analysts-to-evidence", analystGroupNode, flow.evidenceExtractor) : "",
         renderLiveFlowSingle(flow.evidenceExtractor, "live-flow-single--evidence"),
         renderLiveFlowWireIf(evidenceVisible && ledgerVisible, "live-flow-wire--evidence-to-ledger", flow.evidenceExtractor, flow.evidenceLedger),
@@ -1995,8 +2015,6 @@ function getDetailContent(detail) {
             return getSourceArtifactDetailContent("news", "News source results have not appeared yet.");
         case "liveSocialData":
             return getSourceArtifactDetailContent("social", "Social or web source results have not appeared yet.");
-        case "liveWebSearchData":
-            return getSourceArtifactDetailContent("web", "MiniMax web_search results have not appeared yet.");
         case "liveCcxtSummary":
             return {
                 content: getLiveSourceSummaryMarkdown("ccxt"),
@@ -2020,12 +2038,6 @@ function getDetailContent(detail) {
                 content: getLiveSourceSummaryMarkdown("social"),
                 fallback: "Social summary markdown is not available yet.",
                 payload: getSourceGroupArtifactRows("social"),
-            };
-        case "liveWebSearchSummary":
-            return {
-                content: getLiveSourceSummaryMarkdown("web"),
-                fallback: "Web evidence summary is not available yet.",
-                payload: getSourceGroupArtifactRows("web"),
             };
         case "evidenceExtractor":
         case "evidenceLedger":
