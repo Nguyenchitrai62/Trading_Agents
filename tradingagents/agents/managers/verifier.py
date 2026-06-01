@@ -183,6 +183,12 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
     if signal == "Limit Buy":
         if primary is None:
             blockers.append("Limit Buy is missing a primary limit price.")
+        if secondary is None:
+            blockers.append("Limit Buy is missing a secondary limit price.")
+        if stop_loss is None:
+            blockers.append("Limit Buy is missing a stop-loss.")
+        if take_profit is None:
+            blockers.append("Limit Buy is missing a take-profit.")
         if current_price is not None and primary is not None and primary > current_price:
             blockers.append("Limit Buy primary limit price is above current spot price without breakout confirmation.")
         if secondary is not None and primary is not None and secondary > primary:
@@ -208,15 +214,23 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
     elif signal == "Hold":
         if primary is not None or secondary is not None:
             blockers.append("Hold should not include executable limit prices.")
+        if stop_loss is not None:
+            blockers.append("Hold should not include a stop-loss.")
+        if take_profit is not None:
+            blockers.append("Hold should not include a take-profit.")
     elif signal == "Limit Sell":
         if primary is None:
             blockers.append("Limit Sell is missing a primary limit price.")
+        if secondary is None:
+            blockers.append("Limit Sell is missing a secondary limit price.")
+        if stop_loss is None:
+            blockers.append("Limit Sell is missing a stop-loss.")
+        if take_profit is None:
+            blockers.append("Limit Sell is missing a take-profit.")
         if current_price is not None and primary is not None and primary < current_price:
             blockers.append("Limit Sell primary limit price is below current spot price.")
         if secondary is not None and primary is not None and secondary < primary:
             warnings.append("Secondary Limit Sell is below the primary limit; staged exits usually step higher.")
-        if take_profit is not None:
-            blockers.append("Limit Sell should not include a take-profit target in this long-only workflow.")
         if current_price is not None and stop_loss is not None and stop_loss >= current_price:
             warnings.append("Limit Sell stop loss sits above current spot price; confirm it only applies to a retained long tranche.")
     elif signal == "Market Sell":

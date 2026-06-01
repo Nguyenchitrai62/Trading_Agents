@@ -271,22 +271,21 @@ class PortfolioDecision(BaseModel):
         default=None,
         description=(
             "Primary buy limit price in the instrument's quote currency. "
-            "Required only when the signal is Limit Buy. Leave empty for Market "
-            "Buy, Hold, Limit Sell, and Market Sell."
+            "Required when the signal is Limit Buy. Leave empty otherwise."
         ),
     )
     secondary_limit_buy_price: Optional[float] = Field(
         default=None,
         description=(
-            "Optional second buy limit price for scaling into a long position. "
-            "Use only when the signal is Limit Buy."
+            "Secondary buy limit price for scaling into a long position. "
+            "Required when the signal is Limit Buy. Leave empty otherwise."
         ),
     )
     primary_limit_sell_price: Optional[float] = Field(
         default=None,
         description=(
             "Primary sell limit price in the instrument's quote currency. "
-            "Required only when the signal is Limit Sell. In this long-only "
+            "Required when the signal is Limit Sell. In this long-only "
             "workflow, it is a better exit/reduction level for current long "
             "inventory, never a new short entry."
         ),
@@ -294,27 +293,28 @@ class PortfolioDecision(BaseModel):
     secondary_limit_sell_price: Optional[float] = Field(
         default=None,
         description=(
-            "Optional second sell limit price for staging a long-position exit "
-            "or reduction. Use only when the signal is Limit Sell."
+            "Secondary sell limit price for staging a long-position exit "
+            "or reduction. Required when the signal is Limit Sell. "
+            "Leave empty otherwise."
         ),
     )
     stop_loss: Optional[float] = Field(
         default=None,
         description=(
             "Invalidation or stop-loss level in the instrument's quote currency. "
-            "Required for Market Buy and Market Sell. Optional for Limit Buy or "
-            "Limit Sell only when the prose explicitly says there is no remaining "
-            "exposure after execution."
+            "Required for Limit Buy, Limit Sell, Market Buy, and Market Sell. "
+            "Leave empty only for Hold."
         ),
     )
     take_profit: Optional[float] = Field(
         default=None,
         description=(
             "First take-profit, target, or profit-protection level in the "
-            "instrument's quote currency. Required for Market Buy and Market Sell. "
-            "For Market Sell, this is the target level for any remaining long "
-            "tranche or the next downside exit objective, not a new short thesis. "
-            "Leave empty for Limit Sell in this long-only workflow."
+            "instrument's quote currency. Required for Limit Buy, Limit Sell, "
+            "Market Buy, and Market Sell. "
+            "For sell signals, this is the target level for any remaining "
+            "long tranche or the next exit objective, not a new short thesis. "
+            "Leave empty only for Hold."
         ),
     )
     position_sizing: Optional[str] = Field(
@@ -338,7 +338,7 @@ class PortfolioDecision(BaseModel):
         if self.signal != ExecutionSignal.LIMIT_SELL:
             self.primary_limit_sell_price = None
             self.secondary_limit_sell_price = None
-        if self.signal in {ExecutionSignal.LIMIT_SELL, ExecutionSignal.HOLD}:
+        if self.signal == ExecutionSignal.HOLD:
             self.take_profit = None
         if self.signal == ExecutionSignal.HOLD:
             self.stop_loss = None

@@ -120,16 +120,23 @@ def create_portfolio_manager(llm):
 
     **Hard rules:**
     - Never output generic final signals like Buy / Sell / Overweight / Underweight.
-    - If you choose **Limit Buy** or **Limit Sell**, you must provide at least one exact limit price and explain why waiting is better than executing at market now.
-    - If you choose **Market Buy** or **Market Sell**, you must explain why the current price is good enough for immediate execution.
-    - For **Limit Sell**, the limit price must be a better exit level for the current long position. If immediate selling is the right action, choose **Market Sell** instead.
-    - If you choose **Hold**, explain what confirmation, catalyst, or price zone would be needed before placing an order.
-    - When the setup is actionable, include stop-loss, take-profit, and position sizing.
-    - For **Market Buy** and **Market Sell**, stop-loss and take-profit are mandatory because a later verified extraction step persists these fields for execution review.
-    - For **Limit Sell** or **Market Sell**, do not include a new short thesis or an upside take-profit ladder. Use **Position Sizing** to say how much of the current long to trim or exit, and use **Stop Loss**/**Take Profit** only for remaining long exposure or the next exit objective.
     - The first line of your answer must be exactly one signal and nothing else:
       Market Buy, Limit Buy, Hold, Limit Sell, or Market Sell.
     - After the first line, write a concise prose explanation for a human reader. Do not output JSON.
+
+    **Required numeric fields per signal:**
+    - **Limit Buy**: Must explicitly state Primary Limit Buy Price, Secondary Limit Buy Price, Stop Loss, and Take Profit as concrete numeric values in the prose.
+    - **Limit Sell**: Must explicitly state Primary Limit Sell Price, Secondary Limit Sell Price, Stop Loss, and Take Profit as concrete numeric values in the prose.
+    - **Market Buy**: Must explicitly state Stop Loss and Take Profit as concrete numeric values in the prose. Do not include limit prices.
+    - **Market Sell**: Must explicitly state Stop Loss and Take Profit as concrete numeric values in the prose. Do not include limit prices.
+    - **Hold**: Do not include any limit prices, stop-loss, or take-profit.
+
+    - If you choose **Limit Buy** or **Limit Sell**, explain why waiting is better than executing at market now.
+    - If you choose **Market Buy** or **Market Sell**, explain why the current price is good enough for immediate execution.
+    - For **Limit Sell**, the limit price must be a better exit level for the current long position. If immediate selling is the right action, choose **Market Sell** instead.
+    - If you choose **Hold**, explain what confirmation, catalyst, or price zone would be needed before placing an order.
+    - For **Limit Sell** or **Market Sell**, do not include a new short thesis. Use **Position Sizing** to say how much of the current long to trim or exit.
+    - Include position sizing guidance when actionable.
 
 **Context:**
 - Market report:\n{market_report}

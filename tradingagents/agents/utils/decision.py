@@ -88,6 +88,12 @@ def validate_portfolio_decision(
     if signal == "Limit Buy":
         if primary is None:
             errors.append("Limit Buy requires primary_limit_buy_price.")
+        if secondary is None:
+            errors.append("Limit Buy requires secondary_limit_buy_price.")
+        if stop_loss is None:
+            errors.append("Limit Buy requires stop_loss.")
+        if take_profit is None:
+            errors.append("Limit Buy requires take_profit.")
         if sell_primary is not None or sell_secondary is not None:
             errors.append("Limit Buy must not contain sell limit ladder fields.")
         if current_price is not None and primary is not None and primary > current_price and not _allows_breakout_buy(decision_text):
@@ -117,10 +123,14 @@ def validate_portfolio_decision(
     if signal == "Limit Sell":
         if primary is None:
             errors.append("Limit Sell requires primary_limit_sell_price.")
+        if secondary is None:
+            errors.append("Limit Sell requires secondary_limit_sell_price.")
+        if stop_loss is None:
+            errors.append("Limit Sell requires stop_loss.")
+        if take_profit is None:
+            errors.append("Limit Sell requires take_profit.")
         if buy_primary is not None or buy_secondary is not None:
             errors.append("Sell signals must not contain buy entry ladders.")
-        if take_profit is not None:
-            errors.append("Sell signals must not contain upside take-profit ladders.")
         if current_price is not None and primary is not None and primary < current_price:
             errors.append("Limit Sell price is below current price; use Market Sell when selling at or below spot is intended.")
 
