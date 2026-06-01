@@ -10,6 +10,7 @@ from tradingagents.agents.utils.agent_utils import (
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.rating import parse_rating
+from tradingagents.agents.utils.structured import resolve_structured_base_llm
 from tradingagents.llm_clients.base_client import normalize_content
 
 
