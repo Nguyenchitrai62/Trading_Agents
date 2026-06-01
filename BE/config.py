@@ -20,7 +20,7 @@ CPU_THREAD_ENV_VARS = (
     "NUMEXPR_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS",
 )
-DEFAULT_ANALYSTS = ("market", "social", "news", "fundamentals")
+DEFAULT_ANALYSTS = ("market", "onchain", "social", "news")
 APP_TITLE = "TradingAgents Analysis API"
 APP_VERSION = "0.1.2"
 DEFAULT_MODEL = "MiniMax-M2.5"
@@ -91,20 +91,10 @@ SECTION_META = {
         "agent": "News Analyst",
         "team": "Analyst Team",
     },
-    "flow_report": {
-        "title": "Flow Analysis",
-        "agent": "Flow Analyst",
+    "onchain_report": {
+        "title": "Onchain Analysis",
+        "agent": "Onchain Analyst",
         "team": "Analyst Team",
-    },
-    "investment_plan": {
-        "title": "Research Manager Plan",
-        "agent": "Research Manager",
-        "team": "Research Team",
-    },
-    "trader_investment_plan": {
-        "title": "Trader Plan",
-        "agent": "Trader",
-        "team": "Trading Team",
     },
     "final_trade_decision": {
         "title": "Portfolio Decision",

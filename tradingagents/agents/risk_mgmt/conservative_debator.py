@@ -22,25 +22,27 @@ def create_conservative_debator(llm):
         market_research_report = state["market_report"]
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
-        flow_report = state["flow_report"]
+        onchain_report = state.get("onchain_report", "")
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=14)
         coinglass_context = get_coinglass_context_instruction(
             state,
             packages=get_coinglass_packages_for_role("conservative_risk"),
         )
 
-        trader_decision = state["trader_investment_plan"]
+        research_debate_state = state.get("investment_debate_state") or {}
+        research_context = research_debate_state.get("history", "")
 
-        prompt = f"""As the Conservative Risk Analyst, protect capital, minimize volatility, and stress-test downside risk. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Use the provided market data and trader plan to identify concrete risks and avoid unsupported claims. Here is the trader's decision:
+        prompt = f"""As the Conservative Risk Analyst, protect capital, minimize volatility, and stress-test downside risk. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Use the four branch reports and research debate to identify concrete risks and avoid unsupported claims.
 
-{trader_decision}
+    Research debate context:
+    {research_context}
 
-Your task is to actively counter the arguments of the Aggressive and Neutral Analysts, highlighting where their views may overlook potential threats or fail to prioritize sustainability. Respond directly to their points, drawing from the following data sources to build a convincing case for a low-risk approach adjustment to the trader's decision:
+    Your task is to actively counter the arguments of the Aggressive and Neutral Analysts, highlighting where their views may overlook potential threats or fail to prioritize sustainability. Respond directly to their points, drawing from the following data sources to build a convincing case for a lower-risk approach:
 
 Market Research Report: {market_research_report}
 Social Report: {sentiment_report}
 Latest World Affairs Report: {news_report}
-Asset Flow Report: {flow_report}
+Onchain Report: {onchain_report}
 Structured Evidence Ledger: {evidence_ledger}
 {coinglass_context}
 Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_aggressive_response} Here is the last response from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.

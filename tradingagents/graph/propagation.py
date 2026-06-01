@@ -23,6 +23,7 @@ class Propagator:
         past_context: str = "",
         coinglass_context: str = "",
         coinglass_package_contexts: dict[str, str] | None = None,
+        coinglass_endpoint_results: list[dict[str, Any]] | None = None,
         coinglass_evidence_items: list[dict[str, Any]] | None = None,
         endpoint_summaries: list[dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
@@ -35,6 +36,7 @@ class Propagator:
             "past_context": past_context,
             "coinglass_context": coinglass_context,
             "coinglass_package_contexts": coinglass_package_contexts or {},
+            "coinglass_endpoint_results": list(coinglass_endpoint_results or []),
             "endpoint_summaries": list(endpoint_summaries or []),
             "investment_debate_state": InvestDebateState(
                 {
@@ -61,13 +63,14 @@ class Propagator:
                 }
             ),
             "market_report": "",
-            "flow_report": "",
+            "market_source_bundle": {},
+            "onchain_report": "",
+            "onchain_endpoint_analyses": [],
+            "onchain_analysis_structured": {},
             "sentiment_report": "",
             "news_report": "",
             "evidence_items": list(coinglass_evidence_items or []),
             "verification_report": "",
-            "investment_plan_structured": {},
-            "trader_investment_plan_structured": {},
             "final_trade_decision_structured": {},
             "verification_report_structured": {},
             "verification_reference_price": None,

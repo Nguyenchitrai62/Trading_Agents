@@ -1,13 +1,12 @@
 from .utils.agent_utils import create_msg_delete
 from .utils.agent_states import AgentState, InvestDebateState, RiskDebateState
 
-from .analysts.flow_analyst import create_flow_analyst
 from .analysts.market_analyst import create_market_analyst
 from .analysts.news_analyst import create_news_analyst
 from .analysts.social_analyst import (
     create_sentiment_analyst,
-    create_social_media_analyst,  # deprecated alias kept for back-compat
 )
+from .onchain.onchain_analyst import create_onchain_analyst
 
 from .researchers.bear_researcher import create_bear_researcher
 from .researchers.bull_researcher import create_bull_researcher
@@ -16,11 +15,9 @@ from .risk_mgmt.aggressive_debator import create_aggressive_debator
 from .risk_mgmt.conservative_debator import create_conservative_debator
 from .risk_mgmt.neutral_debator import create_neutral_debator
 
-from .managers.research_manager import create_research_manager
 from .managers.portfolio_manager import create_portfolio_manager
 from .managers.verifier import create_verifier
-
-from .trader.trader import create_trader
+from .managers.decision_extractor import create_decision_extractor
 
 __all__ = [
     "AgentState",
@@ -29,16 +26,14 @@ __all__ = [
     "RiskDebateState",
     "create_bear_researcher",
     "create_bull_researcher",
-    "create_research_manager",
-    "create_flow_analyst",
+    "create_onchain_analyst",
     "create_market_analyst",
     "create_neutral_debator",
     "create_news_analyst",
     "create_aggressive_debator",
     "create_portfolio_manager",
     "create_verifier",
+    "create_decision_extractor",
     "create_conservative_debator",
     "create_sentiment_analyst",
-    "create_social_media_analyst",  # deprecated; will be removed in a future version
-    "create_trader",
 ]

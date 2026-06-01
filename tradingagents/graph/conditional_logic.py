@@ -41,13 +41,13 @@ class ConditionalLogic:
             return "tools_news"
         return "Msg Clear News"
 
-    def should_continue_fundamentals(self, state: AgentState):
-        """Determine if the legacy fundamentals slot should continue its flow analysis."""
+    def should_continue_onchain(self, state: AgentState):
+        """Determine if onchain analysis should continue."""
         messages = state["messages"]
         last_message = messages[-1]
         if last_message.tool_calls:
-            return "tools_flow"
-        return "Msg Clear Flow"
+            return "tools_onchain"
+        return "Msg Clear Onchain"
 
     def should_continue_debate(self, state: AgentState) -> str:
         """Determine if debate should continue."""
@@ -55,7 +55,7 @@ class ConditionalLogic:
         if (
             state["investment_debate_state"]["count"] >= 2 * self.max_debate_rounds
         ):  # 3 rounds of back-and-forth between 2 agents
-            return "Research Manager"
+            return "Risk Team"
         if state["investment_debate_state"]["current_response"].startswith("Bull"):
             return "Bear Researcher"
         return "Bull Researcher"
@@ -73,10 +73,12 @@ class ConditionalLogic:
         return "Aggressive Analyst"
 
     def should_continue_portfolio_verification(self, state: AgentState) -> str:
-        """Reroute a non-approved verification back to the Portfolio Manager once."""
+        """Route verifier output to revision, extraction, or terminal failure."""
         verification = state.get("verification_report_structured") or {}
         verdict = str(verification.get("verdict") or "").strip().lower()
         revision_count = int(state.get("decision_revision_count") or 0)
-        if verdict != "approved" and revision_count < 2:
+        if verdict == "approved":
+            return "Decision Extractor"
+        if revision_count < 2:
             return "Portfolio Manager"
         return END

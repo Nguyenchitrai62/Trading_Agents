@@ -50,6 +50,37 @@ function todayIsoDate() {
     return new Date().toISOString().slice(0, 10);
 }
 
+function normalizeAnalystKeys(values) {
+    const source = Array.isArray(values) && values.length ? values : ["market", "onchain", "social", "news"];
+    return [...new Set(source
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter(Boolean))];
+}
+
+function normalizeAnalystOptions(values) {
+    const source = Array.isArray(values) && values.length
+        ? values
+        : [
+            { value: "market", label: "Market Analyst" },
+            { value: "onchain", label: "Onchain Analyst" },
+            { value: "social", label: "Social Analyst" },
+            { value: "news", label: "News Analyst" },
+        ];
+    const seen = new Set();
+    return source.map((analyst) => {
+        const rawValue = String(analyst.value || "").trim().toLowerCase();
+        const value = rawValue;
+        const label = analyst.label;
+        return { ...analyst, value, label };
+    }).filter((analyst) => {
+        if (!analyst.value || seen.has(analyst.value)) {
+            return false;
+        }
+        seen.add(analyst.value);
+        return true;
+    });
+}
+
 function normalizeFrontendConfig() {
     const source = getFrontendConfigSource();
     const defaults = source.analysisDefaults || source.analysis_defaults || {};
@@ -85,18 +116,13 @@ function normalizeFrontendConfig() {
             analysis_date: defaults.analysisDate || defaults.analysis_date || todayIsoDate(),
             lookback_days: Number(defaults.lookbackDays || defaults.lookback_days || 7),
             output_language: defaults.outputLanguage || defaults.output_language || "Vietnamese",
-            selected_analysts: defaults.selectedAnalysts || defaults.selected_analysts || ["market", "social", "news", "fundamentals"],
+            selected_analysts: normalizeAnalystKeys(defaults.selectedAnalysts || defaults.selected_analysts),
             research_depth: defaults.researchDepth || defaults.research_depth || "auto",
             model: defaultModel,
             checkpoint_enabled: Boolean(defaults.checkpointEnabled ?? defaults.checkpoint_enabled ?? false),
         },
         analysis_options: {
-            analysts: options.analysts || [
-                { value: "market", label: "Market Analyst" },
-                { value: "social", label: "Social Analyst" },
-                { value: "news", label: "News Analyst" },
-                { value: "fundamentals", label: "Flow Analyst" },
-            ],
+            analysts: normalizeAnalystOptions(options.analysts),
             asset_types: [{ value: "crypto", label: "Crypto" }],
             lookback_presets: options.lookbackPresets || options.lookback_presets || [
                 { value: "7", label: "7 days", days: 7 },
@@ -1343,9 +1369,9 @@ function getAgentNarrativeMarkdown(agent, limit = 5) {
 }
 
 function getFallbackStatusGroups() {
-    const fallbackAnalysts = getConfigSnapshot()?.selected_analysts
+    const fallbackAnalysts = normalizeAnalystKeys(getConfigSnapshot()?.selected_analysts
         || state.config?.analysis_defaults?.selected_analysts
-        || [];
+        || []);
     return {
         analysts: fallbackAnalysts.map((key) => ({
             key,
@@ -1355,9 +1381,7 @@ function getFallbackStatusGroups() {
         research: [
             { key: "bull", label: "Bull Researcher", status: "pending" },
             { key: "bear", label: "Bear Researcher", status: "pending" },
-            { key: "manager", label: "Research Manager", status: "pending" },
         ],
-        trading: [{ key: "trader", label: "Trader", status: "pending" }],
         risk: [
             { key: "aggressive", label: "Aggressive Analyst", status: "pending" },
             { key: "conservative", label: "Conservative Analyst", status: "pending" },
@@ -1366,6 +1390,7 @@ function getFallbackStatusGroups() {
         portfolio: [
             { key: "portfolio_manager", label: "Portfolio Manager", status: "pending" },
             { key: "verifier", label: "Verifier", status: "pending" },
+            { key: "decision_extractor", label: "Decision Extractor", status: "pending" },
         ],
     };
 }
@@ -1442,10 +1467,6 @@ function getTaskDetailDescriptor(groupKey, item) {
         research: {
             bull: { key: "bullResearch" },
             bear: { key: "bearResearch" },
-            manager: { key: "researchManager" },
-        },
-        trading: {
-            trader: { key: "traderPlan" },
         },
         risk: {
             aggressive: { key: "aggressiveRisk" },
@@ -1456,6 +1477,7 @@ function getTaskDetailDescriptor(groupKey, item) {
             portfolio_manager: { key: "portfolioDecision" },
             portfolio: { key: "portfolioDecision" },
             verifier: { key: "verifierReport" },
+            decision_extractor: { key: "decisionExtractor" },
         },
     };
 
@@ -1568,30 +1590,6 @@ function getCurrentLivePanel() {
         };
     }
 
-    if (currentAgent === "Research Manager") {
-        return {
-            title: currentAgent,
-            subtitle: "Synthesizing the research plan",
-            content: state.run.research.judge_decision || state.run.sections.investment_plan || "",
-            fallback: "The Research Manager has not synthesized a plan yet.",
-            detail: { key: "researchManager" },
-            tone: "progress",
-            badge: "Live",
-        };
-    }
-
-    if (currentAgent === "Trader") {
-        return {
-            title: currentAgent,
-            subtitle: "Building the trading proposal",
-            content: state.run.sections.trader_investment_plan || currentAgentNarrative || "",
-            fallback: "The Trader is analyzing the proposal.",
-            detail: { key: "traderPlan" },
-            tone: "progress",
-            badge: "Live",
-        };
-    }
-
     if (currentAgent === "Aggressive Analyst") {
         return {
             title: currentAgent,
@@ -1649,6 +1647,18 @@ function getCurrentLivePanel() {
             detail: { key: "verifierReport" },
             tone: "progress",
             badge: "Verify",
+        };
+    }
+
+    if (currentAgent === "Decision Extractor") {
+        return {
+            title: currentAgent,
+            subtitle: "Extracting verified order fields",
+            content: state.run.sections.final_trade_decision || currentAgentNarrative || "",
+            fallback: "The Decision Extractor is converting the verified markdown into structured fields.",
+            detail: { key: "decisionExtractor" },
+            tone: "progress",
+            badge: "Extract",
         };
     }
 

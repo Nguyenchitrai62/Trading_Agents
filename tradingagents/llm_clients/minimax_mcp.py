@@ -545,10 +545,12 @@ def build_mcp_reference_sources_instruction(reference_sources: Sequence[Any] | N
 
     return (
         base
-        + "Before writing any final market-facing conclusion, you must use web_search to retrieve "
-        "or cross-check each configured trusted source URL below, using the URL directly or a focused "
-        "site-constrained query. If a source is unreachable, say so and continue with other credible evidence. "
-        "After checking the trusted sources, you may search additional credible sources when useful.\n"
+        + "Prompts may assign one role to perform a live web validation pass. When web_search is "
+        "explicitly requested, prefer the configured trusted sources below for source-backed market "
+        "claims, using the URL directly or a focused site-constrained query. Do not re-check every "
+        "trusted source on every invocation when the current run already includes backend-prefetched "
+        "data, tool results, or a structured evidence ledger that supports the claim. If a source is "
+        "unreachable, say so and continue with other credible evidence.\n"
         + "Trusted sources:\n"
         + "\n".join(lines)
     )

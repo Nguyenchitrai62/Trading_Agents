@@ -156,7 +156,7 @@ def create_app() -> FastAPI:
                 "analysts": [
                     {
                         "value": value,
-                        "label": "Flow Analyst" if value == "fundamentals" else f"{value.title()} Analyst",
+                        "label": "Onchain Analyst" if value == "onchain" else f"{value.title()} Analyst",
                     }
                     for value in DEFAULT_ANALYSTS
                 ],

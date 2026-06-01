@@ -20,14 +20,14 @@ def create_bull_researcher(llm):
         market_research_report = state["market_report"]
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
-        flow_report = state["flow_report"]
+        onchain_report = state.get("onchain_report", "")
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=14)
         coinglass_context = get_coinglass_context_instruction(
             state,
             packages=get_coinglass_packages_for_role("bull_researcher"),
         )
         target_label = "asset"
-        flow_label = "Asset flow context report"
+        flow_label = "Onchain context report"
 
         prompt = f"""You are a Bull Analyst advocating for investing in the {target_label}. Build a strong, evidence-based case emphasizing growth potential, competitive advantages, and positive market indicators. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Do not add conversational filler or invent unsupported facts.
 
@@ -42,7 +42,7 @@ Resources available:
 Market research report: {market_research_report}
 Social report: {sentiment_report}
 Latest world affairs news: {news_report}
-{flow_label}: {flow_report}
+{flow_label}: {onchain_report}
 Structured evidence ledger:
 {evidence_ledger}
 {coinglass_context}

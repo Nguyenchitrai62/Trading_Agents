@@ -46,13 +46,13 @@ PACKAGE_LABELS = {
 }
 
 PACKAGE_AGENT_HINTS = {
-    "derivatives_positioning": "Market Analyst, Trader, Research Manager",
-    "funding_pressure": "Market Analyst, Flow Analyst, Trader, Risk Room",
-    "liquidation_risk": "Trader, Risk Room, Portfolio Manager",
-    "exchange_reserves": "Flow Analyst, Research Manager, Risk Room",
-    "institutional_flow": "Flow Analyst, Research Manager, Portfolio Manager",
+    "derivatives_positioning": "Market Analyst, Onchain Analyst, Risk Room",
+    "funding_pressure": "Market Analyst, Onchain Analyst, Risk Room",
+    "liquidation_risk": "Onchain Analyst, Risk Room, Portfolio Manager",
+    "exchange_reserves": "Onchain Analyst, Risk Room",
+    "institutional_flow": "Onchain Analyst, Portfolio Manager",
     "options_context": "Risk Room, Portfolio Manager",
-    "macro_cycle_context": "Market Analyst, Flow Analyst, Portfolio Manager",
+    "macro_cycle_context": "Market Analyst, Onchain Analyst, Portfolio Manager",
 }
 
 

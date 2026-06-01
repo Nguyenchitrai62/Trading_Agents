@@ -2,9 +2,8 @@
 
 The framework's primary artifact is still prose: each agent's natural-language
 reasoning is what users read in the saved markdown reports and what the
-downstream agents read as context.  Structured output is layered onto the
-three decision-making agents (Research Manager, Trader, Portfolio Manager)
-so that:
+downstream agents read as context. Structured output is layered onto verifier
+and decision-extraction steps so that:
 
 - Their extracted handoffs follow consistent fields across runs and providers
 - Each provider's native structured-output mode is used (json_schema for
@@ -29,30 +28,6 @@ from pydantic import BaseModel, Field, model_validator
 # ---------------------------------------------------------------------------
 
 
-class PortfolioRating(str, Enum):
-    """5-tier recommendation scale still used by the Research Manager."""
-
-    BUY = "Buy"
-    OVERWEIGHT = "Overweight"
-    HOLD = "Hold"
-    UNDERWEIGHT = "Underweight"
-    SELL = "Sell"
-
-
-class TraderAction(str, Enum):
-    """3-tier transaction direction used by the Trader.
-
-    The Trader's job is to translate the Research Manager's investment plan
-    into a concrete transaction proposal: should the desk execute a Buy, a
-    Sell, or sit on Hold this round. Position sizing and the final executable
-    order plan happen later at the Portfolio Manager.
-    """
-
-    BUY = "Buy"
-    HOLD = "Hold"
-    SELL = "Sell"
-
-
 class ExecutionSignal(str, Enum):
     """Actionable execution signal produced by the Portfolio Manager."""
 
@@ -64,40 +39,8 @@ class ExecutionSignal(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# Research Manager
+# Debate Turns
 # ---------------------------------------------------------------------------
-
-
-class ResearchPlan(BaseModel):
-    """Structured investment plan produced by the Research Manager.
-
-    Hand-off to the Trader: the recommendation pins the directional view,
-    the rationale captures which side of the bull/bear debate carried the
-    argument, and the strategic actions translate that into concrete
-    instructions the trader can execute against.
-    """
-
-    recommendation: PortfolioRating = Field(
-        description=(
-            "The investment recommendation. Exactly one of Buy / Overweight / "
-            "Hold / Underweight / Sell. Reserve Hold for situations where the "
-            "evidence on both sides is genuinely balanced; otherwise commit to "
-            "the side with the stronger arguments."
-        ),
-    )
-    rationale: str = Field(
-        description=(
-            "Conversational summary of the key points from both sides of the "
-            "debate, ending with which arguments led to the recommendation. "
-            "Speak naturally, as if to a teammate."
-        ),
-    )
-    strategic_actions: str = Field(
-        description=(
-            "Concrete steps for the trader to implement the recommendation, "
-            "including position sizing guidance consistent with the rating."
-        ),
-    )
 
 
 class DebateTurn(BaseModel):
@@ -180,8 +123,7 @@ class VerificationReport(BaseModel):
     evidence_support: str = Field(
         description=(
             "Explain whether the final signal is actually supported by the market,"
-            " social, news, and flow evidence plus the intermediate structured"
-            " handoffs from Research Manager and Trader."
+            " onchain, social, news, research-debate, and risk-debate evidence."
         ),
     )
     unsupported_claims: str = Field(
@@ -189,6 +131,14 @@ class VerificationReport(BaseModel):
             "List any claims in the final decision that are not grounded in the"
             " available evidence or do not point to a source-supported rationale."
             " If none are found, say so explicitly."
+        ),
+    )
+    issues: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete issue list to send back to the Portfolio Manager when the"
+            " markdown needs revision. Each item should name the contradiction,"
+            " unsupported claim, or order-logic problem and the required fix."
         ),
     )
     confidence_note: str = Field(
@@ -217,75 +167,12 @@ def render_verification_report(report: VerificationReport) -> str:
         "",
         f"**Unsupported Claims**: {report.unsupported_claims}",
         "",
+        "**Issues**:\n" + ("\n".join(f"- {item}" for item in report.issues) if report.issues else "- None"),
+        "",
         f"**Confidence Note**: {report.confidence_note}",
         "",
         f"**Recommended Action**: {report.recommended_action}",
     ])
-
-
-def render_research_plan(plan: ResearchPlan) -> str:
-    """Render a ResearchPlan to markdown for storage and the trader's prompt context."""
-    return "\n".join([
-        f"**Recommendation**: {plan.recommendation.value}",
-        "",
-        f"**Rationale**: {plan.rationale}",
-        "",
-        f"**Strategic Actions**: {plan.strategic_actions}",
-    ])
-
-
-# ---------------------------------------------------------------------------
-# Trader
-# ---------------------------------------------------------------------------
-
-
-class TraderProposal(BaseModel):
-    """Structured transaction proposal produced by the Trader.
-
-    The trader reads the Research Manager's investment plan and the analyst
-    reports, then turns them into a concrete transaction: what action to
-    take, the reasoning that justifies it, and the practical levels for
-    entry, stop-loss, and sizing.
-    """
-
-    action: TraderAction = Field(
-        description="The transaction direction. Exactly one of Buy / Hold / Sell.",
-    )
-    reasoning: str = Field(
-        description=(
-            "The case for this action, anchored in the analysts' reports and "
-            "the research plan. Two to four sentences."
-        ),
-    )
-    entry_price: Optional[float] = Field(
-        default=None,
-        description="Optional entry price target in the instrument's quote currency.",
-    )
-    stop_loss: Optional[float] = Field(
-        default=None,
-        description="Optional stop-loss price in the instrument's quote currency.",
-    )
-    position_sizing: Optional[str] = Field(
-        default=None,
-        description="Optional sizing guidance, e.g. '5% of portfolio'.",
-    )
-
-
-def render_trader_proposal(proposal: TraderProposal) -> str:
-    """Render a TraderProposal to markdown."""
-    parts = [
-        f"**Action**: {proposal.action.value}",
-        "",
-        f"**Reasoning**: {proposal.reasoning}",
-    ]
-    if proposal.entry_price is not None:
-        parts.extend(["", f"**Entry Price**: {proposal.entry_price}"])
-    if proposal.stop_loss is not None:
-        parts.extend(["", f"**Stop Loss**: {proposal.stop_loss}"])
-    if proposal.position_sizing:
-        parts.extend(["", f"**Position Sizing**: {proposal.position_sizing}"])
-    return "\n".join(parts)
-
 
 # ---------------------------------------------------------------------------
 # Portfolio Manager

@@ -542,8 +542,7 @@ p {
     padding-right: 2px;
 }
 
-.chamber-window,
-.trader-window {
+.chamber-window {
     display: flex;
 }
 
@@ -557,7 +556,6 @@ p {
     min-height: 212px;
 }
 
-.trader-window,
 .risk-window,
 .decision-window {
     min-height: 128px;
@@ -1714,7 +1712,6 @@ p {
     }
 
     .chamber-window,
-    .trader-window,
     .risk-window,
     .decision-window,
     .log-window {

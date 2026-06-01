@@ -1,133 +1,153 @@
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from __future__ import annotations
+
+from langchain_core.messages import AIMessage
+
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_crypto_indicators,
     get_crypto_ohlcv,
-    get_coinglass_context_instruction,
-    get_coinglass_packages_for_role,
     get_language_instruction,
-    get_preferred_reference_sources_instruction,
 )
 from tradingagents.agents.utils.evidence import (
     get_structured_evidence_instruction,
     split_report_and_evidence,
 )
-from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel, has_minimax_mcp_tool
+from tradingagents.agents.utils.structured import resolve_structured_base_llm
+from tradingagents.llm_clients.base_client import normalize_content
+
+
+MARKET_INDICATORS = (
+    "close_10_ema",
+    "close_50_sma",
+    "close_200_sma",
+    "rsi",
+    "macd",
+    "boll",
+    "atr",
+    "vwma",
+    "mfi",
+)
+
+_MAX_TOOL_BLOCK_CHARS = 2400
+_MAX_MARKET_CONTEXT_CHARS = 20000
+
+
+def _response_text(response: object) -> str:
+    normalized = normalize_content(response)
+    content = getattr(normalized, "content", "")
+    if isinstance(content, str):
+        return content.strip()
+    if content is None:
+        return ""
+    return str(content).strip()
+
+
+def _trim(value: object, limit: int) -> str:
+    text = str(value or "").strip()
+    if limit <= 0 or len(text) <= limit:
+        return text
+    return text[: max(0, limit - 14)].rstrip() + "\n[truncated]"
+
+
+def _invoke_tool(tool, args: dict) -> str:
+    try:
+        return str(tool.invoke(args))
+    except Exception as exc:
+        return f"Error: {getattr(tool, 'name', 'tool')} failed: {exc}"
+
+
+def _collect_market_source_bundle(symbol: str) -> dict[str, object]:
+    ohlcv = _invoke_tool(
+        get_crypto_ohlcv,
+        {
+            "symbol": symbol,
+            "timeframe": "auto",
+            "limit": 96,
+            "exchange_name": "binance",
+        },
+    )
+    indicators = {
+        indicator: _invoke_tool(
+            get_crypto_indicators,
+            {
+                "symbol": symbol,
+                "indicator": indicator,
+                "timeframe": "auto",
+                "limit": 48,
+                "exchange_name": "binance",
+            },
+        )
+        for indicator in MARKET_INDICATORS
+    }
+    return {
+        "symbol": symbol,
+        "exchange": "binance",
+        "ohlcv": ohlcv,
+        "indicators": indicators,
+        "indicator_names": list(MARKET_INDICATORS),
+    }
+
+
+def _format_market_bundle(bundle: dict[str, object]) -> str:
+    lines = [
+        "# Market Source Bundle",
+        "",
+        f"Symbol: {bundle.get('symbol')}",
+        f"Exchange: {bundle.get('exchange')}",
+        "",
+        "## OHLCV",
+        _trim(bundle.get("ohlcv"), _MAX_TOOL_BLOCK_CHARS),
+    ]
+    indicators = bundle.get("indicators") or {}
+    if isinstance(indicators, dict):
+        for name, content in indicators.items():
+            lines.extend(["", f"## Indicator: {name}", _trim(content, _MAX_TOOL_BLOCK_CHARS)])
+    return _trim("\n".join(lines), _MAX_MARKET_CONTEXT_CHARS)
 
 
 def create_market_analyst(llm):
+    base_llm = resolve_structured_base_llm(llm)
 
     def market_analyst_node(state):
         current_date = state["trade_date"]
         asset_type = state.get("asset_type", "crypto")
-        require_companion_web_search = (
-            asset_type == "crypto"
-            and isinstance(llm, MiniMaxMCPChatModel)
-            and has_minimax_mcp_tool(llm.settings, "web_search")
+        symbol = state["company_of_interest"]
+        instrument_context = build_instrument_context(symbol, asset_type)
+        market_bundle = _collect_market_source_bundle(symbol)
+        market_context = _format_market_bundle(market_bundle)
+
+        prompt = f"""You are the Market Analyst for this crypto trading workflow.
+
+{instrument_context}
+Current analysis date: {current_date}
+
+The market branch is code-first. The backend has already collected CCXT OHLCV candles and calculated technical indicators. Do not use web search. Analyze only the market data below and preserve concrete values from the tool outputs.
+
+Market data:
+{market_context}
+
+Produce a detailed market report covering:
+1. Trend and market structure.
+2. Momentum and moving-average regime.
+3. Volatility, range, and stop-placement implications.
+4. Volume/flow from exchange-traded data when available.
+5. Support/resistance or invalidation zones supported by the data.
+6. Confidence and data caveats.
+7. A markdown table summarizing the highest-signal market findings.
+{get_language_instruction()}{get_structured_evidence_instruction('market')}"""
+
+        raw_report = _response_text(base_llm.invoke(prompt))
+        report, evidence_items = split_report_and_evidence(
+            raw_report,
+            agent_key="market",
+            agent_label="Market Analyst",
+            report_section="market_report",
+            analysis_date=current_date,
         )
-        instrument_context = build_instrument_context(
-            state["company_of_interest"], asset_type
-        )
-        coinglass_context = get_coinglass_context_instruction(
-            state,
-            packages=get_coinglass_packages_for_role("market_analyst"),
-        )
-
-        tools = [get_crypto_ohlcv, get_crypto_indicators]
-
-        crypto_tool_instruction = (
-            " Use `get_crypto_ohlcv` for market structure and `get_crypto_indicators` for technical signals."
-            " The backend automatically selects the most granular timeframe that keeps the active lookback under 200 rows"
-            " from 5m, 15m, 1h, 4h, 1d, 1w, and 1M, then paginates exchange requests when needed."
-            " Treat any timeframe argument as a hint only; rely on the auto-selected timeframe shown in the tool result."
-            " For indicators, the backend may fetch extra candles on that same requested timeframe when a long-window calculation"
-            " needs more history, so long-window signals like `close_200_sma` can still be computed without changing timeframe."
-            " Use the exact indicator names from the list above, such as `close_10_ema`, `close_50_sma`, `close_200_sma`, `rsi`, `macd`, `boll`, `atr`, `vwma`, and `mfi`."
-            + (
-                " Always call the exact tool name `web_search` at least once alongside the crypto market tools for live context outside exchange OHLCV data, such as ETF flows, macro headlines, regulatory changes, liquidations, and broader market positioning."
-                if require_companion_web_search
-                else " Rely on the internal crypto market tools when live MCP browsing is unavailable."
-            )
-            + " If any internal tool returns an error, rate-limit notice, or unavailable placeholder, briefly note that limitation and continue with the remaining sources instead of stopping the analysis."
-        )
-
-        system_message = (
-            """You are a trading assistant tasked with analyzing financial markets. Your role is to select the **most relevant indicators** for a given market condition or trading strategy from the following list. The goal is to choose up to **8 indicators** that provide complementary insights without redundancy. Categories and each category's indicators are:
-
-Moving Averages:
-- close_50_sma: 50 SMA: A medium-term trend indicator. Usage: Identify trend direction and serve as dynamic support/resistance. Tips: It lags price; combine with faster indicators for timely signals.
-- close_200_sma: 200 SMA: A long-term trend benchmark. Usage: Confirm overall market trend and identify golden/death cross setups. Tips: It reacts slowly; best for strategic trend confirmation rather than frequent trading entries.
-- close_10_ema: 10 EMA: A responsive short-term average. Usage: Capture quick shifts in momentum and potential entry points. Tips: Prone to noise in choppy markets; use alongside longer averages for filtering false signals.
-
-MACD Related:
-- macd: MACD: Computes momentum via differences of EMAs. Usage: Look for crossovers and divergence as signals of trend changes. Tips: Confirm with other indicators in low-volatility or sideways markets.
-- macds: MACD Signal: An EMA smoothing of the MACD line. Usage: Use crossovers with the MACD line to trigger trades. Tips: Should be part of a broader strategy to avoid false positives.
-- macdh: MACD Histogram: Shows the gap between the MACD line and its signal. Usage: Visualize momentum strength and spot divergence early. Tips: Can be volatile; complement with additional filters in fast-moving markets.
-
-Momentum Indicators:
-- rsi: RSI: Measures momentum to flag overbought/oversold conditions. Usage: Apply 70/30 thresholds and watch for divergence to signal reversals. Tips: In strong trends, RSI may remain extreme; always cross-check with trend analysis.
-
-Volatility Indicators:
-- boll: Bollinger Middle: A 20 SMA serving as the basis for Bollinger Bands. Usage: Acts as a dynamic benchmark for price movement. Tips: Combine with the upper and lower bands to effectively spot breakouts or reversals.
-- boll_ub: Bollinger Upper Band: Typically 2 standard deviations above the middle line. Usage: Signals potential overbought conditions and breakout zones. Tips: Confirm signals with other tools; prices may ride the band in strong trends.
-- boll_lb: Bollinger Lower Band: Typically 2 standard deviations below the middle line. Usage: Indicates potential oversold conditions. Tips: Use additional analysis to avoid false reversal signals.
-- atr: ATR: Averages true range to measure volatility. Usage: Set stop-loss levels and adjust position sizes based on current market volatility. Tips: It's a reactive measure, so use it as part of a broader risk management strategy.
-
-Volume-Based Indicators:
-- vwma: VWMA: A moving average weighted by volume. Usage: Confirm trends by integrating price action with volume data. Tips: Watch for skewed results from volume spikes; use in combination with other volume analyses.
-
-- Select indicators that provide diverse and complementary information. Avoid redundancy (e.g., do not select both rsi and stochrsi). Also briefly explain why they are suitable for the given market context. When you tool call, please use the exact name of the indicators provided above as they are defined parameters, otherwise your call will fail. Call get_crypto_ohlcv for market structure and use get_crypto_indicators with the specific indicator names whenever indicator evidence is required. Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
-            + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
-            + crypto_tool_instruction
-            + coinglass_context
-            + get_preferred_reference_sources_instruction()
-            + get_language_instruction()
-            + get_structured_evidence_instruction("market")
-        )
-
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You are a helpful AI assistant, collaborating with other assistants."
-                    " Use the provided tools to progress towards answering the question."
-                    " If you are unable to fully answer, that's OK; another assistant with different tools"
-                    " will help where you left off. Execute what you can to make progress."
-                    " Build on earlier agent outputs when they already contain usable evidence or a completed section,"
-                    " but do not restate obsolete buy/sell stop markers from older flows."
-                    " Core analysis tools include: {tool_names}. Additional MiniMax MCP tools may be available through the model runtime.\n{system_message}"
-                    "For your reference, the current date is {current_date}. {instrument_context}",
-                ),
-                MessagesPlaceholder(variable_name="messages"),
-            ]
-        )
-
-        prompt = prompt.partial(system_message=system_message)
-        prompt = prompt.partial(
-            tool_names=", ".join([tool.name for tool in tools])
-            + (", web_search" if require_companion_web_search else "")
-        )
-        prompt = prompt.partial(current_date=current_date)
-        prompt = prompt.partial(instrument_context=instrument_context)
-
-        chain = prompt | llm.bind_tools(tools)
-
-        result = chain.invoke(state["messages"])
-
-        report = ""
-
-        evidence_items = []
-        if len(result.tool_calls) == 0:
-            report, evidence_items = split_report_and_evidence(
-                result.content,
-                agent_key="market",
-                agent_label="Market Analyst",
-                report_section="market_report",
-                analysis_date=current_date,
-            )
 
         return {
-            "messages": [result],
+            "messages": [AIMessage(content=report)],
+            "market_source_bundle": market_bundle,
             "market_report": report,
             "evidence_items": evidence_items,
         }

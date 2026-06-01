@@ -1168,7 +1168,11 @@ def _flow_block_markdown(title: str, status: str, summary: str, payload: dict) -
 
 def _build_flow_block_sections(final_state: dict) -> list[dict]:
     sections: list[dict] = []
-    selected_analysts = set(final_state.get("selected_analysts") or ["market", "social", "news", "fundamentals"])
+    selected_analysts = {
+        str(item or "").strip().lower()
+        for item in (final_state.get("selected_analysts") or ["market", "onchain", "social", "news"])
+        if str(item or "").strip()
+    }
     source_group_counts = final_state.get("source_artifact_groups") or {}
     flow_artifacts = final_state.get("flow_artifacts") or []
     endpoint_summaries = final_state.get("endpoint_summaries") or []
@@ -1202,7 +1206,7 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
         detail_type: str = "section",
         payload_extra: dict | None = None,
         markdown: str | None = None,
-        agent: str = "Flow Runtime",
+        agent: str = "Analysis Runtime",
         team: str = "Main View",
     ) -> None:
         payload = {
@@ -1238,14 +1242,14 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
     source_specs = [
         ("ccxt_data", "CCXT Market Data", "market", "ccxt_market_data", "ccxt", ["ccxt_market_data"], False),
         ("market_summary", "Market Summary", "market", "ccxt_market_data", "ccxt", ["ccxt_market_data"], True),
-        ("coinglass_data", "CoinGlass Data", "fundamentals", "coinglass_data", "coinglass", ["coinglass_data"], False),
-        ("coinglass_summary", "Derivatives / Flow Summary", "fundamentals", "coinglass_data", "coinglass", ["coinglass_data", "endpoint_summaries"], True),
+        ("coinglass_data", "CoinGlass Data", "onchain", "coinglass_data", "coinglass", ["coinglass_data"], False),
+        ("coinglass_summary", "Onchain Endpoint Summary", "onchain", "coinglass_data", "coinglass", ["coinglass_data", "endpoint_summaries"], True),
         ("news_data", "News Data", "news", "news_data", "news", ["news_data"], False),
         ("news_summary", "News Summary", "news", "news_data", "news", ["news_data"], True),
         ("social_data", "Social / Web Data", "social", "social_web_data", "social", ["social_web_data"], False),
         ("social_summary", "Social Summary", "social", "social_web_data", "social", ["social_web_data"], True),
-        ("flow_data", "On-chain / Liquidity Data", "fundamentals", "flow_data", "flow", ["flow_data"], False),
-        ("flow_summary", "Flow Summary", "fundamentals", "flow_data", "flow", ["flow_data"], True),
+        ("flow_data", "Onchain / Liquidity Data", "onchain", "flow_data", "flow", ["flow_data"], False),
+        ("flow_summary", "Onchain Summary", "onchain", "flow_data", "flow", ["flow_data"], True),
     ]
     for block_key, title, analyst_key, group, bucket, source_groups, is_summary in source_specs:
         artifacts = _source_group_artifacts(flow_artifacts, group)
@@ -1298,7 +1302,7 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
         ("market_analyst", "Market Analyst", "market", "market_report"),
         ("social_analyst", "Social Analyst", "social", "sentiment_report"),
         ("news_analyst", "News Analyst", "news", "news_report"),
-        ("flow_analyst", "Flow Analyst", "fundamentals", "flow_report"),
+        ("onchain_analyst", "Onchain Analyst", "onchain", "onchain_report"),
     ]
     for block_key, title, analyst_key, section_key in analyst_specs:
         selected = analyst_key in selected_analysts
@@ -1322,17 +1326,13 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
     add("bull_researcher", "Bull Researcher", "research", "research_debate", status_for(bool(investment.get("bull_history"))), "bull", related_sections=["bull_research"], agent="Bull Researcher", team="Research Team")
     add("bear_researcher", "Bear Researcher", "research", "research_debate", status_for(bool(investment.get("bear_history"))), "bear", related_sections=["bear_research"], agent="Bear Researcher", team="Research Team")
     add("research_debate", "Research Debate", "research", "research_debate", status_for(bool(investment.get("history"))), "debate", related_sections=["research_debate"], agent="Research Team", team="Research Team")
-    add("research_manager", "Research Manager", "research", "investment_plan", status_for(has_text("investment_plan")), "plan", related_sections=["investment_plan"], agent="Research Manager", team="Research Team")
-    add("investment_extractor", "Investment Plan Extractor", "extraction", "investment_plan_structured", status_for(has_payload("investment_plan_structured")), "evidence", related_sections=["investment_plan_structured"], agent="Investment Plan Extractor", team="Research Team")
-    add("trader", "Trader", "trading", "trader_investment_plan", status_for(has_text("trader_investment_plan")), "trader", related_sections=["trader_investment_plan"], agent="Trader", team="Trading Team")
-    add("trader_extractor", "Trader Plan Extractor", "extraction", "trader_investment_plan_structured", status_for(has_payload("trader_investment_plan_structured")), "evidence", related_sections=["trader_investment_plan_structured"], agent="Trader Plan Extractor", team="Trading Team")
     add("aggressive_risk", "Aggressive Analyst", "risk", "risk_debate", status_for(bool(risk.get("aggressive_history") or risk.get("current_aggressive_response"))), "aggressive", related_sections=["aggressive_risk"], agent="Aggressive Analyst", team="Risk Team")
     add("conservative_risk", "Conservative Analyst", "risk", "risk_debate", status_for(bool(risk.get("conservative_history") or risk.get("current_conservative_response"))), "conservative", related_sections=["conservative_risk"], agent="Conservative Analyst", team="Risk Team")
     add("neutral_risk", "Neutral Analyst", "risk", "risk_debate", status_for(bool(risk.get("neutral_history") or risk.get("current_neutral_response"))), "neutral", related_sections=["neutral_risk"], agent="Neutral Analyst", team="Risk Team")
     add("risk_debate", "Risk Debate", "risk", "risk_debate", status_for(bool(risk.get("history"))), "risk", related_sections=["risk_debate"], agent="Risk Team", team="Risk Team")
     add("portfolio_manager", "Portfolio Manager", "portfolio", "final_trade_decision", status_for(has_text("final_trade_decision")), "decision", related_sections=["final_trade_decision"], agent="Portfolio Manager", team="Portfolio Management")
-    add("decision_extractor", "Decision Extractor", "extraction", "final_trade_decision_structured", status_for(has_payload("final_trade_decision_structured")), "evidence", related_sections=["final_trade_decision_structured"], agent="Decision Extractor", team="Portfolio Management")
     add("verifier", "Verifier", "portfolio", "verification_report", status_for(has_text("verification_report")), "review", related_sections=["verification_report", "verification_report_structured"], agent="Verifier", team="Portfolio Management")
+    add("decision_extractor", "Decision Extractor", "extraction", "final_trade_decision_structured", status_for(has_payload("final_trade_decision_structured")), "evidence", related_sections=["final_trade_decision_structured"], agent="Decision Extractor", team="Portfolio Management")
     add("persistence", "History + Decision Persistence", "persistence", "history_persistence", "completed", "evidence", related_sections=["history_persistence"], agent="History Store", team="Persistence")
     return sections
 
@@ -1390,7 +1390,7 @@ def build_history_sections(final_state: dict) -> list[dict]:
         )
     )
 
-    for section_key in ("market_report", "sentiment_report", "news_report", "flow_report"):
+    for section_key in ("market_report", "onchain_report", "sentiment_report", "news_report"):
         meta = SECTION_META[section_key]
         add(
             _history_section(
@@ -1434,7 +1434,7 @@ def build_history_sections(final_state: dict) -> list[dict]:
             )
         )
 
-    for section_key in ("investment_plan", "trader_investment_plan", "final_trade_decision", "verification_report"):
+    for section_key in ("final_trade_decision", "verification_report"):
         meta = SECTION_META[section_key]
         add(
             _history_section(
@@ -1452,8 +1452,7 @@ def build_history_sections(final_state: dict) -> list[dict]:
         )
 
     structured_sections = [
-        ("investment_plan_structured", "Investment Plan Extractor", "Investment Plan Extractor", "Research Team", final_state.get("investment_plan_structured")),
-        ("trader_investment_plan_structured", "Trader Plan Extractor", "Trader Plan Extractor", "Trading Team", final_state.get("trader_investment_plan_structured")),
+        ("onchain_analysis_structured", "Onchain Analysis Payload", "Onchain Analyst", "Analyst Team", final_state.get("onchain_analysis_structured")),
         ("final_trade_decision_structured", "Decision Extractor", "Decision Extractor", "Portfolio Management", final_state.get("final_trade_decision_structured")),
         ("verification_report_structured", "Verifier Structured Payload", "Verifier", "Portfolio Management", final_state.get("verification_report_structured")),
     ]

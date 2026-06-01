@@ -22,25 +22,27 @@ def create_neutral_debator(llm):
         market_research_report = state["market_report"]
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
-        flow_report = state["flow_report"]
+        onchain_report = state.get("onchain_report", "")
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=14)
         coinglass_context = get_coinglass_context_instruction(
             state,
             packages=get_coinglass_packages_for_role("neutral_risk"),
         )
 
-        trader_decision = state["trader_investment_plan"]
+        research_debate_state = state.get("investment_debate_state") or {}
+        research_context = research_debate_state.get("history", "")
 
-        prompt = f"""As the Neutral Risk Analyst, provide a balanced perspective that weighs upside against downside and identifies what would shift conviction either way. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Use only the provided evidence and keep the output decision-useful. Here is the trader's decision:
+        prompt = f"""As the Neutral Risk Analyst, provide a balanced perspective that weighs upside against downside and identifies what would shift conviction either way. Return a structured debate handoff with the fields thesis, supporting_evidence, rebuttal, caveats, and action_bias. Use only the provided evidence and keep the output decision-useful.
 
-{trader_decision}
+    Research debate context:
+    {research_context}
 
-Your task is to challenge both the Aggressive and Conservative Analysts, pointing out where each perspective may be overly optimistic or overly cautious. Use insights from the following data sources to support a moderate, sustainable strategy to adjust the trader's decision:
+    Your task is to challenge both the Aggressive and Conservative Analysts, pointing out where each perspective may be overly optimistic or overly cautious. Use insights from the following data sources to support a moderate, sustainable strategy:
 
 Market Research Report: {market_research_report}
 Social Report: {sentiment_report}
 Latest World Affairs Report: {news_report}
-Asset Flow Report: {flow_report}
+Onchain Report: {onchain_report}
 Structured Evidence Ledger: {evidence_ledger}
 {coinglass_context}
 Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_aggressive_response} Here is the last response from the conservative analyst: {current_conservative_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.

@@ -1,9 +1,7 @@
-"""Portfolio Manager: prose-first final signal plus structured extraction."""
+"""Portfolio Manager: prose-first final signal."""
 
 from __future__ import annotations
 
-from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
-from tradingagents.agents.utils.decision import validate_portfolio_decision
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_coinglass_context_instruction,
@@ -11,12 +9,6 @@ from tradingagents.agents.utils.agent_utils import (
     get_language_instruction,
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
-from tradingagents.agents.utils.market_price import fetch_current_binance_spot_price
-from tradingagents.agents.utils.structured import (
-    bind_structured,
-    invoke_structured_or_freetext_result,
-    resolve_structured_base_llm,
-)
 from tradingagents.agents.utils.rating import parse_rating
 from tradingagents.llm_clients.base_client import normalize_content
 
@@ -63,67 +55,22 @@ def _force_signal_first_line(text: str) -> str:
     return f"{signal}\n\n{body}".strip()
 
 
-def _extract_structured_decision(
-    structured_llm,
-    plain_llm,
-    *,
-    extraction_prompt: str,
-    current_price: float | None,
-) -> tuple[dict, list[str]]:
-    if structured_llm is None:
-        return {}, []
-
-    _rendered, parsed_decision = invoke_structured_or_freetext_result(
-        structured_llm,
-        plain_llm,
-        extraction_prompt,
-        render_pm_decision,
-        "Decision Extractor",
-    )
-    if parsed_decision is None:
-        return {}, []
-
-    payload = parsed_decision.model_dump(mode="json")
-    validation_errors = validate_portfolio_decision(payload, current_price=current_price)
-    return payload, validation_errors
-
-
 def create_portfolio_manager(llm):
-    structured_llm = bind_structured(llm, PortfolioDecision, "Decision Extractor")
-
     def portfolio_manager_node(state) -> dict:
         instrument_context = build_instrument_context(state["company_of_interest"])
 
-        history = state["risk_debate_state"]["history"]
         risk_debate_state = state["risk_debate_state"]
-        research_plan = state["investment_plan"]
-        trader_plan = state["trader_investment_plan"]
-        research_plan_payload = state.get("investment_plan_structured") or {}
-        trader_plan_payload = state.get("trader_investment_plan_structured") or {}
+        history = risk_debate_state.get("history", "")
+        investment_debate_state = state.get("investment_debate_state") or {}
+        research_debate_context = investment_debate_state.get("history", "")
+        market_report = state.get("market_report", "")
+        onchain_report = state.get("onchain_report", "")
+        social_report = state.get("sentiment_report", "")
+        news_report = state.get("news_report", "")
         evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=18)
         coinglass_context = get_coinglass_context_instruction(
             state,
             packages=get_coinglass_packages_for_role("portfolio_manager"),
-        )
-        research_plan_context = _format_structured_context(
-            research_plan_payload,
-            research_plan,
-            [
-                ("Recommendation", "recommendation"),
-                ("Rationale", "rationale"),
-                ("Strategic Actions", "strategic_actions"),
-            ],
-        )
-        trader_plan_context = _format_structured_context(
-            trader_plan_payload,
-            trader_plan,
-            [
-                ("Action", "action"),
-                ("Reasoning", "reasoning"),
-                ("Entry Price", "entry_price"),
-                ("Stop Loss", "stop_loss"),
-                ("Position Sizing", "position_sizing"),
-            ],
         )
         verification_feedback = _format_structured_context(
             state.get("verification_report_structured") or {},
@@ -133,6 +80,7 @@ def create_portfolio_manager(llm):
                 ("Deterministic Checks", "deterministic_checks"),
                 ("Evidence Support", "evidence_support"),
                 ("Unsupported Claims", "unsupported_claims"),
+                ("Issues", "issues"),
                 ("Confidence Note", "confidence_note"),
                 ("Recommended Action", "recommended_action"),
             ],
@@ -142,7 +90,7 @@ def create_portfolio_manager(llm):
             verification_feedback_block = (
                 "Verifier feedback from the previous pass:\n"
                 f"{verification_feedback}\n\n"
-                "If the verifier asked for a revision, correct the signal and the structured price fields before you write the final decision again.\n"
+                "If the verifier asked for a revision, correct the signal, price levels, and evidence support before you write the final decision again.\n"
             )
 
         past_context = state.get("past_context", "")
@@ -176,15 +124,18 @@ def create_portfolio_manager(llm):
     - For **Limit Sell**, the limit price must be a better exit level for the current long position. If immediate selling is the right action, choose **Market Sell** instead.
     - If you choose **Hold**, explain what confirmation, catalyst, or price zone would be needed before placing an order.
     - When the setup is actionable, include stop-loss, take-profit, and position sizing.
-    - For **Market Buy** and **Market Sell**, stop-loss and take-profit are mandatory because the structured output is persisted for execution review.
+    - For **Market Buy** and **Market Sell**, stop-loss and take-profit are mandatory because a later verified extraction step persists these fields for execution review.
     - For **Limit Sell** or **Market Sell**, do not include a new short thesis or an upside take-profit ladder. Use **Position Sizing** to say how much of the current long to trim or exit, and use **Stop Loss**/**Take Profit** only for remaining long exposure or the next exit objective.
     - The first line of your answer must be exactly one signal and nothing else:
       Market Buy, Limit Buy, Hold, Limit Sell, or Market Sell.
     - After the first line, write a concise prose explanation for a human reader. Do not output JSON.
 
 **Context:**
-- Research Manager's investment plan:\n{research_plan_context}
-- Trader's transaction proposal:\n{trader_plan_context}
+- Market report:\n{market_report}
+- Onchain report:\n{onchain_report}
+- Social report:\n{social_report}
+- News report:\n{news_report}
+- Bull/Bear research debate:\n{research_debate_context}
 - Structured evidence ledger:\n{evidence_ledger}
 {coinglass_context}
 {lessons_line}
@@ -198,69 +149,6 @@ Be decisive and ground every conclusion in specific evidence from the analysts.{
 
         base_llm = resolve_structured_base_llm(llm)
         final_trade_decision = _force_signal_first_line(_normalize_response_text(base_llm.invoke(prompt)))
-        current_price = fetch_current_binance_spot_price(state.get("company_of_interest") or "")
-
-        extraction_prompt = f"""Extract a structured order plan from the Portfolio Manager prose.
-
-Use only facts explicitly present in the prose and context. Do not invent missing prices.
-Use signal-specific limit fields:
-- primary_limit_buy_price / secondary_limit_buy_price only for Limit Buy.
-- primary_limit_sell_price / secondary_limit_sell_price only for Limit Sell.
-- Sell signals are long-only reduction or exit plans, never new short exposure.
-- Limit Sell must not contain buy ladders or upside take-profit ladders.
-- Market Buy and Market Sell must include stop_loss and take_profit when the prose supports immediate execution.
-
-Current reference price: {current_price if current_price is not None else "unavailable"}
-
-Portfolio Manager prose:
-{final_trade_decision}
-
-Research Manager handoff:
-{research_plan_context}
-
-Trader handoff:
-{trader_plan_context}
-"""
-
-        structured_payload, validation_errors = _extract_structured_decision(
-            structured_llm,
-            llm,
-            extraction_prompt=extraction_prompt,
-            current_price=current_price,
-        )
-        if validation_errors and structured_payload:
-            repair_prompt = f"""Repair the structured extraction only. Do not change the Portfolio Manager prose.
-
-Validation errors:
-{chr(10).join(f"- {error}" for error in validation_errors)}
-
-Current reference price: {current_price if current_price is not None else "unavailable"}
-
-Previous structured extraction:
-{structured_payload}
-
-Original Portfolio Manager prose:
-{final_trade_decision}
-
-Return a corrected structured extraction using the PortfolioDecision schema. If the prose does not support a safe numeric field, leave it empty.
-"""
-            repaired_payload, repaired_errors = _extract_structured_decision(
-                structured_llm,
-                llm,
-                extraction_prompt=repair_prompt,
-                current_price=current_price,
-            )
-            if repaired_payload and not repaired_errors:
-                structured_payload = repaired_payload
-                validation_errors = []
-            else:
-                validation_errors = repaired_errors or validation_errors
-
-        if structured_payload:
-            structured_payload["decision_validation_status"] = "invalid" if validation_errors else "valid"
-            structured_payload["decision_validation_errors"] = validation_errors
-            if current_price is not None:
-                structured_payload["current_price"] = current_price
 
         new_risk_debate_state = {
             "judge_decision": final_trade_decision,
@@ -278,7 +166,7 @@ Return a corrected structured extraction using the PortfolioDecision schema. If 
         return {
             "risk_debate_state": new_risk_debate_state,
             "final_trade_decision": final_trade_decision,
-            "final_trade_decision_structured": structured_payload,
+            "final_trade_decision_structured": {},
         }
 
     return portfolio_manager_node

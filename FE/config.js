@@ -7,7 +7,7 @@
     app: {
         pages: ["agent", "history", "chart", "admin", "chat"],
         defaultPage: "agent",
-        coreAnalysts: ["market", "social", "news"],
+        coreAnalysts: ["market", "onchain", "social", "news"],
         traceDisplayLimit: 50,
         logDisplayLimit: 50,
         executionLogDisplayLimit: 80,
@@ -34,7 +34,7 @@
         analysisDate: "",
         lookbackDays: 14,
         outputLanguage: "Vietnamese",
-        selectedAnalysts: ["market", "social", "news", "fundamentals"],
+        selectedAnalysts: ["market", "onchain", "social", "news"],
         researchDepth: "auto",
         model: "MiniMax-M2.5",
         checkpointEnabled: false,
@@ -66,9 +66,9 @@
         ],
         analysts: [
             { value: "market", label: "Market Analyst" },
+            { value: "onchain", label: "Onchain Analyst" },
             { value: "social", label: "Social Analyst" },
             { value: "news", label: "News Analyst" },
-            { value: "fundamentals", label: "Flow Analyst" },
         ],
         researchDepths: [
             { value: "auto", label: "Auto", rounds: 3, effective_depth: "medium", description: "Backend-managed baseline with future evidence-driven escalation." },

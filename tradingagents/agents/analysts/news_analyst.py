@@ -10,7 +10,6 @@ from tradingagents.agents.utils.evidence import (
     get_structured_evidence_instruction,
     split_report_and_evidence,
 )
-from tradingagents.dataflows.config import get_config
 from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel, has_minimax_mcp_tool
 
 
@@ -22,7 +21,7 @@ def create_news_analyst(llm):
         instrument_context = build_instrument_context(
             state["company_of_interest"], asset_type
         )
-        require_companion_web_search = (
+        use_web_search_only = (
             asset_type == "crypto"
             and isinstance(llm, MiniMaxMCPChatModel)
             and has_minimax_mcp_tool(llm.settings, "web_search")
@@ -33,9 +32,9 @@ def create_news_analyst(llm):
             get_global_news,
         ]
 
-        if require_companion_web_search:
+        if use_web_search_only:
             system_message = (
-                f"You are a news researcher tasked with analyzing recent news and trends over the past week for a {asset_label}. Use the internal tools `get_news` and `get_global_news` for structured source coverage, and always call the exact MiniMax MCP tool `web_search` at least once in the same analysis for live and source-verified evidence, including asset-specific news, macro headlines, ETF and institutional flow coverage, exchange developments, liquidity shifts, and regulatory updates. If an internal tool returns an error, rate-limit notice, or unavailable placeholder, briefly note that limitation and continue with `web_search` plus any successful tool outputs instead of stopping. When current evidence is incomplete, search again instead of relying on stale cached assumptions. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
+            f"You are a news researcher tasked with analyzing recent news and trends over the past week for a {asset_label}. Use the exact MiniMax MCP tool `web_search` as your retrieval path and call it at least once before drafting. Do not call internal news tools in this branch. Search for asset-specific news, macro headlines, ETF and institutional flow coverage, exchange developments, liquidity shifts, and regulatory updates. When current evidence is incomplete, search again instead of relying on stale cached assumptions. Provide specific, actionable insights with supporting evidence for downstream debate."
                 + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
                 + get_preferred_reference_sources_instruction()
                 + get_language_instruction()
@@ -43,7 +42,8 @@ def create_news_analyst(llm):
             )
         else:
             system_message = (
-                f"You are a news researcher tasked with analyzing recent news and trends over the past week. Please write a comprehensive report of the current state of the world that is relevant for trading and macroeconomics. Use the available tools: get_news(query, start_date, end_date) for {asset_label}-specific or targeted news searches, and get_global_news(curr_date, look_back_days, limit) for broader macroeconomic news. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
+                f"You are a news researcher tasked with analyzing recent news and trends over the past week. Please write a comprehensive report of the current state of the world that is relevant for trading and macroeconomics. Use the available tools: get_news(query, start_date, end_date) for {asset_label}-specific or targeted news searches, and get_global_news(curr_date, look_back_days, limit) for broader macroeconomic news. Provide specific, actionable insights with supporting evidence for downstream debate."
+                + " Do not duplicate the broad live web validation pass assigned to another analyst; use the structured news tools first and only browse for a specific unsupported recency gap."
                 + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
                 + get_preferred_reference_sources_instruction()
                 + get_language_instruction()
@@ -69,13 +69,12 @@ def create_news_analyst(llm):
 
         prompt = prompt.partial(system_message=system_message)
         prompt = prompt.partial(
-            tool_names=", ".join([tool.name for tool in tools])
-            + (", web_search" if require_companion_web_search else "")
+            tool_names="web_search" if use_web_search_only else ", ".join([tool.name for tool in tools])
         )
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        chain = prompt | llm.bind_tools(tools)
+        chain = (prompt | llm) if use_web_search_only else (prompt | llm.bind_tools(tools))
         result = chain.invoke(state["messages"])
 
         report = ""

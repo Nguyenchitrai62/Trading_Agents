@@ -29,7 +29,6 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
   - Execution Board
   - Report Windows
   - Research Chamber
-  - Trader Desk
   - Risk Room
   - Final Decision
   - History, Chart, Admin, Chat pages
@@ -54,17 +53,17 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 3. Backend build graph config tu `tradingagents.agent_config.DEFAULT_CONFIG`, override model, language, analysis date, lookback, debate rounds, risk rounds, and MiniMax MCP tool budget.
 4. Backend prefetch CoinGlass snapshot neu configured. Hien tai prefetch toan bo high-value endpoints roi chia thanh package context cho cac role.
 5. `TradingAgentsGraph` tao quick/deep LLM clients, tool nodes, graph setup.
-6. Analyst phase chay cac analyst duoc chon. Mac dinh co the chay song song theo `analyst_concurrency_limit`:
-   - Market Analyst: OHLCV, indicators, optional MiniMax `web_search`.
-   - Social Analyst: news/StockTwits/Reddit prefetched context va optional `web_search`.
-   - News Analyst: `get_news`, `get_global_news`, optional `web_search`.
-   - Flow Analyst: crypto flow/news/global context, CoinGlass package context, optional `web_search`.
-7. Research Team: Bull/Bear debate trong `max_debate_rounds`, sau do Research Manager tao `investment_plan` va `investment_plan_structured`.
-8. Trader tao `trader_investment_plan` va `trader_investment_plan_structured`.
-9. Risk Room: Aggressive/Conservative/Neutral debate trong `max_risk_discuss_rounds`.
-10. Portfolio Manager tao `final_trade_decision` va `final_trade_decision_structured`.
-11. Verifier kiem tra deterministic order logic va semantic support, tao `verification_report` va `verification_report_structured`.
-12. Turso history store luu `analysis_runs.signal` va cac markdown sections neu DB configured.
+6. Analyst phase chay 4 branch canonical, mac dinh co the chay song song theo `analyst_concurrency_limit`:
+  - Market Analyst: lay CCXT OHLCV + chi bao ky thuat bang code, sau do goi LLM 1 lan de phan tich.
+  - Onchain Analyst: dung cac endpoint CoinGlass da prefetch; moi endpoint thanh cong duoc LLM phan tich 1 lan, sau do goi LLM 1 lan nua de tong hop.
+  - Social Analyst: dung MiniMax MCP `web_search` lam live retrieval path.
+  - News Analyst: dung MiniMax MCP `web_search` lam live retrieval path.
+7. Bon report Market/Onchain/Social/News vao Bull/Bear research debate trong `max_debate_rounds`.
+8. Research debate di thang vao Risk Room: Aggressive/Conservative/Neutral debate trong `max_risk_discuss_rounds`.
+9. Portfolio Manager tao markdown `final_trade_decision` voi signal dau tien la mot trong Market Buy, Limit Buy, Hold, Limit Sell, Market Sell.
+10. Verifier kiem tra markdown theo deterministic order logic va semantic support, tao `verification_report` va `verification_report_structured`; neu can sua thi route lai Portfolio Manager.
+11. Decision Extractor chi chay sau khi verifier chap nhan/canh bao hop le, trich `final_trade_decision_structured` de luu DB.
+12. Turso history store luu `analysis_runs.signal`, markdown sections, verification, va structured decision neu DB configured.
 
 ## Accuracy And Cost Notes
 
@@ -95,8 +94,6 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 ## Structured Decision And DB Guidance
 
 - Structured outputs da ton tai trong runtime state:
-  - `investment_plan_structured`
-  - `trader_investment_plan_structured`
   - `final_trade_decision_structured`
   - `verification_report_structured`
 - `final_trade_decision_structured` da co cac field can cho lenh:
@@ -210,8 +207,8 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 - `tradingagents/graph/analyst_execution.py`: analyst node/report mapping.
 - `tradingagents/dataflows/ccxt_crypto.py`: crypto OHLCV/indicator fetching and compact output.
 - `tradingagents/dataflows/coinglass_client.py`: CoinGlass endpoint prefetch, summaries, evidence items.
-- `tradingagents/agents/schemas.py`: structured output schemas for research/trader/portfolio/verifier.
-- `tradingagents/agents/managers/portfolio_manager.py`: final structured portfolio decision.
+- `tradingagents/agents/schemas.py`: structured output schemas for debate turns, portfolio decision extraction, and verifier.
+- `tradingagents/agents/managers/portfolio_manager.py`: markdown-first portfolio decision.
 - `tradingagents/agents/managers/verifier.py`: deterministic and evidence verification.
 - `requirements.txt`: dependency source of truth.
 

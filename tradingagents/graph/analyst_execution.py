@@ -41,15 +41,17 @@ ANALYST_NODE_SPECS: Dict[str, AnalystNodeSpec] = {
         tool_node="tools_news",
         report_key="news_report",
     ),
-    "fundamentals": AnalystNodeSpec(
-        key="fundamentals",
-        # Wire key stays fundamentals for saved-config back-compat.
-        agent_node="Flow Analyst",
-        clear_node="Msg Clear Flow",
-        tool_node="tools_flow",
-        report_key="flow_report",
+    "onchain": AnalystNodeSpec(
+        key="onchain",
+        agent_node="Onchain Analyst",
+        clear_node="Msg Clear Onchain",
+        tool_node="tools_onchain",
+        report_key="onchain_report",
     ),
 }
+
+def normalize_analyst_key(value: str) -> str:
+    return str(value or "").strip().lower()
 
 
 def build_analyst_execution_plan(
@@ -61,6 +63,9 @@ def build_analyst_execution_plan(
 
     specs: List[AnalystNodeSpec] = []
     for analyst_key in selected_analysts:
+        analyst_key = normalize_analyst_key(analyst_key)
+        if any(existing.key == analyst_key for existing in specs):
+            continue
         spec = ANALYST_NODE_SPECS.get(analyst_key)
         if spec is None:
             raise ValueError(f"unknown analyst key: {analyst_key}")

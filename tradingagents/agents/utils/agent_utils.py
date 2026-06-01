@@ -11,12 +11,6 @@ from tradingagents.agents.utils.crypto_market_tools import (
     get_crypto_indicators,
     get_crypto_ohlcv
 )
-from tradingagents.agents.utils.fundamental_data_tools import (
-    get_fundamentals,
-    get_balance_sheet,
-    get_cashflow,
-    get_income_statement
-)
 from tradingagents.agents.utils.news_data_tools import (
     get_news,
     get_insider_transactions,
@@ -24,14 +18,36 @@ from tradingagents.agents.utils.news_data_tools import (
 )
 
 
+_ANALYST_ROLE_ALIASES = {
+    "market_analyst": ("market", "market_analyst"),
+    "social_analyst": ("social", "sentiment", "social_analyst"),
+    "news_analyst": ("news", "news_analyst"),
+    "onchain_analyst": ("onchain", "onchain_analyst"),
+}
+
+
+def _normalize_role_key(value: object) -> str:
+    return str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _role_aliases(role_key: str) -> set[str]:
+    normalized = _normalize_role_key(role_key)
+    aliases = {normalized} if normalized else set()
+    aliases.update(_ANALYST_ROLE_ALIASES.get(normalized, ()))
+    for canonical, values in _ANALYST_ROLE_ALIASES.items():
+        if normalized in values:
+            aliases.add(canonical)
+            aliases.update(values)
+    return aliases
+
+
 def get_language_instruction() -> str:
     """Return a prompt instruction for the configured output language.
 
     Returns empty string when English (default), so no extra tokens are used.
     Applied to every agent whose output reaches the saved report —
-    analysts, researchers, debaters, research manager, trader, and
-    portfolio manager — so a non-English run produces a fully localized
-    report rather than a mix of languages.
+    analysts, researchers, debaters, risk, verifier, and portfolio manager,
+    so a non-English run produces a fully localized report rather than a mix of languages.
     """
     from tradingagents.dataflows.config import get_config
     lang = get_config().get("output_language", "English")
@@ -67,14 +83,29 @@ def get_preferred_reference_sources_instruction() -> str:
         lines.append(line)
 
     return (
-        " When MiniMax MCP browsing is available through the current model or tools, use the exact"
-        " tool name web_search to retrieve or cross-check each of the following user-trusted reference"
-        " sites before writing final market-facing conclusions. Do not invent alternate tool names"
-        " such as websearch. You are not restricted to these sites; after checking them, use any"
-        " other credible sources or broader web search when useful."
+        " Trusted reference sources for live validation when this role is explicitly assigned a"
+        " web_search pass, or when a specific claim cannot be validated from the data already supplied."
+        " Do not re-check every site in every role when a backend-prefetched source, tool result, or"
+        " structured evidence ledger already supports the claim. If you do use MiniMax MCP browsing,"
+        " use the exact tool name web_search and do not invent alternate tool names such as websearch."
         " If a trusted source is unreachable, state that limitation:\n"
         + "\n".join(lines)
     )
+
+
+def is_live_web_search_owner(*role_keys: str) -> bool:
+    """Return True when one of the supplied role aliases owns broad web validation."""
+    from tradingagents.dataflows.config import get_config
+
+    owner = _normalize_role_key(get_config().get("live_web_search_owner_analyst") or "")
+    if owner in {"", "none", "off", "disabled", "false"}:
+        return False
+
+    owner_aliases = _role_aliases(owner)
+    for role_key in role_keys:
+        if owner_aliases.intersection(_role_aliases(role_key)):
+            return True
+    return False
 
 
 def get_coinglass_packages_for_role(role_key: str) -> tuple[str, ...]:
@@ -87,6 +118,9 @@ def get_coinglass_packages_for_role(role_key: str) -> tuple[str, ...]:
 
     packages_by_role = get_config().get("coinglass_packages_by_role") or {}
     packages = packages_by_role.get(role) or ()
+    owner = get_config().get("coinglass_owner_analyst") or "onchain"
+    if not packages and _role_aliases(role).intersection(_role_aliases(owner)):
+        packages = packages_by_role.get("onchain_analyst") or ()
     return tuple(
         str(package).strip()
         for package in packages
@@ -98,7 +132,7 @@ def build_instrument_context(ticker: str, asset_type: str = "crypto") -> str:
     """Describe the exact instrument so agents preserve exchange-qualified tickers."""
     instrument_label = "asset" if asset_type == "crypto" else "instrument"
     extra_hint = (
-        " Treat it as a crypto asset rather than a company, and do not assume company fundamentals are available."
+        " Treat it as a crypto asset rather than a company, and do not assume company financial statements are available."
         if asset_type == "crypto"
         else ""
     )
@@ -125,16 +159,26 @@ def get_coinglass_context_instruction(
 
     package_contexts = state.get("coinglass_package_contexts") or {}
     context_parts: list[str] = []
-    if packages and isinstance(package_contexts, dict):
-        for package in packages:
+    packages_were_explicit = packages is not None
+    requested_packages = tuple(str(package).strip() for package in (packages or ()) if str(package).strip())
+    if requested_packages and isinstance(package_contexts, dict):
+        for package in requested_packages:
             context = str(package_contexts.get(package) or "").strip()
             if context:
                 context_parts.append(context)
 
     context = "\n\n".join(context_parts).strip()
-    if not context:
+    if not context and requested_packages and not package_contexts:
+        context = str(state.get("coinglass_context") or "").strip()
+    if not context and not packages_were_explicit:
         context = str(state.get("coinglass_context") or "").strip()
     if not context:
+        if packages_were_explicit and not requested_packages:
+            return (
+                "\n\nCoinGlass raw endpoint context is not assigned to this role. "
+                "Use the structured evidence ledger and endpoint summaries already collected in this run; "
+                "do not repeat or invent CoinGlass metrics."
+            )
         return (
             "\n\nCoinGlass high-value context: unavailable for this run. "
             "Do not invent CoinGlass metrics; rely on other available evidence."

@@ -35,10 +35,6 @@ from tradingagents.dataflows.config import set_config
 from tradingagents.agents.utils.agent_utils import (
     get_crypto_indicators,
     get_crypto_ohlcv,
-    get_fundamentals,
-    get_balance_sheet,
-    get_cashflow,
-    get_income_statement,
     get_news,
     get_insider_transactions,
     get_global_news
@@ -57,7 +53,7 @@ class TradingAgentsGraph:
 
     def __init__(
         self,
-        selected_analysts=["market", "social", "news", "fundamentals"],
+        selected_analysts=["market", "onchain", "social", "news"],
         debug=False,
         config: Dict[str, Any] = None,
         callbacks: Optional[List] = None,
@@ -227,13 +223,10 @@ class TradingAgentsGraph:
                     get_insider_transactions,
                 ])
             ),
-            "fundamentals": ToolNode(
+            "onchain": ToolNode(
                 with_mcp([
-                    # Fundamental analysis tools
-                    get_fundamentals,
-                    get_balance_sheet,
-                    get_cashflow,
-                    get_income_statement,
+                    # Onchain consumes backend-prefetched CoinGlass data and should not normally call tools.
+                    get_news,
                 ])
             ),
         }
@@ -435,9 +428,9 @@ class TradingAgentsGraph:
             "company_of_interest": final_state["company_of_interest"],
             "trade_date": final_state["trade_date"],
             "market_report": final_state["market_report"],
+            "onchain_report": final_state.get("onchain_report", ""),
             "sentiment_report": final_state["sentiment_report"],
             "news_report": final_state["news_report"],
-            "flow_report": final_state["flow_report"],
             "evidence_items": final_state.get("evidence_items", []),
             "endpoint_summaries": final_state.get("endpoint_summaries", []),
             "investment_debate_state": {
@@ -451,7 +444,6 @@ class TradingAgentsGraph:
                     "judge_decision"
                 ],
             },
-            "trader_investment_decision": final_state["trader_investment_plan"],
             "risk_debate_state": {
                 "aggressive_history": final_state["risk_debate_state"]["aggressive_history"],
                 "conservative_history": final_state["risk_debate_state"]["conservative_history"],
@@ -459,7 +451,6 @@ class TradingAgentsGraph:
                 "history": final_state["risk_debate_state"]["history"],
                 "judge_decision": final_state["risk_debate_state"]["judge_decision"],
             },
-            "investment_plan": final_state["investment_plan"],
             "final_trade_decision": final_state["final_trade_decision"],
             "verification_report": final_state.get("verification_report", ""),
         }

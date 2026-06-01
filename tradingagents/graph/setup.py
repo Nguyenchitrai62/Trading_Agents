@@ -37,16 +37,16 @@ class GraphSetup:
         self.cancel_check = cancel_check
 
     def setup_graph(
-        self, selected_analysts=["market", "social", "news", "fundamentals"]
+        self, selected_analysts=["market", "onchain", "social", "news"]
     ):
         """Set up and compile the agent workflow graph.
 
         Args:
             selected_analysts (list): List of analyst types to include. Options are:
                 - "market": Market analyst
+                - "onchain": Onchain analyst
                 - "social": Social analyst
                 - "news": News analyst
-                - "fundamentals": Flow analyst (legacy wire key)
         """
         plan = build_analyst_execution_plan(
             selected_analysts,
@@ -55,16 +55,14 @@ class GraphSetup:
 
         analyst_factories = {
             "market": lambda: create_market_analyst(self.quick_thinking_llm),
+            "onchain": lambda: create_onchain_analyst(self.quick_thinking_llm),
             "social": lambda: create_sentiment_analyst(self.quick_thinking_llm),
             "news": lambda: create_news_analyst(self.quick_thinking_llm),
-            "fundamentals": lambda: create_flow_analyst(self.quick_thinking_llm),
         }
 
-        # Create researcher and manager nodes
+        # Create debate and decision nodes
         bull_researcher_node = create_bull_researcher(self.quick_thinking_llm)
         bear_researcher_node = create_bear_researcher(self.quick_thinking_llm)
-        research_manager_node = create_research_manager(self.deep_thinking_llm)
-        trader_node = create_trader(self.quick_thinking_llm)
 
         # Create risk analysis nodes
         aggressive_analyst = create_aggressive_debator(self.quick_thinking_llm)
@@ -72,6 +70,7 @@ class GraphSetup:
         conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
         portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
         verifier_node = create_verifier(self.deep_thinking_llm)
+        decision_extractor_node = create_decision_extractor(self.deep_thinking_llm)
 
         # Create workflow
         workflow = StateGraph(AgentState)
@@ -101,13 +100,12 @@ class GraphSetup:
         # Add other nodes
         workflow.add_node("Bull Researcher", bull_researcher_node)
         workflow.add_node("Bear Researcher", bear_researcher_node)
-        workflow.add_node("Research Manager", research_manager_node)
-        workflow.add_node("Trader", trader_node)
         workflow.add_node("Aggressive Analyst", aggressive_analyst)
         workflow.add_node("Neutral Analyst", neutral_analyst)
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
         workflow.add_node("Verifier", verifier_node)
+        workflow.add_node("Decision Extractor", decision_extractor_node)
 
         # Define edges
         if use_parallel_analysts:
@@ -143,7 +141,7 @@ class GraphSetup:
             self.conditional_logic.should_continue_debate,
             {
                 "Bear Researcher": "Bear Researcher",
-                "Research Manager": "Research Manager",
+                "Risk Team": "Aggressive Analyst",
             },
         )
         workflow.add_conditional_edges(
@@ -151,11 +149,9 @@ class GraphSetup:
             self.conditional_logic.should_continue_debate,
             {
                 "Bull Researcher": "Bull Researcher",
-                "Research Manager": "Research Manager",
+                "Risk Team": "Aggressive Analyst",
             },
         )
-        workflow.add_edge("Research Manager", "Trader")
-        workflow.add_edge("Trader", "Aggressive Analyst")
         workflow.add_conditional_edges(
             "Aggressive Analyst",
             self.conditional_logic.should_continue_risk_analysis,
@@ -187,8 +183,10 @@ class GraphSetup:
             self.conditional_logic.should_continue_portfolio_verification,
             {
                 "Portfolio Manager": "Portfolio Manager",
+                "Decision Extractor": "Decision Extractor",
                 END: END,
             },
         )
+        workflow.add_edge("Decision Extractor", END)
 
         return workflow

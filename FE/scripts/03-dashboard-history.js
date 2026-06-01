@@ -1,5 +1,5 @@
 ﻿function getCheckedAnalysts() {
-    return Array.from(elements.analystOptions.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
+    return normalizeAnalystKeys(Array.from(elements.analystOptions.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value));
 }
 
 function getSelectedDepth() {
@@ -57,13 +57,13 @@ function syncLookbackControls() {
 }
 
 function syncAnalystAvailability() {
-    const fundamentalsInput = elements.analystOptions.querySelector('input[value="fundamentals"]');
-    if (!fundamentalsInput) {
+    const onchainInput = elements.analystOptions.querySelector('input[value="onchain"]');
+    if (!onchainInput) {
         return;
     }
 
-    const card = fundamentalsInput.closest(".checkbox-card");
-    fundamentalsInput.disabled = false;
+    const card = onchainInput.closest(".checkbox-card");
+    onchainInput.disabled = false;
     card?.classList.remove("checkbox-card-disabled");
 }
 
@@ -732,7 +732,7 @@ function formatLiveSourceTraceMarkdown(groupKey = "", title = "Source Data") {
 }
 
 function buildLiveFlowNodes() {
-    const selectedAnalysts = new Set(state.run.meta?.selected_analysts || ["market", "social", "news", "fundamentals"]);
+    const selectedAnalysts = new Set(normalizeAnalystKeys(state.run.meta?.selected_analysts || ["market", "onchain", "social", "news"]));
     const hasSection = (key) => Boolean(String(state.run.sections?.[key] || "").trim());
     const flowSectionCompleted = (key) => Boolean(state.run.flowCompletedSections?.has?.(key) || state.run.complete);
     const hasStructuredPayload = (key) => {
@@ -760,16 +760,16 @@ function buildLiveFlowNodes() {
     };
     const analystSpecs = [
         ["market", "market_report", "Market Analyst", "market_analyst"],
+        ["onchain", "onchain_report", "Onchain Analyst", "onchain_analyst"],
         ["social", "sentiment_report", "Social Analyst", "social_analyst"],
         ["news", "news_report", "News Analyst", "news_analyst"],
-        ["fundamentals", "flow_report", "Flow Analyst", "flow_analyst"],
     ];
     const selectedAnalystSpecs = analystSpecs.filter(([analystKey]) => selectedAnalysts.has(analystKey));
     const analystSourceGroups = {
         market: ["ccxt"],
+        onchain: ["coinglass", "flow"],
         social: ["social"],
         news: ["news"],
-        fundamentals: ["coinglass", "flow"],
     };
     const analystReportDone = (analystKey) => {
         const spec = analystSpecs.find(([key]) => key === analystKey);
@@ -858,10 +858,9 @@ function buildLiveFlowNodes() {
     const depthRounds = Math.max(1, Number(state.run.meta?.depth_rounds || 1));
     const researchCount = Number(state.run.research?.count || 0);
     const expectedResearchTurns = depthRounds * 2;
-    const researchManagerBackendStatus = normalizeStatus(groupStatus("research", "Research Manager"));
-    const researchDebateReady = (hasSection("investment_plan") && flowSectionCompleted("investment_plan"))
-        || researchCount >= expectedResearchTurns
-        || researchManagerBackendStatus === "completed";
+    const researchDebateReady = researchCount >= expectedResearchTurns
+        || groupStatus("risk", "Aggressive Analyst") === "in_progress"
+        || Boolean(state.run.risk?.history);
     const researchCanRun = selectedAnalystReportsComplete;
     const researchNodeStatus = (blockKey, label, hasContent) => {
         const backendStatus = normalizeStatus(groupStatus("research", label));
@@ -869,18 +868,13 @@ function buildLiveFlowNodes() {
         const complete = Boolean(researchDebateReady && hasContent);
         return getLiveFlowBlockError(blockKey) ? "error" : statusFor(complete, active, researchCanRun);
     };
-    const traderBackendStatus = normalizeStatus(groupStatus("trading", "Trader"));
-    const investmentPlanReady = hasSection("investment_plan") && flowSectionCompleted("investment_plan");
-    const investmentExtractorReady = hasStructuredPayload("investment_plan") && flowSectionCompleted("investment_plan_structured");
-    const traderReady = hasSection("trader_investment_plan") && flowSectionCompleted("trader_investment_plan");
-    const traderExtractorReady = hasStructuredPayload("trader_investment_plan") && flowSectionCompleted("trader_investment_plan_structured");
     const riskCount = Number(state.run.risk?.count || 0);
     const expectedRiskTurns = depthRounds * 3;
     const portfolioBackendStatus = normalizeStatus(groupStatus("portfolio", "Portfolio Manager"));
     const riskDebateReady = (hasSection("final_trade_decision") && flowSectionCompleted("final_trade_decision"))
         || riskCount >= expectedRiskTurns
         || portfolioBackendStatus === "completed";
-    const riskCanRun = traderExtractorReady;
+    const riskCanRun = researchDebateReady;
     const riskNodeStatus = (blockKey, label, hasContent) => {
         const backendStatus = normalizeStatus(groupStatus("risk", label));
         const active = backendStatus === "in_progress" || isCurrent(label);
@@ -900,9 +894,9 @@ function buildLiveFlowNodes() {
                 summary: buildLiveSourceSummaryNode("ccxt", "Market Summary", marketSummaryReady && ccxtReady, sourceSummaryStatus("ccxt", "market", "Market Analyst", ccxtReady), "market_summary"),
             },
             {
-                visible: sourceVisible("fundamentals", coinglassReady),
-                data: buildLiveSourceDataNode("coinglass", "CoinGlass Data", coinglassReady, sourceStatus("coinglass", "fundamentals", "Flow Analyst", coinglassReady), "evidence", "liveCoinGlassData", "coinglass_data"),
-                summary: buildLiveSourceSummaryNode("coinglass", "Derivatives / Flow Summary", coinglassSummaryReady && coinglassReady, sourceSummaryStatus("coinglass", "fundamentals", "Flow Analyst", coinglassReady), "coinglass_summary"),
+                visible: sourceVisible("onchain", coinglassReady),
+                data: buildLiveSourceDataNode("coinglass", "CoinGlass Data", coinglassReady, sourceStatus("coinglass", "onchain", "Onchain Analyst", coinglassReady), "evidence", "liveCoinGlassData", "coinglass_data"),
+                summary: buildLiveSourceSummaryNode("coinglass", "Onchain Endpoint Summary", coinglassSummaryReady && coinglassReady, sourceSummaryStatus("coinglass", "onchain", "Onchain Analyst", coinglassReady), "coinglass_summary"),
             },
             {
                 visible: sourceVisible("news", newsSourceReady),
@@ -915,9 +909,9 @@ function buildLiveFlowNodes() {
                 summary: buildLiveSourceSummaryNode("social", "Social Summary", socialSummaryReady && socialSourceReady, sourceSummaryStatus("social", "social", "Social Analyst", socialSourceReady), "social_summary"),
             },
             {
-                visible: sourceVisible("fundamentals", flowSourceReady),
-                data: buildLiveSourceDataNode("flow", "On-chain / Liquidity Data", flowSourceReady, sourceStatus("flow", "fundamentals", "Flow Analyst", flowSourceReady), "signal", "liveFlowData", "flow_data"),
-                summary: buildLiveSourceSummaryNode("flow", "Flow Summary", flowSummaryReady && flowSourceReady, sourceSummaryStatus("flow", "fundamentals", "Flow Analyst", flowSourceReady), "flow_summary"),
+                visible: sourceVisible("onchain", flowSourceReady),
+                data: buildLiveSourceDataNode("flow", "Onchain / Liquidity Data", flowSourceReady, sourceStatus("flow", "onchain", "Onchain Analyst", flowSourceReady), "signal", "liveFlowData", "flow_data"),
+                summary: buildLiveSourceSummaryNode("flow", "Onchain Summary", flowSummaryReady && flowSourceReady, sourceSummaryStatus("flow", "onchain", "Onchain Analyst", flowSourceReady), "flow_summary"),
             },
         ],
         evidenceExtractor: { blockKey: "evidence_extractor", title: "Evidence Extractor", ready: selectedAnalystReportsComplete, status: getLiveFlowBlockError("evidence_extractor") ? "error" : statusFor(selectedAnalystReportsComplete, false), tone: "evidence", detail: { key: "evidenceExtractor" }, error: getLiveFlowBlockError("evidence_extractor") },
@@ -926,26 +920,6 @@ function buildLiveFlowNodes() {
         bullResearcher: { blockKey: "bull_researcher", title: "Bull Researcher", ready: Boolean(researchDebateReady && state.run.research?.bull_history), status: researchNodeStatus("bull_researcher", "Bull Researcher", state.run.research?.bull_history), tone: "bull", detail: { key: "bullResearch" }, error: getLiveFlowBlockError("bull_researcher") },
         bearResearcher: { blockKey: "bear_researcher", title: "Bear Researcher", ready: Boolean(researchDebateReady && state.run.research?.bear_history), status: researchNodeStatus("bear_researcher", "Bear Researcher", state.run.research?.bear_history), tone: "bear", detail: { key: "bearResearch" }, error: getLiveFlowBlockError("bear_researcher") },
         researchDebate: { blockKey: "research_debate", title: "Research Debate", ready: researchDebateReady, status: getLiveFlowBlockError("research_debate") ? "error" : statusFor(researchDebateReady, researchCanRun && Boolean(state.run.research?.history || groupStatus("research", "Bull Researcher") === "in_progress" || groupStatus("research", "Bear Researcher") === "in_progress"), researchCanRun), tone: "debate", detail: { key: "researchDebate" }, error: getLiveFlowBlockError("research_debate") },
-        researchManager: {
-            blockKey: "research_manager",
-            title: "Research Manager",
-            ready: investmentPlanReady,
-            status: getLiveFlowBlockError("research_manager") ? "error" : statusFor(investmentPlanReady, researchManagerBackendStatus === "in_progress" || isCurrent("Research Manager"), researchDebateReady),
-            tone: "plan",
-            detail: { type: "report", section: "investment_plan", title: "Research Manager", subtitle: "Investment plan" },
-            error: getLiveFlowBlockError("research_manager"),
-        },
-        investmentExtractor: { blockKey: "investment_extractor", title: "Investment Plan Extractor", ready: investmentExtractorReady, status: getLiveFlowBlockError("investment_extractor") ? "error" : statusFor(investmentExtractorReady, investmentPlanReady, investmentPlanReady), tone: "evidence", detail: { key: "investmentExtractor" }, error: getLiveFlowBlockError("investment_extractor") },
-        trader: {
-            blockKey: "trader",
-            title: "Trader",
-            ready: traderReady,
-            status: getLiveFlowBlockError("trader") ? "error" : statusFor(traderReady, traderBackendStatus === "in_progress" || isCurrent("Trader"), investmentExtractorReady),
-            tone: "trader",
-            detail: { type: "report", section: "trader_investment_plan", title: "Trader", subtitle: "Transaction proposal" },
-            error: getLiveFlowBlockError("trader"),
-        },
-        traderExtractor: { blockKey: "trader_extractor", title: "Trader Plan Extractor", ready: traderExtractorReady, status: getLiveFlowBlockError("trader_extractor") ? "error" : statusFor(traderExtractorReady, traderReady, traderReady), tone: "evidence", detail: { key: "traderExtractor" }, error: getLiveFlowBlockError("trader_extractor") },
         aggressiveRisk: { blockKey: "aggressive_risk", title: "Aggressive Analyst", ready: Boolean(riskDebateReady && (state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response)), status: riskNodeStatus("aggressive_risk", "Aggressive Analyst", state.run.risk?.aggressive_history || state.run.risk?.current_aggressive_response), tone: "aggressive", detail: { key: "aggressiveRisk" }, error: getLiveFlowBlockError("aggressive_risk") },
         conservativeRisk: { blockKey: "conservative_risk", title: "Conservative Analyst", ready: Boolean(riskDebateReady && (state.run.risk?.conservative_history || state.run.risk?.current_conservative_response)), status: riskNodeStatus("conservative_risk", "Conservative Analyst", state.run.risk?.conservative_history || state.run.risk?.current_conservative_response), tone: "conservative", detail: { key: "conservativeRisk" }, error: getLiveFlowBlockError("conservative_risk") },
         neutralRisk: { blockKey: "neutral_risk", title: "Neutral Analyst", ready: Boolean(riskDebateReady && (state.run.risk?.neutral_history || state.run.risk?.current_neutral_response)), status: riskNodeStatus("neutral_risk", "Neutral Analyst", state.run.risk?.neutral_history || state.run.risk?.current_neutral_response), tone: "neutral", detail: { key: "neutralRisk" }, error: getLiveFlowBlockError("neutral_risk") },
@@ -959,12 +933,12 @@ function buildLiveFlowNodes() {
             detail: { type: "report", section: "final_trade_decision", title: "Portfolio Manager", subtitle: "Final decision" },
             error: getLiveFlowBlockError("portfolio_manager"),
         },
-        decisionExtractor: { blockKey: "decision_extractor", title: "Decision Extractor", ready: decisionExtractorReady, status: getLiveFlowBlockError("decision_extractor") ? "error" : statusFor(decisionExtractorReady, finalDecisionReady, finalDecisionReady), tone: "evidence", detail: { key: "decisionExtractor" }, error: getLiveFlowBlockError("decision_extractor") },
+        decisionExtractor: { blockKey: "decision_extractor", title: "Decision Extractor", ready: decisionExtractorReady, status: getLiveFlowBlockError("decision_extractor") ? "error" : statusFor(decisionExtractorReady, groupStatus("portfolio", "Decision Extractor") === "in_progress" || isCurrent("Decision Extractor"), verifierReady), tone: "evidence", detail: { key: "decisionExtractor" }, error: getLiveFlowBlockError("decision_extractor") },
         verifier: {
             blockKey: "verifier",
             title: "Verifier",
             ready: verifierReady,
-            status: getLiveFlowBlockError("verifier") ? "error" : statusFor(verifierReady, groupStatus("portfolio", "Verifier") === "in_progress" || isCurrent("Verifier"), decisionExtractorReady),
+            status: getLiveFlowBlockError("verifier") ? "error" : statusFor(verifierReady, groupStatus("portfolio", "Verifier") === "in_progress" || isCurrent("Verifier"), finalDecisionReady),
             tone: "review",
             detail: { type: "report", section: "verification_report", title: "Verifier", subtitle: "Decision audit" },
             error: getLiveFlowBlockError("verifier"),
@@ -1319,14 +1293,10 @@ function getLiveFlowSignature() {
         flow.evidenceExtractor,
         flow.evidenceLedger,
         flow.researchDebate,
-        flow.researchManager,
-        flow.investmentExtractor,
-        flow.trader,
-        flow.traderExtractor,
         flow.riskDebate,
         flow.portfolioManager,
-        flow.decisionExtractor,
         flow.verifier,
+        flow.decisionExtractor,
         flow.persistence,
     ]
         .filter(Boolean)
@@ -1385,17 +1355,13 @@ function walkLiveFlowNodes(visitor) {
         flow.bullResearcher,
         flow.bearResearcher,
         flow.researchDebate,
-        flow.researchManager,
-        flow.investmentExtractor,
-        flow.trader,
-        flow.traderExtractor,
         flow.aggressiveRisk,
         flow.conservativeRisk,
         flow.neutralRisk,
         flow.riskDebate,
         flow.portfolioManager,
-        flow.decisionExtractor,
         flow.verifier,
+        flow.decisionExtractor,
         flow.persistence,
     ].filter(Boolean).forEach(visitor);
 }
@@ -1413,14 +1379,10 @@ function renderLiveAgentFlow() {
     const evidenceVisible = isLiveFlowNodeVisible(flow.evidenceExtractor);
     const ledgerVisible = isLiveFlowNodeVisible(flow.evidenceLedger);
     const researchDebateVisible = isLiveFlowNodeVisible(flow.researchDebate);
-    const researchManagerVisible = isLiveFlowNodeVisible(flow.researchManager);
-    const investmentExtractorVisible = isLiveFlowNodeVisible(flow.investmentExtractor);
-    const traderVisible = isLiveFlowNodeVisible(flow.trader);
-    const traderExtractorVisible = isLiveFlowNodeVisible(flow.traderExtractor);
     const riskDebateVisible = isLiveFlowNodeVisible(flow.riskDebate);
     const portfolioVisible = isLiveFlowNodeVisible(flow.portfolioManager);
-    const decisionExtractorVisible = isLiveFlowNodeVisible(flow.decisionExtractor);
     const verifierVisible = isLiveFlowNodeVisible(flow.verifier);
+    const decisionExtractorVisible = isLiveFlowNodeVisible(flow.decisionExtractor);
     const persistenceVisible = isLiveFlowNodeVisible(flow.persistence);
     const sourceDataNodes = (flow.sourceNodes || [])
         .filter((source) => source?.visible !== false && isLiveFlowNodeVisible(source.data))
@@ -1445,25 +1407,17 @@ function renderLiveAgentFlow() {
         renderLiveFlowRow([flow.bullResearcher, flow.bearResearcher], "live-flow-row--researchers"),
         researcherCount && researchDebateVisible ? renderLiveFlowFanInWire(researcherCount, "live-flow-wire--research-to-debate", researcherGroupNode, flow.researchDebate) : "",
         renderLiveFlowSingle(flow.researchDebate, "live-flow-single--debate"),
-        renderLiveFlowWireIf(researchDebateVisible && researchManagerVisible, "live-flow-wire--debate-to-manager", flow.researchDebate, flow.researchManager),
-        renderLiveFlowSingle(flow.researchManager, "live-flow-single--manager"),
-        renderLiveFlowWireIf(researchManagerVisible && investmentExtractorVisible, "live-flow-wire--manager-to-extractor", flow.researchManager, flow.investmentExtractor),
-        renderLiveFlowSingle(flow.investmentExtractor, "live-flow-single--extractor"),
-        renderLiveFlowWireIf(investmentExtractorVisible && traderVisible, "live-flow-wire--extractor-to-trader", flow.investmentExtractor, flow.trader),
-        renderLiveFlowSingle(flow.trader, "live-flow-single--trader"),
-        renderLiveFlowWireIf(traderVisible && traderExtractorVisible, "live-flow-wire--trader-to-extractor", flow.trader, flow.traderExtractor),
-        renderLiveFlowSingle(flow.traderExtractor, "live-flow-single--extractor"),
-        traderExtractorVisible && riskCount ? renderLiveFlowFanOutWire(riskCount, "live-flow-wire--trader-to-risk", flow.traderExtractor, riskGroupNode) : "",
+        researchDebateVisible && riskCount ? renderLiveFlowFanOutWire(riskCount, "live-flow-wire--research-to-risk", flow.researchDebate, riskGroupNode) : "",
         renderLiveFlowRow([flow.aggressiveRisk, flow.conservativeRisk, flow.neutralRisk], "live-flow-row--risk-analysts"),
         riskCount && riskDebateVisible ? renderLiveFlowFanInWire(riskCount, "live-flow-wire--risk-to-debate", riskGroupNode, flow.riskDebate) : "",
         renderLiveFlowSingle(flow.riskDebate, "live-flow-single--risk"),
         renderLiveFlowWireIf(riskDebateVisible && portfolioVisible, "live-flow-wire--risk-to-portfolio", flow.riskDebate, flow.portfolioManager),
         renderLiveFlowSingle(flow.portfolioManager, "live-flow-single--portfolio"),
-        renderLiveFlowWireIf(portfolioVisible && decisionExtractorVisible, "live-flow-wire--portfolio-to-extractor", flow.portfolioManager, flow.decisionExtractor),
-        renderLiveFlowSingle(flow.decisionExtractor, "live-flow-single--extractor"),
-        renderLiveFlowWireIf(decisionExtractorVisible && verifierVisible, "live-flow-wire--extractor-to-verifier", flow.decisionExtractor, flow.verifier),
+        renderLiveFlowWireIf(portfolioVisible && verifierVisible, "live-flow-wire--portfolio-to-verifier", flow.portfolioManager, flow.verifier),
         renderLiveFlowSingle(flow.verifier, "live-flow-single--verifier"),
-        renderLiveFlowWireIf(verifierVisible && persistenceVisible, "live-flow-wire--verifier-to-persistence", flow.verifier, flow.persistence),
+        renderLiveFlowWireIf(verifierVisible && decisionExtractorVisible, "live-flow-wire--verifier-to-extractor", flow.verifier, flow.decisionExtractor),
+        renderLiveFlowSingle(flow.decisionExtractor, "live-flow-single--extractor"),
+        renderLiveFlowWireIf(decisionExtractorVisible && persistenceVisible, "live-flow-wire--extractor-to-persistence", flow.decisionExtractor, flow.persistence),
         renderLiveFlowSingle(flow.persistence, "live-flow-single--persistence"),
     ];
 
@@ -1739,25 +1693,10 @@ function renderResearchRoom() {
     const research = state.run.research || {};
     setCompactPreview(elements.bullResearchPanel, research.bull_history, "The Bull Researcher has not responded yet.");
     setCompactPreview(elements.bearResearchPanel, research.bear_history, "The Bear Researcher has not responded yet.");
-    setCompactPreview(
-        elements.researchManagerPanel,
-        state.run.sections.investment_plan || research.judge_decision,
-        "The Research Manager has not synthesized a plan yet.",
-    );
 
-    elements.researchStatusText.textContent = state.run.sections.investment_plan
-        ? "Investment plan ready"
-        : research.history
+    elements.researchStatusText.textContent = research.history
         ? "Debate in progress"
         : "Awaiting analyst reports";
-}
-
-function renderTraderDesk() {
-    setCompactPreview(
-        elements.traderPlanPanel,
-        state.run.sections.trader_investment_plan,
-        "The Trader has not produced a transaction proposal yet.",
-    );
 }
 
 function renderRiskRoom() {
@@ -1769,7 +1708,7 @@ function renderRiskRoom() {
         ? "Risk loop completed"
         : risk.history
         ? "Risk debate live"
-        : "Waiting for trader";
+        : "Waiting for research debate";
 }
 
 function renderFinalDecision() {
@@ -2061,16 +2000,6 @@ function getDetailContent(detail) {
                 content: formatRiskDebateMarkdown(risk),
                 fallback: "The risk debate has not produced content yet.",
             };
-        case "investmentExtractor":
-            return {
-                content: formatStructuredPayloadMarkdown(state.run.structured?.investment_plan, "Investment Plan Extractor"),
-                fallback: "Structured investment plan is not available for this run yet.",
-            };
-        case "traderExtractor":
-            return {
-                content: formatStructuredPayloadMarkdown(state.run.structured?.trader_investment_plan, "Trader Plan Extractor"),
-                fallback: "Structured trader plan is not available for this run yet.",
-            };
         case "decisionExtractor":
             return {
                 content: formatStructuredPayloadMarkdown(state.run.structured?.final_trade_decision, "Decision Extractor"),
@@ -2085,13 +2014,6 @@ function getDetailContent(detail) {
             return { content: research.bull_history || "", fallback: "The Bull Researcher has not responded yet." };
         case "bearResearch":
             return { content: research.bear_history || "", fallback: "The Bear Researcher has not responded yet." };
-        case "researchManager":
-            return {
-                content: state.run.sections.investment_plan || research.judge_decision || "",
-                fallback: "The Research Manager has not synthesized a plan yet.",
-            };
-        case "traderPlan":
-            return { content: state.run.sections.trader_investment_plan || "", fallback: "The Trader has not produced a transaction proposal yet." };
         case "aggressiveRisk":
             return { content: risk.aggressive_history || risk.current_aggressive_response || "", fallback: "The Aggressive Analyst has not responded yet." };
         case "conservativeRisk":

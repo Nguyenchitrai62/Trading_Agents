@@ -82,8 +82,6 @@ const elements = {
     researchStatusText: document.getElementById("researchStatusText"),
     bullResearchPanel: document.getElementById("bullResearchPanel"),
     bearResearchPanel: document.getElementById("bearResearchPanel"),
-    researchManagerPanel: document.getElementById("researchManagerPanel"),
-    traderPlanPanel: document.getElementById("traderPlanPanel"),
     riskStatusText: document.getElementById("riskStatusText"),
     aggressiveRiskPanel: document.getElementById("aggressiveRiskPanel"),
     conservativeRiskPanel: document.getElementById("conservativeRiskPanel"),
@@ -441,16 +439,12 @@ function handleServerEvent(event, data) {
             ? "social_analyst"
             : currentAgent.includes("news")
             ? "news_analyst"
-            : currentAgent.includes("flow")
-            ? "flow_analyst"
+            : currentAgent.includes("onchain")
+            ? "onchain_analyst"
             : currentAgent.includes("bull")
             ? "bull_researcher"
             : currentAgent.includes("bear")
             ? "bear_researcher"
-            : currentAgent.includes("research")
-            ? "research_manager"
-            : currentAgent.includes("trader")
-            ? "trader"
             : currentAgent.includes("aggressive")
             ? "aggressive_risk"
             : currentAgent.includes("conservative")

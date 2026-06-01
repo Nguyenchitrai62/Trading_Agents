@@ -1,16 +1,15 @@
 ﻿const GROUP_LABELS = {
     analysts: "Signals",
     research: "Research",
-    trading: "Trader",
     risk: "Risk",
     portfolio: "Manager",
 };
 
 const REPORT_BY_ANALYST = {
     market: { section: "market_report", title: "Market Analysis" },
+    onchain: { section: "onchain_report", title: "Onchain Analysis" },
     social: { section: "sentiment_report", title: "Social Analysis" },
     news: { section: "news_report", title: "News Analysis" },
-    fundamentals: { section: "flow_report", title: "Flow Analysis" },
 };
 
 const REPORT_DETAIL_BY_AGENT = {
@@ -32,11 +31,11 @@ const REPORT_DETAIL_BY_AGENT = {
         title: REPORT_BY_ANALYST.news.title,
         subtitle: "News Analyst",
     },
-    "Flow Analyst": {
+    "Onchain Analyst": {
         type: "report",
-        section: REPORT_BY_ANALYST.fundamentals.section,
-        title: REPORT_BY_ANALYST.fundamentals.title,
-        subtitle: "Flow Analyst",
+        section: REPORT_BY_ANALYST.onchain.section,
+        title: REPORT_BY_ANALYST.onchain.title,
+        subtitle: "Onchain Analyst",
     },
 };
 
@@ -46,8 +45,7 @@ const COMPACT_AGENT_LABELS = {
     "Market Analyst": "Market",
     "Social Analyst": "Social",
     "News Analyst": "News",
-    "Flow Analyst": "Flow",
-    "Research Manager": "Lead",
+    "Onchain Analyst": "Onchain",
     "Portfolio Manager": "Manager",
     "Verifier": "Verify",
     "Aggressive Analyst": "Aggressive",
@@ -87,8 +85,6 @@ const TRADING_VIEW_WIDGET_ORIGIN = "https://www.tradingview-widget.com";
 const DETAIL_PANEL_META = {
     bullResearch: { title: "Bull Researcher", subtitle: "Research Chamber" },
     bearResearch: { title: "Bear Researcher", subtitle: "Research Chamber" },
-    researchManager: { title: "Research Manager", subtitle: "Research Chamber" },
-    traderPlan: { title: "Trader Plan", subtitle: "Trader Desk" },
     aggressiveRisk: { title: "Aggressive Analyst", subtitle: "Risk Room" },
     conservativeRisk: { title: "Conservative Analyst", subtitle: "Risk Room" },
     neutralRisk: { title: "Neutral Analyst", subtitle: "Risk Room" },
@@ -100,8 +96,6 @@ const DETAIL_PANEL_META = {
     evidenceLedger: { title: "Evidence Ledger", subtitle: "Downstream prompt context" },
     researchDebate: { title: "Research Debate", subtitle: "Bull and Bear chamber" },
     riskDebate: { title: "Risk Debate", subtitle: "Risk room discussion" },
-    investmentExtractor: { title: "Investment Plan Extractor", subtitle: "Structured handoff" },
-    traderExtractor: { title: "Trader Plan Extractor", subtitle: "Structured handoff" },
     decisionExtractor: { title: "Decision Extractor", subtitle: "Structured order fields" },
     verifierStructured: { title: "Verifier Payload", subtitle: "Structured verification" },
     persistence: { title: "History + Decision Persistence", subtitle: "Persistence status" },
@@ -109,22 +103,21 @@ const DETAIL_PANEL_META = {
     liveCoinGlassData: { title: "CoinGlass Data", subtitle: "Endpoint source results" },
     liveNewsData: { title: "News Data", subtitle: "News and web source results" },
     liveSocialData: { title: "Social / Web Data", subtitle: "Social and web source results" },
-    liveFlowData: { title: "On-chain Data", subtitle: "Flow and liquidity source results" },
+    liveFlowData: { title: "Onchain Data", subtitle: "Flow and liquidity source results" },
     liveCcxtSummary: { title: "Market Summary", subtitle: "Markdown summary from market source data" },
-    liveCoinglassSummary: { title: "Derivatives / Flow Summary", subtitle: "Markdown summary from CoinGlass endpoints" },
+    liveCoinglassSummary: { title: "Onchain Endpoint Summary", subtitle: "Markdown summary from CoinGlass endpoints" },
     liveNewsSummary: { title: "News Summary", subtitle: "Markdown summary from news sources" },
     liveSocialSummary: { title: "Social Summary", subtitle: "Markdown summary from social and web sources" },
-    liveFlowSummary: { title: "Flow Summary", subtitle: "Markdown summary from on-chain and liquidity sources" },
+    liveFlowSummary: { title: "Onchain Summary", subtitle: "Markdown summary from onchain and liquidity sources" },
 };
 
 const HISTORY_FLOW_SECTION_ORDER = {
     sources: ["endpoint_summaries"],
-    inputs: ["market_report", "sentiment_report", "news_report", "flow_report"],
-    evidence: ["structured_evidence"],
-    research: ["bull_research", "research_debate", "bear_research", "investment_plan", "investment_plan_structured"],
-    trading: ["trader_investment_plan", "trader_investment_plan_structured"],
+    inputs: ["market_report", "onchain_report", "sentiment_report", "news_report"],
+    evidence: ["structured_evidence", "onchain_analysis_structured"],
+    research: ["bull_research", "research_debate", "bear_research"],
     risk: ["aggressive_risk", "neutral_risk", "conservative_risk", "risk_debate"],
-    portfolio: ["final_trade_decision", "final_trade_decision_structured", "verification_report", "verification_report_structured", "history_persistence"],
+    portfolio: ["final_trade_decision", "verification_report", "verification_report_structured", "final_trade_decision_structured", "history_persistence"],
 };
 
 const HISTORY_FLOW_SECTION_META = {
@@ -146,17 +139,23 @@ const HISTORY_FLOW_SECTION_META = {
         icon: "news",
         description: "Catalysts, headlines, and event pressure gathered into one report.",
     },
-    flow_report: {
-        shortTitle: "Flow",
+    onchain_report: {
+        shortTitle: "Onchain",
         tone: "signal",
         icon: "fund",
-        description: "On-chain, derivatives, ETF, liquidity, and positioning context.",
+        description: "CoinGlass endpoint analyses synthesized into onchain, derivatives, and positioning context.",
     },
     structured_evidence: {
         shortTitle: "Evidence",
         tone: "evidence",
         icon: "evidence",
         description: "Evidence Extractor ledger built from compact source-backed items.",
+    },
+    onchain_analysis_structured: {
+        shortTitle: "Onchain Payload",
+        tone: "evidence",
+        icon: "evidence",
+        description: "Endpoint-level CoinGlass analyses and aggregate onchain summary payload.",
     },
     endpoint_summaries: {
         shortTitle: "Endpoint Summaries",
@@ -181,18 +180,6 @@ const HISTORY_FLOW_SECTION_META = {
         tone: "bear",
         icon: "bear",
         description: "The downside case, failure modes, and invalidation logic.",
-    },
-    investment_plan: {
-        shortTitle: "Investment Plan",
-        tone: "plan",
-        icon: "plan",
-        description: "Research Manager synthesis that converts debate into a trade thesis.",
-    },
-    trader_investment_plan: {
-        shortTitle: "Trader Plan",
-        tone: "trader",
-        icon: "trade",
-        description: "Entry, structure, and transaction proposal prepared for risk review.",
     },
     aggressive_risk: {
         shortTitle: "Aggressive",
@@ -229,18 +216,6 @@ const HISTORY_FLOW_SECTION_META = {
         tone: "review",
         icon: "verify",
         description: "Deterministic and evidence-based verification after the final order plan.",
-    },
-    investment_plan_structured: {
-        shortTitle: "Investment Extract",
-        tone: "evidence",
-        icon: "evidence",
-        description: "Structured fields extracted from the Research Manager plan.",
-    },
-    trader_investment_plan_structured: {
-        shortTitle: "Trader Extract",
-        tone: "evidence",
-        icon: "evidence",
-        description: "Structured fields extracted from the Trader proposal.",
     },
     final_trade_decision_structured: {
         shortTitle: "Decision Extract",

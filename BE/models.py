@@ -19,7 +19,7 @@ class AnalysisRequest(BaseModel):
     analysis_date: str = Field(default_factory=realtime_analysis_date)
     lookback_days: int = Field(default=SETTINGS.default_analysis_lookback_days, ge=1)
     output_language: str = Field(default=SETTINGS.default_output_language)
-    selected_analysts: list[Literal["market", "social", "news", "fundamentals"]] = Field(
+    selected_analysts: list[Literal["market", "onchain", "social", "news"]] = Field(
         default_factory=lambda: list(SETTINGS.default_selected_analysts),
         min_length=1,
     )

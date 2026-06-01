@@ -174,15 +174,15 @@ STATE_UPDATE_KEYS = {
     "investment_debate_state",
     "risk_debate_state",
     "market_report",
-    "flow_report",
+    "market_source_bundle",
+    "onchain_report",
+    "onchain_endpoint_analyses",
+    "onchain_analysis_structured",
+    "coinglass_endpoint_results",
     "sentiment_report",
     "news_report",
     "evidence_items",
     "endpoint_summaries",
-    "investment_plan",
-    "investment_plan_structured",
-    "trader_investment_plan",
-    "trader_investment_plan_structured",
     "final_trade_decision",
     "final_trade_decision_structured",
     "verification_report",
@@ -314,7 +314,7 @@ class AnalysisService:
 
     @staticmethod
     def filter_analysts_for_crypto(selected_analysts: list[str]) -> list[str]:
-        return list(selected_analysts)
+        return [str(analyst or "").strip().lower() for analyst in selected_analysts if str(analyst or "").strip()]
 
     @staticmethod
     def _sse(event: str, data: dict) -> str:
@@ -492,7 +492,7 @@ class AnalysisService:
                 return {
                     "flow_group": "flow_data",
                     "source_kind": "web_search",
-                    "label": "Flow / Web Data",
+                    "label": "Onchain / Web Data",
                 }
             if "news" in agent_text:
                 return {
@@ -1121,10 +1121,10 @@ class AnalysisService:
         emit_analysis_log: Callable[..., None],
         ensure_not_cancelled: Callable[[], None],
         record_source_artifact: Callable[[dict], None] | None = None,
-    ) -> tuple[str, dict[str, str], list[dict], list[dict]]:
+    ) -> tuple[str, dict[str, str], list[dict], list[dict], list[dict]]:
         if not self.settings.coinglass_enabled:
             emit_analysis_log("CoinGlass prefetch is disabled by configuration.", "coinglass", "warning")
-            return "", {}, [], []
+            return "", {}, [], [], []
 
         if not self.settings.coinglass_api_key:
             message = (
@@ -1133,7 +1133,7 @@ class AnalysisService:
             )
             emit_analysis_log(message, "coinglass", "warning")
             emit("warning", {"message": message})
-            return "", {}, [], []
+            return "", {}, [], [], []
 
         emit_analysis_log(
             "Prefetching CoinGlass high-value market context.",
@@ -1310,7 +1310,7 @@ class AnalysisService:
                     "count": len(evidence_items),
                 },
             )
-        return prompt_context, package_contexts, evidence_items, endpoint_summaries
+        return prompt_context, package_contexts, evidence_items, endpoint_summaries, list(snapshot.get("results") or [])
 
     @staticmethod
     def extract_runtime_snapshot(state: dict) -> dict:
@@ -1319,8 +1319,7 @@ class AnalysisService:
         return {
             "sections": {key: (state.get(key) or "") for key in SECTION_META},
             "structured": {
-                "investment_plan": state.get("investment_plan_structured") or {},
-                "trader_investment_plan": state.get("trader_investment_plan_structured") or {},
+                "onchain_analysis": state.get("onchain_analysis_structured") or {},
                 "final_trade_decision": state.get("final_trade_decision_structured") or {},
                 "verification_report": state.get("verification_report_structured") or {},
             },
@@ -1769,13 +1768,12 @@ class AnalysisService:
             "Parallel Analyst Team",
             "Bull Researcher",
             "Bear Researcher",
-            "Research Manager",
-            "Trader",
             "Aggressive Analyst",
             "Conservative Analyst",
             "Neutral Analyst",
             "Portfolio Manager",
             "Verifier",
+            "Decision Extractor",
         }:
             return normalized
         for spec in ANALYST_NODE_SPECS.values():
@@ -1819,7 +1817,7 @@ class AnalysisService:
             has_report = bool(sections.get(spec.report_key))
             if has_report:
                 status = "completed"
-            elif parallel_analysts_active and not sections.get("investment_plan"):
+            elif parallel_analysts_active:
                 status = "in_progress"
             elif current_agent == spec.agent_node:
                 status = "in_progress"
@@ -1831,8 +1829,8 @@ class AnalysisService:
 
         investment = snapshot["investment"]
         expected_research_turns = max(1, int(max_debate_rounds or 1)) * 2
-        research_turns_complete = bool(sections.get("investment_plan")) or int(investment.get("count") or 0) >= expected_research_turns
-        research_active = analyst_reports_complete and not sections.get("investment_plan")
+        research_turns_complete = int(investment.get("count") or 0) >= expected_research_turns
+        research_active = analyst_reports_complete and not research_turns_complete
         research = [
             {
                 "key": "bull",
@@ -1852,33 +1850,12 @@ class AnalysisService:
                 if research_active and (current_agent == "Bear Researcher" or investment["bull_history"])
                 else "pending",
             },
-            {
-                "key": "manager",
-                "label": "Research Manager",
-                "status": "completed"
-                if sections.get("investment_plan")
-                else "in_progress"
-                if current_agent == "Research Manager"
-                else "pending",
-            },
-        ]
-
-        trader = [
-            {
-                "key": "trader",
-                "label": "Trader",
-                "status": "completed"
-                if sections.get("trader_investment_plan")
-                else "in_progress"
-                if sections.get("investment_plan")
-                else "pending",
-            }
         ]
 
         risk = snapshot["risk"]
         expected_risk_turns = max(1, int(max_risk_rounds or 1)) * 3
         risk_turns_complete = bool(sections.get("final_trade_decision")) or int(risk.get("count") or 0) >= expected_risk_turns
-        risk_active = bool(sections.get("trader_investment_plan")) and not sections.get("final_trade_decision")
+        risk_active = research_turns_complete and not sections.get("final_trade_decision")
         risk_items = [
             {
                 "key": "aggressive",
@@ -1927,29 +1904,37 @@ class AnalysisService:
                 else "in_progress"
                 if sections.get("final_trade_decision")
                 else "pending",
-            }
+            },
+            {
+                "key": "decision_extractor",
+                "label": "Decision Extractor",
+                "status": "completed"
+                if snapshot.get("structured", {}).get("final_trade_decision")
+                else "in_progress"
+                if current_agent == "Decision Extractor"
+                else "pending",
+            },
         ]
 
-        for group in (analysts, research, trader, risk_items, portfolio):
+        for group in (analysts, research, risk_items, portfolio):
             for item in group:
                 if current_agent and item["label"] == current_agent and item["status"] == "pending":
                     item["status"] = "in_progress"
 
-        total_sections = len(selected_specs) + 4
+        total_sections = len(selected_specs) + 3
         completed_sections = sum(bool(sections.get(spec.report_key)) for spec in selected_specs)
-        completed_sections += int(bool(sections.get("investment_plan")))
-        completed_sections += int(bool(sections.get("trader_investment_plan")))
         completed_sections += int(bool(sections.get("final_trade_decision")))
         completed_sections += int(bool(sections.get("verification_report")))
+        completed_sections += int(bool(snapshot.get("structured", {}).get("final_trade_decision")))
 
-        if sections.get("verification_report"):
+        if snapshot.get("structured", {}).get("final_trade_decision"):
             phase = "complete"
+        elif sections.get("verification_report"):
+            phase = "extraction"
         elif sections.get("final_trade_decision"):
             phase = "verification"
-        elif risk["history"] or sections.get("trader_investment_plan"):
+        elif risk["history"] or research_turns_complete:
             phase = "risk"
-        elif sections.get("investment_plan"):
-            phase = "trading"
         elif investment["history"] or analyst_reports_complete:
             phase = "research"
         elif any(bool(sections.get(spec.report_key)) for spec in selected_specs):
@@ -1968,7 +1953,6 @@ class AnalysisService:
             "groups": {
                 "analysts": analysts,
                 "research": research,
-                "trading": trader,
                 "risk": risk_items,
                 "portfolio": portfolio,
             },
@@ -1994,15 +1978,10 @@ class AnalysisService:
                 )
 
         structured_meta = {
-            "investment_plan": {
-                "title": "Investment Plan Extractor",
-                "agent": "Investment Plan Extractor",
-                "team": "Research Team",
-            },
-            "trader_investment_plan": {
-                "title": "Trader Plan Extractor",
-                "agent": "Trader Plan Extractor",
-                "team": "Trading Team",
+            "onchain_analysis": {
+                "title": "Onchain Analysis Payload",
+                "agent": "Onchain Analyst",
+                "team": "Analyst Team",
             },
             "final_trade_decision": {
                 "title": "Decision Extractor",
@@ -2264,7 +2243,7 @@ class AnalysisService:
             )
 
         ensure_not_cancelled()
-        coinglass_context, coinglass_package_contexts, coinglass_evidence_items, endpoint_summaries = self.fetch_coinglass_context(
+        coinglass_context, coinglass_package_contexts, coinglass_evidence_items, endpoint_summaries, coinglass_endpoint_results = self.fetch_coinglass_context(
             symbol=symbol,
             analysis_date=request.analysis_date,
             owner_agent_key=str(config.get("coinglass_owner_analyst") or ""),
@@ -2399,6 +2378,7 @@ class AnalysisService:
                 past_context=past_context,
                 coinglass_context=coinglass_context,
                 coinglass_package_contexts=coinglass_package_contexts,
+                coinglass_endpoint_results=coinglass_endpoint_results,
                 coinglass_evidence_items=coinglass_evidence_items,
                 endpoint_summaries=endpoint_summaries,
             )
@@ -2571,8 +2551,6 @@ class AnalysisService:
                     "source_artifact_groups": source_artifact_groups,
                     "endpoint_summaries": final_state.get("endpoint_summaries") or endpoint_summaries,
                     "structured": {
-                        "investment_plan": final_state.get("investment_plan_structured") or {},
-                        "trader_investment_plan": final_state.get("trader_investment_plan_structured") or {},
                         "final_trade_decision": final_state.get("final_trade_decision_structured") or {},
                         "verification_report": final_state.get("verification_report_structured") or {},
                     },

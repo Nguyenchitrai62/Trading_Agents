@@ -1,7 +1,6 @@
 """Social analyst — multi-source social analysis for a target ticker.
 
-Previously named ``social_media_analyst``. Renamed and redesigned because
-the old version had a prompt that demanded social-media analysis but the
+Redesigned because an old prompt demanded social-media analysis while the
 only tool available was Yahoo Finance news — which led LLMs to fabricate
 Reddit/X/StockTwits content under prompt pressure (verified live).
 
@@ -10,14 +9,13 @@ sources before the LLM is invoked and injects them into the prompt as
 structured blocks:
 
     1. News headlines      — Yahoo Finance (institutional framing)
-    2. StockTwits messages — retail-trader posts indexed by cashtag, with
+    2. StockTwits messages — retail participant posts indexed by cashtag, with
                                                      user-labeled Bullish/Bearish sentiment tags
     3. Reddit posts        — r/wallstreetbets, r/stocks, r/investing
 
-For crypto assets under the MiniMax MCP runtime, the agent still keeps those
-internal sources as optional supporting inputs, but also keeps tool-calling
-enabled and requires live `web_search` usage so sentiment evidence is grounded
-in current web sources rather than stale vendor snapshots alone.
+For crypto assets under the MiniMax MCP runtime, the agent uses live
+`web_search` as the primary retrieval path and skips internal source prefetch
+to avoid duplicate requests and stale social context.
 
 See: https://github.com/TauricResearch/TradingAgents/issues/557
 """
@@ -81,9 +79,8 @@ def _prefetch_source_or_skip(source_name: str, fetcher) -> str:
 def create_sentiment_analyst(llm):
     """Create a sentiment analyst node for the trading graph.
 
-    Pre-fetches news + StockTwits + Reddit data as supporting context. When
-    MiniMax MCP is available for crypto assets, the prompt also requires a
-    live web_search pass before the report is drafted.
+    For crypto + MiniMax MCP, uses web_search directly. For other runtimes,
+    keeps the older prefetched source fallback.
     """
 
     def sentiment_analyst_node(state):
@@ -93,32 +90,32 @@ def create_sentiment_analyst(llm):
         asset_type = state.get("asset_type", "crypto")
         instrument_context = build_instrument_context(ticker, asset_type)
         prefer_mcp_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
-        has_live_web_search = prefer_mcp_web_search and has_minimax_mcp_tool(llm.settings, "web_search")
+        has_mcp_web_search = prefer_mcp_web_search and has_minimax_mcp_tool(llm.settings, "web_search")
 
-        news_block = _prefetch_source_or_skip(
-            "news",
-            lambda: get_news.func(ticker, start_date, end_date),
-        )
-        stocktwits_block = _prefetch_source_or_skip(
-            "stocktwits",
-            lambda: fetch_stocktwits_messages(ticker),
-        )
-        reddit_block = _prefetch_source_or_skip(
-            "reddit",
-            lambda: fetch_reddit_posts(ticker),
-        )
+        has_live_web_search = bool(has_mcp_web_search)
 
-        if prefer_mcp_web_search and not has_live_web_search:
-            logger.warning(
-                "sentiment analyst: MiniMax MCP runtime is active for %s but web_search is unavailable; falling back to prefetched sources and get_news",
-                ticker,
+        if has_live_web_search:
+            news_block = "<skipped: social branch uses live MiniMax web_search>"
+            stocktwits_block = "<skipped: social branch uses live MiniMax web_search>"
+            reddit_block = "<skipped: social branch uses live MiniMax web_search>"
+        else:
+            news_block = _prefetch_source_or_skip(
+                "news",
+                lambda: get_news.func(ticker, start_date, end_date),
             )
-
-        if all(_source_should_be_skipped(block) for block in (news_block, stocktwits_block, reddit_block)) and not has_live_web_search:
-            logger.warning(
-                "sentiment analyst: all prefetched sources are unavailable for %s and web_search is unavailable; sentiment report may lack evidence",
-                ticker,
+            stocktwits_block = _prefetch_source_or_skip(
+                "stocktwits",
+                lambda: fetch_stocktwits_messages(ticker),
             )
+            reddit_block = _prefetch_source_or_skip(
+                "reddit",
+                lambda: fetch_reddit_posts(ticker),
+            )
+            if all(_source_should_be_skipped(block) for block in (news_block, stocktwits_block, reddit_block)):
+                logger.warning(
+                    "sentiment analyst: all prefetched sources are unavailable for %s and web_search is unavailable; sentiment report may lack evidence",
+                    ticker,
+                )
 
         if has_live_web_search:
             system_message = _build_crypto_web_search_system_message(
@@ -157,7 +154,7 @@ def create_sentiment_analyst(llm):
         prompt = prompt.partial(current_date=end_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        if isinstance(llm, MiniMaxMCPChatModel):
+        if isinstance(llm, MiniMaxMCPChatModel) and not has_live_web_search:
             chain = prompt | llm.bind_tools([get_news])
         else:
             chain = prompt | llm
@@ -204,7 +201,7 @@ Institutional framing. Fact-driven, slower-moving signal.
 {news_block}
 <end_of_news>
 
-### StockTwits messages — retail-trader social platform indexed by cashtag
+### StockTwits messages — retail participant social platform indexed by cashtag
 Fast-moving signal. Each message carries a user-labeled sentiment tag (Bullish / Bearish / no-label) plus the message body.
 
 <start_of_stocktwits>
@@ -234,7 +231,7 @@ Community discussion. Engagement signal via upvote score and comment count. Subr
 
 7. **Identify catalysts and risks** that emerge across sources — news of upcoming earnings, product launches, competitive threats, macro headlines, etc.
 
-8. **Past sentiment is not predictive.** Frame your conclusions as signal for the trader to weigh alongside fundamentals and technicals, not as a price call.
+8. **Past sentiment is not predictive.** Frame your conclusions as signal for downstream debate to weigh alongside onchain, news, and technical evidence, not as a price call.
 
 ## Output
 
@@ -260,9 +257,9 @@ def _build_crypto_web_search_system_message(
 ) -> str:
     return f"""You are a crypto market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}.
 
-Use the MiniMax MCP tool `web_search` as your live retrieval path and call it at least once before drafting the report. Treat the prefetched internal sources below as supporting inputs: if one of them was skipped or unavailable, note the limitation briefly and continue with the remaining sources plus `web_search`.
+Use the MiniMax MCP tool `web_search` as your live retrieval path and call it at least once before drafting the report. Do not call internal news/social tools in this branch. If web evidence is thin, search again with a narrower query before drafting.
 
-## Prefetched internal sources (supporting context)
+## Internal source prefetch status
 
 ### News headlines / vendor news block
 
@@ -295,7 +292,7 @@ How to analyze:
 2. Call out divergences between bullish narrative flow and bearish positioning or macro pressure.
 3. Distinguish hard catalysts from opinion and speculation.
 4. Be explicit about data quality: if current web evidence is thin or contradictory, say so.
-5. Treat the output as a sentiment signal for the trader, not as a standalone price forecast.
+5. Treat the output as a sentiment signal for downstream debate, not as a standalone price forecast.
 
 Output:
 
@@ -306,25 +303,3 @@ Output:
 5. A Markdown table summarizing key sentiment signals, their direction, source, and supporting evidence.
 
 {get_preferred_reference_sources_instruction()}{get_language_instruction()}{get_structured_evidence_instruction("social")}"""
-
-
-# ---------------------------------------------------------------------------
-# Backwards-compatibility shim
-# ---------------------------------------------------------------------------
-def create_social_media_analyst(llm):
-    """Deprecated alias for :func:`create_sentiment_analyst`.
-
-    Kept so existing code that imports ``create_social_media_analyst``
-    continues to work.
-
-    .. deprecated::
-        Import :func:`create_sentiment_analyst` directly instead.
-    """
-    import warnings
-    warnings.warn(
-        "create_social_media_analyst is deprecated and will be removed in a "
-        "future version. Use create_sentiment_analyst instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return create_sentiment_analyst(llm)

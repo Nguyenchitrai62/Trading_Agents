@@ -22,6 +22,7 @@ from tradingagents.agents.utils.decision import (
 )
 from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.market_price import fetch_current_binance_spot_price
+from tradingagents.agents.utils.rating import parse_rating
 from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext_result,
@@ -47,7 +48,8 @@ def _format_list(items: list[str], *, default: str) -> str:
 
 def _build_deterministic_summary(state: dict) -> dict[str, object]:
     decision = state.get("final_trade_decision_structured") or {}
-    signal = str(decision.get("signal") or "").strip()
+    decision_markdown = str(state.get("final_trade_decision") or "").strip()
+    signal = str(decision.get("signal") or parse_rating(decision_markdown, default="")).strip()
     current_price = fetch_current_binance_spot_price(state.get("company_of_interest") or "")
     findings: list[str] = []
     warnings: list[str] = []
@@ -63,12 +65,14 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
         findings.append(f"Current Binance spot price: {current_price:.8g}")
 
     if not signal:
-        blockers.append("Structured portfolio signal is missing, so deterministic verification cannot confirm order logic.")
-    else:
+        blockers.append("Portfolio Manager markdown is missing a recognized execution signal.")
+    elif decision:
         for validation_error in validate_portfolio_decision(decision, current_price=current_price):
             blockers.append(validation_error)
+    else:
+        warnings.append("Structured decision extraction is pending; deterministic checks are limited to the markdown signal before verifier approval.")
 
-    if signal == "Limit Buy":
+    if decision and signal == "Limit Buy":
         if primary is None:
             blockers.append("Limit Buy is missing a primary limit price.")
         if current_price is not None and primary is not None and primary > current_price:
@@ -82,17 +86,17 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
             take_profit_floor = max(current_price or reference_entry, reference_entry)
             if take_profit <= take_profit_floor:
                 blockers.append("Limit Buy take profit is not above the entry/current price context.")
-    elif signal == "Market Buy":
+    elif decision and signal == "Market Buy":
         if primary is not None or secondary is not None:
             blockers.append("Market Buy should not include limit prices.")
         if current_price is not None and stop_loss is not None and stop_loss >= current_price:
             blockers.append("Market Buy stop loss is not below current spot price.")
         if current_price is not None and take_profit is not None and take_profit <= current_price:
             blockers.append("Market Buy take profit is not above current spot price.")
-    elif signal == "Hold":
+    elif decision and signal == "Hold":
         if primary is not None or secondary is not None:
             blockers.append("Hold should not include executable limit prices.")
-    elif signal == "Limit Sell":
+    elif decision and signal == "Limit Sell":
         if primary is None:
             blockers.append("Limit Sell is missing a primary limit price.")
         if current_price is not None and primary is not None and primary < current_price:
@@ -103,7 +107,7 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
             blockers.append("Limit Sell should not include a take-profit target in this long-only workflow.")
         if current_price is not None and stop_loss is not None and stop_loss >= current_price:
             warnings.append("Limit Sell stop loss sits above current spot price; confirm it only applies to a retained long tranche.")
-    elif signal == "Market Sell":
+    elif decision and signal == "Market Sell":
         if primary is not None or secondary is not None:
             blockers.append("Market Sell should not include limit prices.")
         if stop_loss is None:
@@ -139,26 +143,8 @@ def create_verifier(llm):
             state.get("asset_type", "crypto"),
         )
         deterministic = _build_deterministic_summary(state)
-        research_plan = _format_structured_context(
-            state.get("investment_plan_structured") or {},
-            state.get("investment_plan") or "",
-            [
-                ("Recommendation", "recommendation"),
-                ("Rationale", "rationale"),
-                ("Strategic Actions", "strategic_actions"),
-            ],
-        )
-        trader_plan = _format_structured_context(
-            state.get("trader_investment_plan_structured") or {},
-            state.get("trader_investment_plan") or "",
-            [
-                ("Action", "action"),
-                ("Reasoning", "reasoning"),
-                ("Entry Price", "entry_price"),
-                ("Stop Loss", "stop_loss"),
-                ("Position Sizing", "position_sizing"),
-            ],
-        )
+        investment_debate_state = state.get("investment_debate_state") or {}
+        research_debate = investment_debate_state.get("history", "")
         portfolio_decision = _format_structured_context(
             state.get("final_trade_decision_structured") or {},
             state.get("final_trade_decision") or "",
@@ -203,7 +189,7 @@ Audit in two layers:
 1. Deterministic order logic: current price versus signal, limit prices, stop loss, and take profit.
 2. Semantic support: whether the final signal and thesis are actually supported by the analyst evidence and intermediate handoffs, and whether any important claim lacks source-backed support.
 
-Return a structured verification report with these fields only: verdict, deterministic_checks, evidence_support, unsupported_claims, confidence_note, recommended_action.
+Return a structured verification report with these fields only: verdict, deterministic_checks, evidence_support, unsupported_claims, issues, confidence_note, recommended_action. Use issues as the precise fix-list for Portfolio Manager revision. If no revision is needed, set issues to an empty list.
 
 Deterministic check summary:
 {deterministic['summary']}
@@ -217,19 +203,16 @@ Social report:
 News report:
 {state.get('news_report') or '<missing>'}
 
-Flow report:
-{state.get('flow_report') or '<missing>'}
+Onchain report:
+{state.get('onchain_report') or '<missing>'}
 
 Structured evidence ledger:
 {evidence_ledger}
 
 {coinglass_context}
 
-Research Manager handoff:
-{research_plan or '<missing>'}
-
-Trader handoff:
-{trader_plan or '<missing>'}
+Bull/Bear research debate:
+{research_debate or '<missing>'}
 
 Portfolio Manager decision:
 {portfolio_decision or '<missing>'}
@@ -256,6 +239,10 @@ Be strict. If a strong claim is not grounded in the supplied evidence, call it o
                     "Revise the portfolio decision before acting. "
                     + parsed_report.recommended_action
                 ).strip()
+            existing_issues = list(parsed_report.issues or [])
+            parsed_report.issues = existing_issues + [
+                f"Deterministic blocker: {blocker}" for blocker in deterministic["blockers"]
+            ]
             verification_report = render_verification_report(parsed_report)
             structured_payload = parsed_report.model_dump(mode="json")
         elif parsed_report is None and deterministic["blockers"]:
@@ -268,6 +255,7 @@ Be strict. If a strong claim is not grounded in the supplied evidence, call it o
                 "deterministic_checks": deterministic["summary"],
                 "evidence_support": "",
                 "unsupported_claims": "",
+                "issues": [f"Deterministic blocker: {blocker}" for blocker in deterministic["blockers"]],
                 "confidence_note": "Deterministic blockers were detected even though the structured verifier output could not be parsed.",
                 "recommended_action": "Return to the Portfolio Manager and revise the order plan before execution.",
             }

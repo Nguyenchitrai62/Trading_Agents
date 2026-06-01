@@ -14,6 +14,12 @@ from .analyst_execution import AnalystExecutionPlan, AnalystNodeSpec
 
 logger = logging.getLogger(__name__)
 
+EXTRA_ANALYST_STATE_KEYS = (
+    "market_source_bundle",
+    "onchain_endpoint_analyses",
+    "onchain_analysis_structured",
+)
+
 
 def _merge_state_update(state: dict, update: dict) -> None:
     for key, value in update.items():
@@ -251,9 +257,10 @@ def create_parallel_analyst_team(
     max_workers = min(max(1, plan.concurrency_limit), len(specs))
     analyst_nodes = {spec.key: analyst_factories[spec.key]() for spec in specs}
 
-    def run_analyst(spec: AnalystNodeSpec, state: dict) -> tuple[str, str, list[dict], list[object]]:
+    def run_analyst(spec: AnalystNodeSpec, state: dict) -> tuple[str, str, list[dict], list[object], dict[str, object]]:
         local_state = _build_local_state(state)
         initial_message_count = len(local_state.get("messages") or [])
+        initial_evidence_count = len(local_state.get("evidence_items") or [])
         analyst_node = analyst_nodes[spec.key]
         tool_node = tool_nodes[spec.key]
         started_at = monotonic()
@@ -281,11 +288,17 @@ def create_parallel_analyst_team(
                     _tag_trace_message(message, spec.agent_node)
                     for message in (local_state.get("messages") or [])[initial_message_count:]
                 ]
+                extra_updates = {
+                    key: local_state.get(key)
+                    for key in EXTRA_ANALYST_STATE_KEYS
+                    if key in local_state and local_state.get(key) != state.get(key)
+                }
                 return (
                     spec.report_key,
                     report,
-                    list(local_state.get("evidence_items") or []),
+                    list((local_state.get("evidence_items") or [])[initial_evidence_count:]),
                     [] if trace_callback else trace_messages,
+                    extra_updates,
                 )
 
             logger.info(
@@ -334,8 +347,9 @@ def create_parallel_analyst_team(
                 for future in done:
                     _check_cancel(cancel_check)
                     spec = futures[future]
-                    report_key, report, evidence_items, analyst_trace_messages = future.result()
+                    report_key, report, evidence_items, analyst_trace_messages, extra_updates = future.result()
                     results[report_key] = report
+                    results.update(extra_updates)
                     if evidence_items:
                         results.setdefault("evidence_items", [])
                         results["evidence_items"].extend(evidence_items)

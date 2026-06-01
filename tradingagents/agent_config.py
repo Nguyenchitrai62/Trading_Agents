@@ -16,9 +16,11 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS": "max_debate_rounds",
     "TRADINGAGENTS_MAX_RISK_ROUNDS": "max_risk_discuss_rounds",
     "TRADINGAGENTS_ANALYST_CONCURRENCY_LIMIT": "analyst_concurrency_limit",
+    "TRADINGAGENTS_LIVE_WEB_SEARCH_OWNER_ANALYST": "live_web_search_owner_analyst",
     "TRADINGAGENTS_COINGLASS_OWNER_ANALYST": "coinglass_owner_analyst",
     "TRADINGAGENTS_COINGLASS_OWNER_AGENT_LABEL": "coinglass_owner_agent_label",
     "TRADINGAGENTS_COINGLASS_PROMPT_CHAR_LIMIT": "coinglass_prompt_char_limit",
+    "TRADINGAGENTS_ONCHAIN_ENDPOINT_LLM_CONCURRENCY": "onchain_endpoint_llm_concurrency",
     "TRADINGAGENTS_CHECKPOINT_ENABLED": "checkpoint_enabled",
     "TRADINGAGENTS_BENCHMARK_TICKER": "benchmark_ticker",
     "MINIMAX_MCP_ENABLED": "minimax_mcp_enabled",
@@ -108,94 +110,33 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "max_risk_discuss_rounds": 1,
     "max_recur_limit": 100,
     "analyst_concurrency_limit": 4,
-    # CoinGlass context is owned by an analyst path, not a standalone backend
-    # agent. Use the legacy wire key for the default Flow Analyst assignment.
-    "coinglass_owner_analyst": "fundamentals",
-    "coinglass_owner_agent_label": "Flow Analyst",
+    # Legacy live-web owner switch. The current crypto flow assigns live web
+    # retrieval directly to Social and News, while Market is code-first.
+    "live_web_search_owner_analyst": "",
+    # CoinGlass context is owned by the Onchain analyst branch.
+    "coinglass_owner_analyst": "onchain",
+    "coinglass_owner_agent_label": "Onchain Analyst",
+    "onchain_endpoint_llm_concurrency": 3,
     "coinglass_prompt_char_limit": 4800,
     "coinglass_preview_sample_rows": 50,
     "coinglass_preview_recent_rows": 50,
     "coinglass_packages_by_role": {
-        "market_analyst": (
-            "derivatives_positioning",
-            "funding_pressure",
-            "liquidation_risk",
-            "macro_cycle_context",
-        ),
-        "flow_analyst": (
+        "market_analyst": (),
+        "onchain_analyst": (
             "exchange_reserves",
             "institutional_flow",
-            "funding_pressure",
-            "liquidation_risk",
-            "macro_cycle_context",
-        ),
-        "research_manager": (
             "derivatives_positioning",
             "funding_pressure",
             "liquidation_risk",
-            "exchange_reserves",
-            "institutional_flow",
             "macro_cycle_context",
         ),
-        "portfolio_manager": (
-            "derivatives_positioning",
-            "funding_pressure",
-            "liquidation_risk",
-            "exchange_reserves",
-            "institutional_flow",
-            "options_context",
-            "macro_cycle_context",
-        ),
-        "verifier": (
-            "derivatives_positioning",
-            "funding_pressure",
-            "liquidation_risk",
-            "exchange_reserves",
-            "institutional_flow",
-            "options_context",
-            "macro_cycle_context",
-        ),
-        "trader": (
-            "derivatives_positioning",
-            "funding_pressure",
-            "liquidation_risk",
-            "options_context",
-        ),
-        "bull_researcher": (
-            "derivatives_positioning",
-            "funding_pressure",
-            "exchange_reserves",
-            "institutional_flow",
-            "macro_cycle_context",
-        ),
-        "bear_researcher": (
-            "funding_pressure",
-            "liquidation_risk",
-            "exchange_reserves",
-            "options_context",
-            "macro_cycle_context",
-        ),
-        "aggressive_risk": (
-            "derivatives_positioning",
-            "funding_pressure",
-            "liquidation_risk",
-            "options_context",
-        ),
-        "conservative_risk": (
-            "funding_pressure",
-            "liquidation_risk",
-            "exchange_reserves",
-            "options_context",
-            "macro_cycle_context",
-        ),
-        "neutral_risk": (
-            "derivatives_positioning",
-            "funding_pressure",
-            "liquidation_risk",
-            "exchange_reserves",
-            "options_context",
-            "macro_cycle_context",
-        ),
+        "portfolio_manager": (),
+        "verifier": (),
+        "bull_researcher": (),
+        "bear_researcher": (),
+        "aggressive_risk": (),
+        "conservative_risk": (),
+        "neutral_risk": (),
     },
     # News / data fetching parameters tuned for crypto-first analysis.
     # Article counts are left to the provider/tool defaults unless an agent
@@ -205,16 +146,11 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # timeframe requested by the agent/tool call, paginating provider requests
     # when needed.
     "crypto_market_lookback_days": 14,
-    # High-trust reference sites. When MiniMax MCP web_search is enabled,
-    # the model is instructed to retrieve or cross-check every configured URL
-    # before writing market-facing conclusions, then optionally search beyond
-    # them for additional credible context. This is not a whitelist.
+    # High-trust reference sites for the analyst assigned to live web validation.
+    # CoinGlass is handled through the backend API prefetch path above, so it is
+    # intentionally not repeated here as a web-search target.
+    # These are advisory anchors, not a per-agent requirement and not a whitelist.
     "preferred_reference_sources": [
-        {
-            "name": "CoinGlass",
-            "url": "https://www.coinglass.com/",
-            "focus": "Crypto derivatives positioning, liquidation data, funding, and market-structure dashboards.",
-        },
         {
             "name": "CryptoQuant",
             "url": "https://cryptoquant.com/",

@@ -681,7 +681,6 @@
 }
 
 .history-diagram-group--plan,
-.history-diagram-group--trader,
 .history-diagram-group--portfolio,
 .history-diagram-group--evidence,
 .history-diagram-group--verifier {
@@ -758,8 +757,6 @@
 .history-diagram-group--research .history-diagram-cluster--research::after,
 .history-diagram-group--plan .history-diagram-node::before,
 .history-diagram-group--plan .history-diagram-node::after,
-.history-diagram-group--trader .history-diagram-node::before,
-.history-diagram-group--trader .history-diagram-node::after,
 .history-diagram-group--portfolio .history-diagram-node::before,
 .history-diagram-group--portfolio .history-diagram-node::after,
 .history-diagram-group--evidence .history-diagram-node::before,
@@ -805,8 +802,6 @@
 .history-diagram-group--research .history-diagram-cluster--research::after,
 .history-diagram-group--plan .history-diagram-node::before,
 .history-diagram-group--plan .history-diagram-node::after,
-.history-diagram-group--trader .history-diagram-node::before,
-.history-diagram-group--trader .history-diagram-node::after,
 .history-diagram-group--portfolio .history-diagram-node::before,
 .history-diagram-group--portfolio .history-diagram-node::after,
 .history-diagram-group--evidence .history-diagram-node::before,
@@ -818,7 +813,6 @@
 
 .history-diagram-group--research .history-diagram-cluster--research::after,
 .history-diagram-group--plan .history-diagram-node::after,
-.history-diagram-group--trader .history-diagram-node::after,
 .history-diagram-group--portfolio .history-diagram-node::after,
 .history-diagram-group--evidence .history-diagram-node::after,
 .history-diagram-group--risk .history-diagram-cluster::after {
@@ -827,7 +821,6 @@
 }
 
 .history-diagram-group--plan .history-diagram-node::before,
-.history-diagram-group--trader .history-diagram-node::before,
 .history-diagram-group--portfolio .history-diagram-node::before,
 .history-diagram-group--evidence .history-diagram-node::before,
 .history-diagram-group--verifier .history-diagram-node::before,
@@ -1053,7 +1046,6 @@
 .history-diagram-group--signals .history-diagram-node strong,
 .history-diagram-group--inputs .history-diagram-node strong,
 .history-diagram-group--plan .history-diagram-node strong,
-.history-diagram-group--trader .history-diagram-node strong,
 .history-diagram-group--portfolio .history-diagram-node strong,
 .history-diagram-group--evidence .history-diagram-node strong,
 .history-diagram-group--verifier .history-diagram-node strong {
@@ -1063,7 +1055,6 @@
 .history-diagram-group--signals .history-diagram-node-icon,
 .history-diagram-group--inputs .history-diagram-node-icon,
 .history-diagram-group--plan .history-diagram-node-icon,
-.history-diagram-group--trader .history-diagram-node-icon,
 .history-diagram-group--portfolio .history-diagram-node-icon,
 .history-diagram-group--evidence .history-diagram-node-icon,
 .history-diagram-group--verifier .history-diagram-node-icon {
@@ -1074,7 +1065,6 @@
 .history-diagram-group--signals .history-diagram-node-icon svg,
 .history-diagram-group--inputs .history-diagram-node-icon svg,
 .history-diagram-group--plan .history-diagram-node-icon svg,
-.history-diagram-group--trader .history-diagram-node-icon svg,
 .history-diagram-group--portfolio .history-diagram-node-icon svg,
 .history-diagram-group--evidence .history-diagram-node-icon svg,
 .history-diagram-group--verifier .history-diagram-node-icon svg {
@@ -1093,7 +1083,6 @@
 
 .history-diagram-node--bull .history-diagram-node-icon,
 .history-diagram-node--plan .history-diagram-node-icon,
-.history-diagram-node--trader .history-diagram-node-icon,
 .history-diagram-node--decision .history-diagram-node-icon {
     color: var(--secondary);
     background: rgba(95, 226, 194, 0.12);
@@ -1129,7 +1118,6 @@
 }
 
 .history-diagram-node--plan,
-.history-diagram-node--trader,
 .history-diagram-node--decision,
 .history-diagram-node--evidence,
 .history-diagram-node--review {

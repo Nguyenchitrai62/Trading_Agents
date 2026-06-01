@@ -1826,7 +1826,6 @@ button.flow-section-item:focus-visible {
 .live-flow-diagram.history-diagram--vertical .live-flow-node--pending.history-diagram-node--review,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--pending.history-diagram-node--plan,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--pending.history-diagram-node--decision,
-.live-flow-diagram.history-diagram--vertical .live-flow-node--pending.history-diagram-node--trader,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--pending.history-diagram-node--aggressive,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--pending.history-diagram-node--neutral,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--pending.history-diagram-node--conservative {
@@ -1861,7 +1860,6 @@ button.flow-section-item:focus-visible {
 .live-flow-diagram.history-diagram--vertical .live-flow-node--in_progress.history-diagram-node--review,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--in_progress.history-diagram-node--plan,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--in_progress.history-diagram-node--decision,
-.live-flow-diagram.history-diagram--vertical .live-flow-node--in_progress.history-diagram-node--trader,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--in_progress.history-diagram-node--aggressive,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--in_progress.history-diagram-node--neutral,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--in_progress.history-diagram-node--conservative {
@@ -1896,7 +1894,6 @@ button.flow-section-item:focus-visible {
 .live-flow-diagram.history-diagram--vertical .live-flow-node--completed.history-diagram-node--review,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--completed.history-diagram-node--plan,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--completed.history-diagram-node--decision,
-.live-flow-diagram.history-diagram--vertical .live-flow-node--completed.history-diagram-node--trader,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--completed.history-diagram-node--aggressive,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--completed.history-diagram-node--neutral,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--completed.history-diagram-node--conservative {
@@ -1924,7 +1921,6 @@ button.flow-section-item:focus-visible {
 .live-flow-diagram.history-diagram--vertical .live-flow-node--error.history-diagram-node--review,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--error.history-diagram-node--plan,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--error.history-diagram-node--decision,
-.live-flow-diagram.history-diagram--vertical .live-flow-node--error.history-diagram-node--trader,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--error.history-diagram-node--aggressive,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--error.history-diagram-node--neutral,
 .live-flow-diagram.history-diagram--vertical .live-flow-node--error.history-diagram-node--conservative {
@@ -1977,12 +1973,6 @@ button.flow-section-item:focus-visible {
     --flow-node-accent: #7c3aed;
     --flow-node-bg-a: #fbf9ff;
     --flow-node-bg-b: #ddd6fe;
-}
-
-.live-flow-diagram.history-diagram--vertical .history-diagram-node--trader {
-    --flow-node-accent: #0f766e;
-    --flow-node-bg-a: #f1fffc;
-    --flow-node-bg-b: #99f6e4;
 }
 
 .live-flow-diagram.history-diagram--vertical .history-diagram-node--aggressive {
@@ -2091,7 +2081,6 @@ button.flow-section-item:focus-visible {
 }
 
 .live-flow-node-plan.is-ready,
-.live-flow-node-trader.is-ready,
 .live-flow-node-decision.is-ready,
 .live-flow-node-review.is-ready {
     border-color: rgba(101, 208, 173, 0.28);
