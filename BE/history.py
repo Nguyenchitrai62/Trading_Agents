@@ -1248,8 +1248,6 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
         ("news_summary", "News Summary", "news", "news_data", "news", ["news_data"], True),
         ("social_data", "Social / Web Data", "social", "social_web_data", "social", ["social_web_data"], False),
         ("social_summary", "Social Summary", "social", "social_web_data", "social", ["social_web_data"], True),
-        ("flow_data", "Onchain / Liquidity Data", "onchain", "flow_data", "flow", ["flow_data"], False),
-        ("flow_summary", "Onchain Summary", "onchain", "flow_data", "flow", ["flow_data"], True),
     ]
     for block_key, title, analyst_key, group, bucket, source_groups, is_summary in source_specs:
         artifacts = _source_group_artifacts(flow_artifacts, group)

@@ -309,7 +309,6 @@ function getFlowSectionOrder() {
         ...(HISTORY_FLOW_SECTION_ORDER.inputs || []),
         ...(HISTORY_FLOW_SECTION_ORDER.evidence || []),
         ...(HISTORY_FLOW_SECTION_ORDER.research || []),
-        ...(HISTORY_FLOW_SECTION_ORDER.trading || []),
         ...(HISTORY_FLOW_SECTION_ORDER.risk || []),
         ...(HISTORY_FLOW_SECTION_ORDER.portfolio || []),
     ];
@@ -373,7 +372,7 @@ const SOURCE_ARTIFACT_GROUPS = {
     coinglass: {
         flowGroup: "coinglass_data",
         title: "CoinGlass Data",
-        summaryTitle: "Derivatives / Flow Summary",
+        summaryTitle: "Onchain Endpoint Summary",
         summaryFilter: (item) => getEndpointSummaryBucket(item) === "coinglass",
     },
     news: {
@@ -387,12 +386,6 @@ const SOURCE_ARTIFACT_GROUPS = {
         title: "Social / Web Data",
         summaryTitle: "Social Summary",
         summaryFilter: (item) => getEndpointSummaryBucket(item) === "social",
-    },
-    flow: {
-        flowGroup: "flow_data",
-        title: "On-chain Data",
-        summaryTitle: "Flow Summary",
-        summaryFilter: (item) => getEndpointSummaryBucket(item) === "flow",
     },
 };
 
@@ -415,7 +408,7 @@ function getEndpointSummaryBucket(item = {}) {
         return "social";
     }
     if (text.includes("flow") || text.includes("on-chain") || text.includes("liquidity") || text.includes("stablecoin") || text.includes("tvl")) {
-        return "flow";
+        return "coinglass";
     }
     if (text.includes("ccxt") || text.includes("ohlcv") || text.includes("indicator") || text.includes("market")) {
         return "ccxt";
@@ -431,7 +424,7 @@ function getLiveSourceArtifactCount() {
         return Number(state.run.sourceArtifactCount || 0);
     }
     const keys = new Set();
-    ["ccxt", "coinglass", "news", "social", "flow"].forEach((groupKey) => {
+    ["ccxt", "coinglass", "news", "social"].forEach((groupKey) => {
         getLiveSourceTraceEntries(groupKey).forEach((entry) => keys.add(entry.id || `${entry.agent}:${entry.title}:${entry.traceId}`));
     });
     return keys.size;
@@ -455,9 +448,6 @@ function isLiveSourceTraceEntryForGroup(entry = {}, groupKey = "", phases = ["to
     }
     if (groupKey === "social") {
         return agent.includes("social") || title.includes("reddit") || title.includes("stocktwits");
-    }
-    if (groupKey === "flow") {
-        return agent.includes("flow") && !traceId.startsWith("coinglass:");
     }
     return false;
 }
@@ -767,7 +757,7 @@ function buildLiveFlowNodes() {
     const selectedAnalystSpecs = analystSpecs.filter(([analystKey]) => selectedAnalysts.has(analystKey));
     const analystSourceGroups = {
         market: ["ccxt"],
-        onchain: ["coinglass", "flow"],
+        onchain: ["coinglass"],
         social: ["social"],
         news: ["news"],
     };
@@ -819,12 +809,10 @@ function buildLiveFlowNodes() {
     const coinglassReady = sourceDoneForGroup("coinglass");
     const newsSourceReady = sourceDoneForGroup("news");
     const socialSourceReady = sourceDoneForGroup("social");
-    const flowSourceReady = sourceDoneForGroup("flow");
     const marketSummaryReady = getLiveSourceSummaryReady("ccxt");
     const coinglassSummaryReady = getLiveSourceSummaryReady("coinglass");
     const newsSummaryReady = getLiveSourceSummaryReady("news");
     const socialSummaryReady = getLiveSourceSummaryReady("social");
-    const flowSummaryReady = getLiveSourceSummaryReady("flow");
     const sourceVisible = (analystKey, ready) => Boolean(ready || selectedAnalysts.has(analystKey) || state.isBusy || state.run.complete);
     const sourceStatus = (groupKey, analystKey, title, rawReady) => {
         const selected = selectedAnalysts.has(analystKey);
@@ -907,11 +895,6 @@ function buildLiveFlowNodes() {
                 visible: sourceVisible("social", socialSourceReady),
                 data: buildLiveSourceDataNode("social", "Social / Web Data", socialSourceReady, sourceStatus("social", "social", "Social Analyst", socialSourceReady), "signal", "liveSocialData", "social_data"),
                 summary: buildLiveSourceSummaryNode("social", "Social Summary", socialSummaryReady && socialSourceReady, sourceSummaryStatus("social", "social", "Social Analyst", socialSourceReady), "social_summary"),
-            },
-            {
-                visible: sourceVisible("onchain", flowSourceReady),
-                data: buildLiveSourceDataNode("flow", "Onchain / Liquidity Data", flowSourceReady, sourceStatus("flow", "onchain", "Onchain Analyst", flowSourceReady), "signal", "liveFlowData", "flow_data"),
-                summary: buildLiveSourceSummaryNode("flow", "Onchain Summary", flowSummaryReady && flowSourceReady, sourceSummaryStatus("flow", "onchain", "Onchain Analyst", flowSourceReady), "flow_summary"),
             },
         ],
         evidenceExtractor: { blockKey: "evidence_extractor", title: "Evidence Extractor", ready: selectedAnalystReportsComplete, status: getLiveFlowBlockError("evidence_extractor") ? "error" : statusFor(selectedAnalystReportsComplete, false), tone: "evidence", detail: { key: "evidenceExtractor" }, error: getLiveFlowBlockError("evidence_extractor") },
@@ -1952,8 +1935,6 @@ function getDetailContent(detail) {
             return getSourceArtifactDetailContent("news", "News source results have not appeared yet.");
         case "liveSocialData":
             return getSourceArtifactDetailContent("social", "Social or web source results have not appeared yet.");
-        case "liveFlowData":
-            return getSourceArtifactDetailContent("flow", "Flow source results have not appeared yet.");
         case "liveCcxtSummary":
             return {
                 content: getLiveSourceSummaryMarkdown("ccxt"),
@@ -1963,7 +1944,7 @@ function getDetailContent(detail) {
         case "liveCoinglassSummary":
             return {
                 content: getLiveSourceSummaryMarkdown("coinglass"),
-                fallback: "Derivatives / flow summary markdown is not available yet.",
+                fallback: "Onchain endpoint summary markdown is not available yet.",
                 payload: getSourceGroupArtifactRows("coinglass"),
             };
         case "liveNewsSummary":
@@ -1977,12 +1958,6 @@ function getDetailContent(detail) {
                 content: getLiveSourceSummaryMarkdown("social"),
                 fallback: "Social summary markdown is not available yet.",
                 payload: getSourceGroupArtifactRows("social"),
-            };
-        case "liveFlowSummary":
-            return {
-                content: getLiveSourceSummaryMarkdown("flow"),
-                fallback: "Flow summary markdown is not available yet.",
-                payload: getSourceGroupArtifactRows("flow"),
             };
         case "evidenceExtractor":
         case "evidenceLedger":

@@ -103,12 +103,10 @@ const DETAIL_PANEL_META = {
     liveCoinGlassData: { title: "CoinGlass Data", subtitle: "Endpoint source results" },
     liveNewsData: { title: "News Data", subtitle: "News and web source results" },
     liveSocialData: { title: "Social / Web Data", subtitle: "Social and web source results" },
-    liveFlowData: { title: "Onchain Data", subtitle: "Flow and liquidity source results" },
     liveCcxtSummary: { title: "Market Summary", subtitle: "Markdown summary from market source data" },
     liveCoinglassSummary: { title: "Onchain Endpoint Summary", subtitle: "Markdown summary from CoinGlass endpoints" },
     liveNewsSummary: { title: "News Summary", subtitle: "Markdown summary from news sources" },
     liveSocialSummary: { title: "Social Summary", subtitle: "Markdown summary from social and web sources" },
-    liveFlowSummary: { title: "Onchain Summary", subtitle: "Markdown summary from onchain and liquidity sources" },
 };
 
 const HISTORY_FLOW_SECTION_ORDER = {
@@ -173,7 +171,7 @@ const HISTORY_FLOW_SECTION_META = {
         shortTitle: "Research Debate",
         tone: "debate",
         icon: "debate",
-        description: "The research team exchange before the plan is locked in.",
+        description: "The Bull/Bear exchange that feeds the Risk Room directly.",
     },
     bear_research: {
         shortTitle: "Bearish",
@@ -185,7 +183,7 @@ const HISTORY_FLOW_SECTION_META = {
         shortTitle: "Aggressive",
         tone: "aggressive",
         icon: "aggressive",
-        description: "The high-conviction, higher-risk interpretation of the proposal.",
+        description: "The high-conviction, higher-risk interpretation of the setup.",
     },
     neutral_risk: {
         shortTitle: "Neutral",
@@ -203,13 +201,13 @@ const HISTORY_FLOW_SECTION_META = {
         shortTitle: "Risk Review",
         tone: "risk",
         icon: "review",
-        description: "Merged risk discussion before the final authorization.",
+        description: "Merged risk discussion before the Portfolio Manager decision.",
     },
     final_trade_decision: {
         shortTitle: "Final Decision",
         tone: "decision",
         icon: "decision",
-        description: "Authorize, reject, or revise the transaction proposal.",
+        description: "Final markdown order decision produced by the Portfolio Manager.",
     },
     verification_report: {
         shortTitle: "Verify",

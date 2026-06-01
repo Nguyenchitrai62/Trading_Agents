@@ -1281,7 +1281,6 @@ body.is-running .window-status {
     overflow: visible;
 }
 
-.execution-status-list-trading,
 .execution-status-list-portfolio {
     grid-template-columns: minmax(0, 1fr);
 }

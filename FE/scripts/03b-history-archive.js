@@ -265,7 +265,6 @@ function buildHistoryDiagramModel(sections = []) {
         coinglass: sourceSections.filter((section) => section.flow_group === "coinglass_data"),
         news: sourceSections.filter((section) => section.flow_group === "news_data"),
         social: sourceSections.filter((section) => section.flow_group === "social_web_data"),
-        flow: sourceSections.filter((section) => section.flow_group === "flow_data"),
     };
     sourceSections.forEach((section) => knownKeys.add(section.section_key));
     return {

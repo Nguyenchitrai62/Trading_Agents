@@ -488,12 +488,6 @@ class AnalysisService:
                     "source_kind": "web_search",
                     "label": "Social / Web Data",
                 }
-            if "flow" in agent_text:
-                return {
-                    "flow_group": "flow_data",
-                    "source_kind": "web_search",
-                    "label": "Onchain / Web Data",
-                }
             if "news" in agent_text:
                 return {
                     "flow_group": "news_data",
