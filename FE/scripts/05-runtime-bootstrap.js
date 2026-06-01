@@ -360,7 +360,19 @@ function handleServerEvent(event, data) {
     }
 
     if (event === "analysis_log") {
-        if (data.phase !== "heartbeat") {
+        if (data.phase === "heartbeat") {
+            const elapsed = Number(data.elapsed_seconds || 0);
+            const lastVisibleHeartbeat = Number(state.run.lastVisibleHeartbeatElapsed || 0);
+            if (!lastVisibleHeartbeat || elapsed - lastVisibleHeartbeat >= 10) {
+                state.run.lastVisibleHeartbeatElapsed = elapsed;
+                const activeAgent = state.run.status?.current_agent || "active analysis step";
+                pushStreamFeed({
+                    title: activeAgent,
+                    content: compactText(`Still processing after ${Math.round(elapsed)}s. Waiting for model response.`, 220),
+                    tone: "progress",
+                });
+            }
+        } else {
             pushStreamFeed({
                 title: data.phase || "stream",
                 content: compactText(data.message || JSON.stringify(data), 220),

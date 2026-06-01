@@ -1338,6 +1338,7 @@ class AnalysisService:
                 "judge_decision": risk_state.get("judge_decision", "") or "",
                 "count": risk_state.get("count", 0) or 0,
             },
+            "decision_revision_count": state.get("decision_revision_count", 0) or 0,
         }
 
     @staticmethod
@@ -1774,6 +1775,84 @@ class AnalysisService:
             if normalized in {spec.agent_node, spec.tool_node}:
                 return spec.agent_node
         return None
+
+    @staticmethod
+    def predict_next_graph_agent(
+        snapshot: dict,
+        selected_analysts: list[str],
+        *,
+        max_debate_rounds: int = 1,
+        max_risk_rounds: int = 1,
+    ) -> str | None:
+        sections = snapshot.get("sections", {})
+        selected_specs = [ANALYST_NODE_SPECS[key] for key in selected_analysts if key in ANALYST_NODE_SPECS]
+        for spec in selected_specs:
+            if not sections.get(spec.report_key):
+                return spec.agent_node
+
+        investment = snapshot.get("investment", {})
+        expected_research_turns = max(1, int(max_debate_rounds or 1)) * 2
+        investment_count = int(investment.get("count") or 0)
+        if investment_count < expected_research_turns:
+            current_response = str(investment.get("current_response") or "")
+            if current_response.startswith("Bull"):
+                return "Bear Researcher"
+            return "Bull Researcher"
+
+        risk = snapshot.get("risk", {})
+        expected_risk_turns = max(1, int(max_risk_rounds or 1)) * 3
+        risk_count = int(risk.get("count") or 0)
+        if risk_count < expected_risk_turns and not sections.get("final_trade_decision"):
+            latest_speaker = str(risk.get("latest_speaker") or "")
+            if latest_speaker.startswith("Aggressive"):
+                return "Conservative Analyst"
+            if latest_speaker.startswith("Conservative"):
+                return "Neutral Analyst"
+            return "Aggressive Analyst"
+
+        if not sections.get("final_trade_decision"):
+            return "Portfolio Manager"
+        if not sections.get("verification_report"):
+            return "Verifier"
+        structured = snapshot.get("structured", {})
+        verification = structured.get("verification_report") or {}
+        verdict = str(verification.get("verdict") or "").strip().lower()
+        if verdict == "approved" and not structured.get("final_trade_decision"):
+            return "Decision Extractor"
+        revision_count = int(snapshot.get("decision_revision_count") or 0)
+        if revision_count < 2 and not structured.get("final_trade_decision"):
+            return "Portfolio Manager"
+        return None
+
+    @staticmethod
+    def progress_phase_for_agent(agent: str | None) -> str:
+        if agent in {"Bull Researcher", "Bear Researcher"}:
+            return "research"
+        if agent in {"Aggressive Analyst", "Conservative Analyst", "Neutral Analyst"}:
+            return "risk"
+        if agent in {"Portfolio Manager", "Verifier", "Decision Extractor"}:
+            return "portfolio"
+        if agent:
+            return "analysts"
+        return "stream"
+
+    @staticmethod
+    def agent_start_message(
+        agent: str,
+        snapshot: dict,
+        *,
+        max_debate_rounds: int = 1,
+        max_risk_rounds: int = 1,
+    ) -> str:
+        if agent in {"Bull Researcher", "Bear Researcher"}:
+            total = max(1, int(max_debate_rounds or 1)) * 2
+            turn = min(total, int((snapshot.get("investment") or {}).get("count") or 0) + 1)
+            return f"{agent} started research debate turn {turn}/{total}; waiting for model response."
+        if agent in {"Aggressive Analyst", "Conservative Analyst", "Neutral Analyst"}:
+            total = max(1, int(max_risk_rounds or 1)) * 3
+            turn = min(total, int((snapshot.get("risk") or {}).get("count") or 0) + 1)
+            return f"{agent} started risk debate turn {turn}/{total}; waiting for model response."
+        return f"{agent} started; waiting for model response."
 
     @staticmethod
     def merge_graph_state_update(state: dict, update: dict) -> list[str]:
@@ -2385,6 +2464,7 @@ class AnalysisService:
 
             started_at = time.time()
             chunk_index = 0
+            last_announced_agent = current_agent
             emit_analysis_log("Graph stream started.", "stream", current_agent=current_agent)
             final_state.update(init_state)
             final_state["messages"] = []
@@ -2431,6 +2511,41 @@ class AnalysisService:
                         emit("status_snapshot", current_status)
                         previous_status = current_status
                     previous_snapshot = current_snapshot
+
+                    max_debate_rounds = int(config.get("max_debate_rounds") or 1)
+                    max_risk_rounds = int(config.get("max_risk_discuss_rounds") or 1)
+                    next_agent = self.predict_next_graph_agent(
+                        current_snapshot,
+                        filtered_analysts,
+                        max_debate_rounds=max_debate_rounds,
+                        max_risk_rounds=max_risk_rounds,
+                    )
+                    if next_agent and next_agent != last_announced_agent:
+                        next_phase = self.progress_phase_for_agent(next_agent)
+                        next_status = self.build_status_snapshot(
+                            current_snapshot,
+                            filtered_analysts,
+                            next_agent,
+                            max_debate_rounds=max_debate_rounds,
+                            max_risk_rounds=max_risk_rounds,
+                        )
+                        emit_analysis_log(
+                            self.agent_start_message(
+                                next_agent,
+                                current_snapshot,
+                                max_debate_rounds=max_debate_rounds,
+                                max_risk_rounds=max_risk_rounds,
+                            ),
+                            next_phase,
+                            current_agent=next_agent,
+                            graph_node=next_agent,
+                            progress=next_status["progress"],
+                        )
+                        if next_status != previous_status:
+                            emit("status_snapshot", next_status)
+                            previous_status = next_status
+                        current_agent = next_agent
+                        last_announced_agent = next_agent
                     ensure_not_cancelled()
 
             if not final_state.get("final_trade_decision"):
