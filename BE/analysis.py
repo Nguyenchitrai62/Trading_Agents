@@ -20,7 +20,7 @@ from fastapi import HTTPException, Request
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 
-from .config import RESEARCH_DEPTH_OPTIONS, SECTION_META, BackendSettings, logger, resolve_minimax_settings
+from .config import RESEARCH_DEPTH_OPTIONS, SECTION_META, BackendSettings, logger, resolve_minimax_settings, resolve_provider_settings, is_deepseek_model
 from .history import TursoHistoryStore, build_history_sections
 from .models import AnalysisRequest, ChatRequest
 from tradingagents.dataflows.coinglass_client import (
@@ -1067,17 +1067,18 @@ class AnalysisService:
     def build_analysis_config(
         self,
         request: AnalysisRequest,
-        minimax_settings: dict,
+        provider_settings: dict,
         runtime_profile: dict,
         selected_analysts: list[str],
     ) -> dict:
         config = deepcopy(TRADINGAGENTS_DEFAULT_CONFIG)
+        is_deepseek = is_deepseek_model(request.model)
         config.update(
             {
-                "llm_provider": minimax_settings["provider"],
+                "llm_provider": provider_settings["provider"],
                 "quick_think_llm": request.model,
                 "deep_think_llm": request.model,
-                "backend_url": minimax_settings["base_url"],
+                "backend_url": provider_settings["base_url"],
                 "output_language": request.output_language,
                 "analysis_date": request.analysis_date,
                 "max_debate_rounds": runtime_profile["effective_rounds"],
@@ -1086,6 +1087,7 @@ class AnalysisService:
                 "crypto_market_lookback_days": request.lookback_days,
                 "analysis_llm_max_tokens": runtime_profile["llm_max_tokens"],
                 "minimax_mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
+                "minimax_mcp_enabled": False if is_deepseek else config.get("minimax_mcp_enabled", True),
                 "checkpoint_enabled": request.checkpoint_enabled,
                 "memory_log_path": None,
                 "historical_decision_context_enabled": False,
@@ -2143,8 +2145,14 @@ class AnalysisService:
         cancel_event: threading.Event | None = None,
     ) -> None:
         self.ensure_analysis_runtime_available()
-        minimax_settings = resolve_minimax_settings(self.settings)
-        if not minimax_settings["configured"]:
+        provider_settings = resolve_provider_settings(request.model, self.settings)
+        if not provider_settings["configured"]:
+            provider = provider_settings.get("provider")
+            if is_deepseek_model(request.model):
+                raise HTTPException(
+                    status_code=500,
+                    detail="Set DEEPSEEK_API_KEY in .env before running analysis.",
+                )
             raise HTTPException(
                 status_code=500,
                 detail="Set MINIMAX_API_KEY or MINIMAX_CN_API_KEY in .env before running analysis.",
@@ -2236,7 +2244,7 @@ class AnalysisService:
         if not filtered_analysts:
             raise HTTPException(status_code=400, detail="No valid analysts remain for crypto analysis.")
 
-        config = self.build_analysis_config(request, minimax_settings, runtime_profile, filtered_analysts)
+        config = self.build_analysis_config(request, provider_settings, runtime_profile, filtered_analysts)
         initial_snapshot = self.extract_runtime_snapshot({})
         analyst_parallel_enabled = (
             int(config.get("analyst_concurrency_limit") or 1) > 1
@@ -2269,8 +2277,8 @@ class AnalysisService:
                 "selected_analysts": filtered_analysts,
                 "selected_analyst_labels": [ANALYST_NODE_SPECS[key].agent_node for key in filtered_analysts],
                 "analyst_concurrency_limit": int(config.get("analyst_concurrency_limit") or 1),
-                "provider": minimax_settings["provider"],
-                "base_url": minimax_settings["base_url"],
+                "provider": provider_settings["provider"],
+                "base_url": provider_settings["base_url"],
                 "coinglass": {
                     "enabled": self.settings.coinglass_enabled,
                     "configured": bool(self.settings.coinglass_api_key),
@@ -2385,7 +2393,7 @@ class AnalysisService:
         emit_analysis_log(
             "Building TradingAgents graph.",
             "graph_setup",
-            provider=minimax_settings["provider"],
+            provider=provider_settings["provider"],
             model=request.model,
             depth_rounds=runtime_profile["effective_rounds"],
             mcp_max_tool_rounds=runtime_profile["mcp_max_tool_rounds"],

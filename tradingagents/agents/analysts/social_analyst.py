@@ -34,6 +34,7 @@ from tradingagents.agents.utils.evidence import (
     get_structured_evidence_instruction,
     split_report_and_evidence,
 )
+from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
 from tradingagents.llm_clients.minimax_mcp import MiniMaxMCPChatModel, has_minimax_mcp_tool
@@ -91,14 +92,16 @@ def create_sentiment_analyst(llm):
         instrument_context = build_instrument_context(ticker, asset_type)
         prefer_mcp_web_search = asset_type == "crypto" and isinstance(llm, MiniMaxMCPChatModel)
         has_mcp_web_search = prefer_mcp_web_search and has_minimax_mcp_tool(llm.settings, "web_search")
+        is_deepseek = get_config().get("llm_provider", "") == "deepseek"
+        use_web_search_tool = asset_type == "crypto" and is_deepseek
         active_llm = llm.with_trace_context("Social Analyst") if isinstance(llm, MiniMaxMCPChatModel) else llm
 
-        has_live_web_search = bool(has_mcp_web_search)
+        has_live_web_search = bool(has_mcp_web_search) or use_web_search_tool
 
         if has_live_web_search:
-            news_block = "<skipped: social branch uses live MiniMax web_search>"
-            stocktwits_block = "<skipped: social branch uses live MiniMax web_search>"
-            reddit_block = "<skipped: social branch uses live MiniMax web_search>"
+            news_block = "<skipped: social branch uses live webfetch/web_search>"
+            stocktwits_block = "<skipped: social branch uses live webfetch/web_search>"
+            reddit_block = "<skipped: social branch uses live webfetch/web_search>"
         else:
             news_block = _prefetch_source_or_skip(
                 "news",
@@ -118,7 +121,17 @@ def create_sentiment_analyst(llm):
                     ticker,
                 )
 
-        if has_live_web_search:
+        if use_web_search_tool:
+            system_message = _build_crypto_web_search_system_message(
+                ticker=ticker,
+                start_date=start_date,
+                end_date=end_date,
+                news_block=news_block,
+                stocktwits_block=stocktwits_block,
+                reddit_block=reddit_block,
+                mcp_mode=False,
+            )
+        elif has_mcp_web_search:
             system_message = _build_crypto_web_search_system_message(
                 ticker=ticker,
                 start_date=start_date,
@@ -157,6 +170,9 @@ def create_sentiment_analyst(llm):
 
         if isinstance(active_llm, MiniMaxMCPChatModel) and not has_live_web_search:
             chain = prompt | active_llm.bind_tools([get_news])
+        elif use_web_search_tool:
+            from tradingagents.agents.utils.web_search_tools import webfetch
+            chain = prompt | active_llm.bind_tools([webfetch])
         else:
             chain = prompt | active_llm
         result = chain.invoke(state["messages"])
@@ -255,10 +271,25 @@ def _build_crypto_web_search_system_message(
     news_block: str,
     stocktwits_block: str,
     reddit_block: str,
+    mcp_mode: bool = True,
 ) -> str:
+    if mcp_mode:
+        tool_instruction = (
+            "Use the MiniMax MCP tool `web_search` as your live retrieval path and call it at least once before drafting the report. "
+            "Do not call internal news/social tools in this branch. If web evidence is thin, search again with a narrower query before drafting."
+        )
+    else:
+        tool_instruction = (
+            "Use the `webfetch(url, max_chars)` tool as your live retrieval path. "
+            "Fetch relevant crypto news sites, data APIs, and market commentary pages directly. "
+            "Suggested sources: CoinDesk, CoinTelegraph, The Block, CryptoQuant, Glassnode, "
+            "DeFiLlama, CoinMarketCap, CoinGecko, TradingView crypto section, and any exchange blogs. "
+            "Call webfetch at least once before drafting the report and fetch at least 2-3 different sources. "
+            "If a fetch fails, try an alternative URL. Do not rely on stale internal data."
+        )
     return f"""You are a crypto market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}.
 
-Use the MiniMax MCP tool `web_search` as your live retrieval path and call it at least once before drafting the report. Do not call internal news/social tools in this branch. If web evidence is thin, search again with a narrower query before drafting.
+{tool_instruction}
 
 ## Internal source prefetch status
 

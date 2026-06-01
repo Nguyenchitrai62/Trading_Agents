@@ -63,6 +63,8 @@
         models: [
             { value: "MiniMax-M2.5", label: "MiniMax M2.5" },
             { value: "MiniMax-M2.7", label: "MiniMax M2.7" },
+            { value: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+            { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
         ],
         analysts: [
             { value: "market", label: "Market Analyst" },

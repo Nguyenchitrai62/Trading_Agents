@@ -24,6 +24,8 @@ DEFAULT_ANALYSTS = ("market", "onchain", "social", "news")
 APP_TITLE = "TradingAgents Analysis API"
 APP_VERSION = "0.1.2"
 DEFAULT_MODEL = "MiniMax-M2.5"
+DEEPSEEK_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
+DEEPSEEK_MODEL_PREFIXES = ("deepseek-v4-flash", "deepseek-v4-pro")
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 14
 DEFAULT_ASSET_TYPE = "crypto"
 DEFAULT_OUTPUT_LANGUAGE = "Vietnamese"
@@ -321,6 +323,8 @@ class BackendSettings:
     minimax_base_url: str
     minimax_api_key: str
     minimax_cn_api_key: str
+    deepseek_api_key: str
+    deepseek_base_url: str
     coinglass_enabled: bool
     coinglass_api_key: str
     coinglass_base_url: str
@@ -408,6 +412,8 @@ class BackendSettings:
             minimax_base_url=os.getenv("MINIMAX_BASE_URL", "").strip(),
             minimax_api_key=os.getenv("MINIMAX_API_KEY", "").strip(),
             minimax_cn_api_key=os.getenv("MINIMAX_CN_API_KEY", "").strip(),
+            deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", "").strip(),
+            deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", DEEPSEEK_DEFAULT_BASE_URL).strip() or DEEPSEEK_DEFAULT_BASE_URL,
             coinglass_enabled=_env_bool("COINGLASS_ENABLED", True),
             coinglass_api_key=_coinglass_api_key(),
             coinglass_base_url=os.getenv("COINGLASS_BASE_URL", DEFAULT_COINGLASS_BASE_URL).strip()
@@ -473,6 +479,36 @@ def resolve_minimax_settings(settings: BackendSettings | None = None) -> dict:
     }
 
 
+def is_deepseek_model(model: str) -> bool:
+    return str(model or "").startswith("deepseek-")
+
+
+def resolve_deepseek_settings(settings: BackendSettings | None = None) -> dict:
+    active_settings = settings or SETTINGS
+    if active_settings.deepseek_api_key:
+        return {
+            "configured": True,
+            "provider": "deepseek",
+            "api_key": active_settings.deepseek_api_key,
+            "base_url": active_settings.deepseek_base_url or DEEPSEEK_DEFAULT_BASE_URL,
+        }
+    return {
+        "configured": False,
+        "provider": "deepseek",
+        "api_key": "",
+        "base_url": active_settings.deepseek_base_url or DEEPSEEK_DEFAULT_BASE_URL,
+    }
+
+
+def resolve_provider_settings(
+    model: str,
+    settings: BackendSettings | None = None,
+) -> dict:
+    if is_deepseek_model(model):
+        return resolve_deepseek_settings(settings)
+    return resolve_minimax_settings(settings)
+
+
 load_environment()
 SETTINGS = BackendSettings.from_env()
 logger = configure_logging(SETTINGS.log_level)
@@ -497,4 +533,7 @@ __all__ = [
     "BackendSettings",
     "logger",
     "resolve_minimax_settings",
+    "resolve_deepseek_settings",
+    "resolve_provider_settings",
+    "is_deepseek_model",
 ]

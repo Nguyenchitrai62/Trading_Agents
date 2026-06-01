@@ -39,6 +39,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_insider_transactions,
     get_global_news
 )
+from tradingagents.agents.utils.web_search_tools import webfetch
 
 from .checkpointer import checkpoint_step, clear_checkpoint, get_checkpointer, thread_id
 from .conditional_logic import ConditionalLogic
@@ -158,6 +159,9 @@ class TradingAgentsGraph:
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
 
+        elif provider == "deepseek":
+            kwargs["reasoning_effort"] = self.config.get("openai_reasoning_effort") or "max"
+
         elif provider in ("anthropic", "minimax", "minimax-cn"):
             effort = self.config.get("anthropic_effort")
             if effort:
@@ -200,8 +204,13 @@ class TradingAgentsGraph:
             )
             mcp_tools = get_minimax_mcp_langchain_tools(mcp_settings)
 
+        use_web_search_tool = provider == "deepseek"
+
         def with_mcp(tools: list) -> list:
-            return merge_tools_by_name(tools, mcp_tools)
+            merged = merge_tools_by_name(tools, mcp_tools)
+            if use_web_search_tool:
+                merged = merge_tools_by_name(merged, [webfetch])
+            return merged
 
         return {
             "market": ToolNode(
