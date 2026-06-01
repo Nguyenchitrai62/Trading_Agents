@@ -53,14 +53,14 @@ RESEARCH_DEPTH_OPTIONS = {
         "label": "Auto",
         "rounds": 3,
         "mcp_tool_rounds": 5,
-        "description": "Backend-managed baseline depth. Future escalation will be driven by evidence quality.",
+        "description": "Backend-managed research depth with fixed one-pass risk scenarios.",
         "effective_depth": "medium",
     },
     "quick": {
         "label": "Quick",
         "rounds": 1,
         "mcp_tool_rounds": 3,
-        "description": "Fast scan with minimal debate and one extra live web cross-check round.",
+        "description": "Fast scan with one research round, fixed risk scenarios, and one extra live web cross-check round.",
     },
     "medium": {
         "label": "Medium",
@@ -72,7 +72,7 @@ RESEARCH_DEPTH_OPTIONS = {
         "label": "Deep",
         "rounds": 5,
         "mcp_tool_rounds": 7,
-        "description": "More debate rounds and deeper live web validation before the final decision.",
+        "description": "More research debate rounds and deeper live web validation before fixed risk scenarios and the final decision.",
     },
 }
 SECTION_META = {

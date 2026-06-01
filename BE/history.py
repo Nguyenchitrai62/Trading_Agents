@@ -1327,7 +1327,7 @@ def _build_flow_block_sections(final_state: dict) -> list[dict]:
     add("aggressive_risk", "Aggressive Analyst", "risk", "risk_debate", status_for(bool(risk.get("aggressive_history") or risk.get("current_aggressive_response"))), "aggressive", related_sections=["aggressive_risk"], agent="Aggressive Analyst", team="Risk Team")
     add("conservative_risk", "Conservative Analyst", "risk", "risk_debate", status_for(bool(risk.get("conservative_history") or risk.get("current_conservative_response"))), "conservative", related_sections=["conservative_risk"], agent="Conservative Analyst", team="Risk Team")
     add("neutral_risk", "Neutral Analyst", "risk", "risk_debate", status_for(bool(risk.get("neutral_history") or risk.get("current_neutral_response"))), "neutral", related_sections=["neutral_risk"], agent="Neutral Analyst", team="Risk Team")
-    add("risk_debate", "Risk Debate", "risk", "risk_debate", status_for(bool(risk.get("history"))), "risk", related_sections=["risk_debate"], agent="Risk Team", team="Risk Team")
+    add("risk_debate", "Risk Scenarios", "risk", "risk_debate", status_for(bool(risk.get("history"))), "risk", related_sections=["risk_debate"], agent="Risk Team", team="Risk Team")
     add("portfolio_manager", "Portfolio Manager", "portfolio", "final_trade_decision", status_for(has_text("final_trade_decision")), "decision", related_sections=["final_trade_decision"], agent="Portfolio Manager", team="Portfolio Management")
     add("verifier", "Verifier", "portfolio", "verification_report", status_for(has_text("verification_report")), "review", related_sections=["verification_report", "verification_report_structured"], agent="Verifier", team="Portfolio Management")
     add("decision_extractor", "Decision Extractor", "extraction", "final_trade_decision_structured", status_for(has_payload("final_trade_decision_structured")), "evidence", related_sections=["final_trade_decision_structured"], agent="Decision Extractor", team="Portfolio Management")
@@ -1414,7 +1414,7 @@ def build_history_sections(final_state: dict) -> list[dict]:
         ("aggressive_risk", "Aggressive Risk", "Aggressive Analyst", "Risk Team", risk.get("aggressive_history") or risk.get("current_aggressive_response"), "risk", "risk_debate"),
         ("conservative_risk", "Conservative Risk", "Conservative Analyst", "Risk Team", risk.get("conservative_history") or risk.get("current_conservative_response"), "risk", "risk_debate"),
         ("neutral_risk", "Neutral Risk", "Neutral Analyst", "Risk Team", risk.get("neutral_history") or risk.get("current_neutral_response"), "risk", "risk_debate"),
-        ("risk_debate", "Risk Debate", "Risk Team", "Risk Team", risk.get("history"), "risk", "risk_debate"),
+        ("risk_debate", "Risk Scenarios", "Risk Team", "Risk Team", risk.get("history"), "risk", "risk_debate"),
     ]
     for section_key, title, agent, team, markdown, flow_stage, flow_group in extra_sections:
         add(

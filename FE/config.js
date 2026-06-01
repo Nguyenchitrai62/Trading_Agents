@@ -71,10 +71,10 @@
             { value: "news", label: "News Analyst" },
         ],
         researchDepths: [
-            { value: "auto", label: "Auto", rounds: 3, effective_depth: "medium", description: "Backend-managed baseline with future evidence-driven escalation." },
-            { value: "quick", label: "Quick", rounds: 1, description: "Fast scan with minimal debate." },
+            { value: "auto", label: "Auto", rounds: 3, effective_depth: "medium", description: "Backend-managed research depth with fixed one-pass risk scenarios." },
+            { value: "quick", label: "Quick", rounds: 1, description: "Fast scan with one research round and fixed risk scenarios." },
             { value: "medium", label: "Medium", rounds: 3, description: "Balanced research depth for regular analysis." },
-            { value: "deep", label: "Deep", rounds: 5, description: "More debate rounds before the final decision." },
+            { value: "deep", label: "Deep", rounds: 5, description: "More research debate rounds before fixed risk scenarios and final decision." },
         ],
     },
 };

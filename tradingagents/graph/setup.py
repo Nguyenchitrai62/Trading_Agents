@@ -152,30 +152,9 @@ class GraphSetup:
                 "Risk Team": "Aggressive Analyst",
             },
         )
-        workflow.add_conditional_edges(
-            "Aggressive Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Conservative Analyst": "Conservative Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Conservative Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Neutral Analyst": "Neutral Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
-        workflow.add_conditional_edges(
-            "Neutral Analyst",
-            self.conditional_logic.should_continue_risk_analysis,
-            {
-                "Aggressive Analyst": "Aggressive Analyst",
-                "Portfolio Manager": "Portfolio Manager",
-            },
-        )
+        workflow.add_edge("Aggressive Analyst", "Conservative Analyst")
+        workflow.add_edge("Conservative Analyst", "Neutral Analyst")
+        workflow.add_edge("Neutral Analyst", "Portfolio Manager")
 
         workflow.add_edge("Portfolio Manager", "Verifier")
         workflow.add_conditional_edges(

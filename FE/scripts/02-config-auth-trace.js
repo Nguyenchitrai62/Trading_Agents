@@ -1602,7 +1602,7 @@ function getCurrentLivePanel() {
     if (currentAgent === "Aggressive Analyst") {
         return {
             title: currentAgent,
-            subtitle: "Risk debate is live",
+            subtitle: "Risk scenario analysis is live",
             content: state.run.risk.current_aggressive_response || state.run.risk.aggressive_history || "",
             fallback: "The Aggressive Analyst has not responded yet.",
             detail: { key: "aggressiveRisk" },
@@ -1614,7 +1614,7 @@ function getCurrentLivePanel() {
     if (currentAgent === "Conservative Analyst") {
         return {
             title: currentAgent,
-            subtitle: "Risk debate is live",
+            subtitle: "Risk scenario analysis is live",
             content: state.run.risk.current_conservative_response || state.run.risk.conservative_history || "",
             fallback: "The Conservative Analyst has not responded yet.",
             detail: { key: "conservativeRisk" },
@@ -1626,7 +1626,7 @@ function getCurrentLivePanel() {
     if (currentAgent === "Neutral Analyst") {
         return {
             title: currentAgent,
-            subtitle: "Risk debate is live",
+            subtitle: "Risk scenario analysis is live",
             content: state.run.risk.current_neutral_response || state.run.risk.neutral_history || "",
             fallback: "The Neutral Analyst has not responded yet.",
             detail: { key: "neutralRisk" },

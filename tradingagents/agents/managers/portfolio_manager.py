@@ -101,7 +101,7 @@ def create_portfolio_manager(llm):
             else ""
         )
 
-        prompt = f"""As the Portfolio Manager, synthesize the risk analysts' debate and deliver the final trading signal as readable prose.
+        prompt = f"""As the Portfolio Manager, synthesize the three one-pass risk scenario memos and deliver the final trading signal as readable prose.
 
 {instrument_context}
 
@@ -141,12 +141,12 @@ def create_portfolio_manager(llm):
 {coinglass_context}
 {lessons_line}
 {verification_feedback_block}
-**Risk Analysts Debate History:**
+**Risk Scenario Memos:**
 {history}
 
 ---
 
-Be decisive and ground every conclusion in specific evidence from the analysts.{get_language_instruction()}"""
+Use the aggressive, neutral, and conservative scenario memos as three independent risk lenses. Choose the final action yourself; do not request another risk pass. Be decisive and ground every conclusion in specific evidence from the analysts.{get_language_instruction()}"""
 
         base_llm = resolve_structured_base_llm(llm)
         final_trade_decision = _force_signal_first_line(_normalize_response_text(base_llm.invoke(prompt)))
