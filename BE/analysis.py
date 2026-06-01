@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import gc
 import hashlib
-import io
 import json
 import logging
 import re
@@ -17,9 +16,16 @@ from datetime import datetime, timezone
 
 from anthropic import AsyncAnthropic
 from fastapi import HTTPException, Request
-from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 
+from .analysis_telemetry import (
+    AnalysisCancelled,
+    AnalysisLogStream,
+    AnalysisLoggingHandler,
+    AnalysisTelemetry,
+    AnalysisTelemetryCallback,
+    get_process_rss_mb,
+)
 from .config import RESEARCH_DEPTH_OPTIONS, SECTION_META, BackendSettings, logger, resolve_minimax_settings, resolve_provider_settings, is_deepseek_model
 from .history import TursoHistoryStore, build_history_sections
 from .models import AnalysisRequest, ChatRequest
@@ -56,112 +62,6 @@ except ModuleNotFoundError as exc:
     thread_id = None
     TradingAgentsGraph = None
     ANALYSIS_RUNTIME_IMPORT_ERROR = exc
-
-
-def _process_rss_mb() -> int | None:
-    try:
-        import resource
-    except ImportError:
-        return None
-    try:
-        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    except Exception:
-        return None
-    if usage <= 0:
-        return None
-    if usage > 10_000_000:
-        return round(usage / (1024 * 1024))
-    return round(usage / 1024)
-
-
-class AnalysisCancelled(Exception):
-    pass
-
-
-class AnalysisLogStream(io.TextIOBase):
-    def __init__(self, emit_log: Callable[[str, str, str], None], phase: str, level: str):
-        self.emit_log = emit_log
-        self.phase = phase
-        self.level = level
-        self._buffer = ""
-
-    def writable(self) -> bool:
-        return True
-
-    def write(self, value: str) -> int:
-        if not value:
-            return 0
-        self._buffer += value
-        while "\n" in self._buffer:
-            line, self._buffer = self._buffer.split("\n", 1)
-            if line.strip():
-                self.emit_log(line.strip(), self.phase, self.level)
-        return len(value)
-
-    def flush(self) -> None:
-        if self._buffer.strip():
-            self.emit_log(self._buffer.strip(), self.phase, self.level)
-        self._buffer = ""
-
-
-class AnalysisLoggingHandler(logging.Handler):
-    def __init__(self, emit_log: Callable[[str, str, str], None]):
-        super().__init__(level=logging.INFO)
-        self.emit_log = emit_log
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if record.name == logger.name:
-            return
-        try:
-            level = "warning" if record.levelno >= logging.WARNING else "info"
-            self.emit_log(self.format(record), "backend_log", level)
-        except Exception:
-            self.handleError(record)
-
-
-class AnalysisTelemetry:
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self.model_calls = 0
-        self.tool_calls = 0
-        self.tool_results = 0
-        self.web_search_calls = 0
-
-    def record_model_call(self) -> None:
-        with self._lock:
-            self.model_calls += 1
-
-    def record_tool_trace(self, phase: str, title: object) -> None:
-        normalized_phase = str(phase or "").strip().lower()
-        normalized_title = str(title or "").strip()
-        with self._lock:
-            if normalized_phase == "tool_call":
-                self.tool_calls += 1
-                if normalized_title == "web_search":
-                    self.web_search_calls += 1
-            elif normalized_phase == "tool_result":
-                self.tool_results += 1
-
-    def snapshot(self) -> dict[str, int]:
-        with self._lock:
-            return {
-                "model_calls": self.model_calls,
-                "tool_calls": self.tool_calls,
-                "tool_results": self.tool_results,
-                "web_search_calls": self.web_search_calls,
-            }
-
-
-class AnalysisTelemetryCallback(BaseCallbackHandler):
-    def __init__(self, telemetry: AnalysisTelemetry) -> None:
-        super().__init__()
-        self.telemetry = telemetry
-
-    def on_llm_start(self, *args, **kwargs) -> None:
-        self.telemetry.record_model_call()
-
-    def on_chat_model_start(self, *args, **kwargs) -> None:
-        self.telemetry.record_model_call()
 
 
 STATE_UPDATE_KEYS = {
@@ -2217,7 +2117,7 @@ class AnalysisService:
                 "elapsed_seconds": round(time.time() - run_started_at, 2),
                 **extra,
             }
-            rss_mb = _process_rss_mb()
+            rss_mb = get_process_rss_mb()
             if rss_mb is not None:
                 payload["rss_mb"] = rss_mb
             extra_json = json.dumps(extra, ensure_ascii=False, default=str) if extra else "{}"
@@ -2611,6 +2511,33 @@ class AnalysisService:
             signal = str(decision_payload.get("signal") or graph.process_signal(final_state["final_trade_decision"])).strip()
             verification_verdict = str(verification_payload.get("verdict") or "").strip()
             verification_action = str(verification_payload.get("recommended_action") or "").strip()
+
+            try:
+                from tradingagents.agents.utils.decision import validate_portfolio_decision
+                post_validation_errors = validate_portfolio_decision(
+                    decision_payload,
+                    current_price=final_state.get("verification_reference_price"),
+                )
+                if post_validation_errors:
+                    emit_analysis_log(
+                        "Structured decision payload has validation issues; DB numeric fields may be empty.",
+                        "complete",
+                        "warning",
+                        errors=post_validation_errors,
+                        status=decision_payload.get("decision_validation_status"),
+                    )
+                    emit(
+                        "warning",
+                        {
+                            "message": (
+                                f"Decision extraction had {len(post_validation_errors)} issue(s): "
+                                + "; ".join(str(err) for err in post_validation_errors[:3])
+                                + ("..." if len(post_validation_errors) > 3 else "")
+                            )
+                        },
+                    )
+            except ImportError:
+                pass
             elapsed_seconds = round(time.time() - started_at, 2)
             history_id = None
             final_state["flow_artifacts"] = list(source_artifacts)

@@ -999,7 +999,7 @@ elements.chatMessages?.addEventListener("scroll", () => {
     const remaining = elements.chatMessages.scrollHeight - elements.chatMessages.scrollTop - elements.chatMessages.clientHeight;
     state.chat.shouldAutoScroll = remaining < 100;
 });
-[elements.executionLog].forEach((logElement) => {
+[elements.executionLog, elements.toolTraceList].forEach((logElement) => {
     if (!(logElement instanceof HTMLElement)) {
         return;
     }

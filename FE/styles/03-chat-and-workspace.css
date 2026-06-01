@@ -1578,7 +1578,8 @@ body.is-running .window-status {
 
 .tool-trace-list {
     align-content: start;
-    scroll-behavior: smooth;
+    scroll-behavior: auto;
+    overflow-anchor: none;
 }
 
 .tool-trace-new {
@@ -1589,19 +1590,16 @@ body.is-running .window-status {
 @keyframes toolTraceArrive {
     from {
         opacity: 0.35;
-        transform: translateY(8px);
         box-shadow: 0 0 0 0 rgba(101, 208, 173, 0.26);
     }
 
     60% {
         opacity: 1;
-        transform: translateY(0);
         box-shadow: 0 0 0 6px rgba(101, 208, 173, 0.08);
     }
 
     to {
         opacity: 1;
-        transform: translateY(0);
         box-shadow: none;
     }
 }

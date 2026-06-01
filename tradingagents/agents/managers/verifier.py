@@ -117,18 +117,52 @@ def _format_list(items: list[str], *, default: str) -> str:
     return "\n".join(f"- {item}" for item in items) if items else f"- {default}"
 
 
+def _extract_numeric_from_markdown(markdown: str, field_labels: list[str]) -> float | None:
+    """Parse a numeric value preceded by one of the field labels in markdown prose."""
+    for label in field_labels:
+        escaped = re.escape(label)
+        pattern = rf'(?i)(?:^|\n)\s*[-*]*\s*\**\s*{escaped}\s*\**\s*[:=-]\s*\$?\s*([\d,]+(?:\.\d+)?)'
+        match = re.search(pattern, markdown)
+        if match:
+            raw = match.group(1).replace(",", "").replace("$", "").strip()
+            value = coerce_float(raw)
+            if value is not None:
+                return value
+    return None
+
+
+def _build_effective_decision(decision: dict, markdown: str) -> dict:
+    """Merge structured decision with values parsed from markdown for missing fields."""
+    effective = dict(decision)
+    effective.setdefault("signal", parse_rating(markdown, default="").strip())
+    for field, labels in [
+        ("stop_loss", ["Stop Loss", "Stop-Loss", "Stop loss", "Invalidation Level", "Invalidation"]),
+        ("take_profit", ["Take Profit", "Take-Profit", "Take profit", "Target", "Profit Target", "Exit Target", "Exit Objective"]),
+        ("primary_limit_buy_price", ["Primary Limit Buy", "Limit Buy Price", "Buy Limit", "Entry Limit", "Primary Limit Buy Price"]),
+        ("secondary_limit_buy_price", ["Secondary Limit Buy", "Secondary Buy Limit", "Secondary Limit Buy Price"]),
+        ("primary_limit_sell_price", ["Primary Limit Sell", "Limit Sell Price", "Sell Limit", "Exit Limit", "Primary Limit Sell Price"]),
+        ("secondary_limit_sell_price", ["Secondary Limit Sell", "Secondary Sell Limit", "Secondary Limit Sell Price"]),
+    ]:
+        if effective.get(field) in (None, ""):
+            value = _extract_numeric_from_markdown(markdown, labels)
+            if value is not None:
+                effective[field] = value
+    return effective
+
+
 def _build_deterministic_summary(state: dict) -> dict[str, object]:
     decision = state.get("final_trade_decision_structured") or {}
     decision_markdown = str(state.get("final_trade_decision") or "").strip()
-    signal = str(decision.get("signal") or parse_rating(decision_markdown, default="")).strip()
     current_price = fetch_current_binance_spot_price(state.get("company_of_interest") or "")
     findings: list[str] = []
     warnings: list[str] = []
     blockers: list[str] = []
 
-    primary, secondary = active_limit_prices(decision)
-    stop_loss = coerce_float(decision.get("stop_loss"))
-    take_profit = coerce_float(decision.get("take_profit"))
+    effective_decision = _build_effective_decision(decision, decision_markdown)
+    signal = str(effective_decision.get("signal") or parse_rating(decision_markdown, default="")).strip()
+    primary, secondary = active_limit_prices(effective_decision)
+    stop_loss = coerce_float(effective_decision.get("stop_loss"))
+    take_profit = coerce_float(effective_decision.get("take_profit"))
 
     if current_price is None:
         warnings.append("Current Binance spot price could not be resolved, so price-relation checks are partial.")
@@ -137,13 +171,16 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
 
     if not signal:
         blockers.append("Portfolio Manager markdown is missing a recognized execution signal.")
+    elif not decision:
+        for validation_error in validate_portfolio_decision(effective_decision, current_price=current_price):
+            blockers.append(validation_error)
+        if not blockers:
+            warnings.append("Structured decision extraction is pending; markdown-level checks passed but final extraction may differ.")
     elif decision:
         for validation_error in validate_portfolio_decision(decision, current_price=current_price):
             blockers.append(validation_error)
-    else:
-        warnings.append("Structured decision extraction is pending; deterministic checks are limited to the markdown signal before verifier approval.")
 
-    if decision and signal == "Limit Buy":
+    if signal == "Limit Buy":
         if primary is None:
             blockers.append("Limit Buy is missing a primary limit price.")
         if current_price is not None and primary is not None and primary > current_price:
@@ -157,17 +194,21 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
             take_profit_floor = max(current_price or reference_entry, reference_entry)
             if take_profit <= take_profit_floor:
                 blockers.append("Limit Buy take profit is not above the entry/current price context.")
-    elif decision and signal == "Market Buy":
+    elif signal == "Market Buy":
         if primary is not None or secondary is not None:
             blockers.append("Market Buy should not include limit prices.")
+        if stop_loss is None:
+            blockers.append("Market Buy is missing a stop-loss.")
+        if take_profit is None:
+            blockers.append("Market Buy is missing a take-profit.")
         if current_price is not None and stop_loss is not None and stop_loss >= current_price:
             blockers.append("Market Buy stop loss is not below current spot price.")
         if current_price is not None and take_profit is not None and take_profit <= current_price:
             blockers.append("Market Buy take profit is not above current spot price.")
-    elif decision and signal == "Hold":
+    elif signal == "Hold":
         if primary is not None or secondary is not None:
             blockers.append("Hold should not include executable limit prices.")
-    elif decision and signal == "Limit Sell":
+    elif signal == "Limit Sell":
         if primary is None:
             blockers.append("Limit Sell is missing a primary limit price.")
         if current_price is not None and primary is not None and primary < current_price:
@@ -178,7 +219,7 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
             blockers.append("Limit Sell should not include a take-profit target in this long-only workflow.")
         if current_price is not None and stop_loss is not None and stop_loss >= current_price:
             warnings.append("Limit Sell stop loss sits above current spot price; confirm it only applies to a retained long tranche.")
-    elif decision and signal == "Market Sell":
+    elif signal == "Market Sell":
         if primary is not None or secondary is not None:
             blockers.append("Market Sell should not include limit prices.")
         if stop_loss is None:
