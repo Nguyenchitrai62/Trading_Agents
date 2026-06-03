@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
+import uuid
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +21,10 @@ from .models import AdminHistoryAccessUpdate, AdminUserAccessUpdate, AnalysisReq
 history_store = TursoHistoryStore(SETTINGS.turso_database_url, SETTINGS.turso_auth_token, SETTINGS.history_page_size)
 auth_service = AuthService(SETTINGS, history_store)
 analysis_service = AnalysisService(SETTINGS, history_store)
+
+_auto_analysis_lock = threading.Lock()
+_auto_analysis_active = False
+AUTO_ANALYSIS_SYMBOL = "BTC"
 
 
 def create_app() -> FastAPI:
@@ -88,7 +96,52 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health_check() -> dict:
+        global _auto_analysis_active
         minimax_settings = resolve_minimax_settings(SETTINGS)
+        active_runs = analysis_service.list_active_runs()
+        latest_run_created_at = None
+        if history_store.configured:
+            latest_runs = await asyncio.to_thread(history_store.list_accessible_runs, None, 1, 0)
+            if latest_runs:
+                latest_run_created_at = latest_runs[0].get("created_at")
+
+        should_trigger = False
+        with _auto_analysis_lock:
+            if not _auto_analysis_active and not analysis_service.has_active_runs():
+                if latest_run_created_at:
+                    try:
+                        parsed = datetime.fromisoformat(latest_run_created_at.replace("Z", "+00:00"))
+                        if parsed.hour != datetime.utcnow().hour:
+                            should_trigger = True
+                    except (ValueError, OSError):
+                        should_trigger = True
+                else:
+                    should_trigger = True
+            if should_trigger:
+                _auto_analysis_active = True
+
+        if should_trigger:
+            def _on_auto_complete() -> None:
+                global _auto_analysis_active
+                with _auto_analysis_lock:
+                    _auto_analysis_active = False
+
+            try:
+                run_id = f"auto-{uuid.uuid4().hex[:12]}"
+                request = AnalysisRequest(
+                    symbol=AUTO_ANALYSIS_SYMBOL,
+                    run_id=run_id,
+                    research_depth="quick",
+                    lookback_days=7,
+                    selected_analysts=["market", "onchain", "social", "news"],
+                )
+                analysis_service.run_analysis_background(request, on_complete=_on_auto_complete)
+                logger.info("auto-analysis triggered via health check: run_id=%s symbol=%s", run_id, AUTO_ANALYSIS_SYMBOL)
+            except Exception:
+                logger.exception("failed to trigger auto-analysis")
+                with _auto_analysis_lock:
+                    _auto_analysis_active = False
+
         return {
             "status": "healthy",
             "title": SETTINGS.app_title,
@@ -109,6 +162,11 @@ def create_app() -> FastAPI:
                 },
             },
             "modes": ["analysis"],
+            "auto_analysis": {
+                "active_runs": len(active_runs),
+                "latest_run_at": latest_run_created_at,
+                "hour_check": "triggers when latest run hour != current hour",
+            },
         }
 
     @app.get("/api/config")

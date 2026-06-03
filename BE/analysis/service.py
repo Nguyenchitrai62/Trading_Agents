@@ -145,6 +145,48 @@ class AnalysisService(
                 for run in self.active_analyses.values()
             ]
 
+    def has_active_runs(self) -> bool:
+        with self._active_analyses_lock:
+            return len(self.active_analyses) > 0
+
+    def run_analysis_background(self, request: AnalysisRequest, on_complete: Callable[[], None] | None = None) -> str:
+        run_id = request.run_id or ""
+        started_at = time.time()
+        user = {
+            "email": "auto-analysis@system",
+            "name": "Auto Analysis",
+            "is_admin": True,
+            "can_run_analysis": True,
+        }
+        cancel_event = threading.Event()
+
+        def _noop_emit(_event: str, _data: dict) -> None:
+            pass
+
+        if run_id:
+            with self.active_analysis_lock:
+                self.active_analysis_cancel_events[run_id] = cancel_event
+        self._register_active_run(run_id, request.symbol, user, started_at)
+
+        def _run() -> None:
+            try:
+                self.run_trading_analysis(request, _noop_emit, user, cancel_event)
+            except Exception:
+                logger.exception("auto-analysis background run failed: run_id=%s symbol=%s", run_id, request.symbol)
+            finally:
+                if run_id:
+                    with self.active_analysis_lock:
+                        self.active_analysis_cancel_events.pop(run_id, None)
+                self._unregister_active_run(run_id)
+                if on_complete is not None:
+                    try:
+                        on_complete()
+                    except Exception:
+                        pass
+
+        threading.Thread(target=_run, daemon=True, name=f"auto-analysis-{run_id}").start()
+        return run_id
+
     def build_analysis_runtime_profile(self, request: AnalysisRequest) -> dict:
         depth_config = RESEARCH_DEPTH_OPTIONS[request.research_depth]
         effective_depth = str(depth_config.get("effective_depth") or request.research_depth)
