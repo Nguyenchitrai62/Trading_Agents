@@ -1,8 +1,6 @@
 # TradingAgents Crypto Dashboard
 
-TradingAgents Crypto Dashboard is a crypto-focused multi-agent market analysis platform. The FastAPI backend reuses the core orchestration under `tradingagents/`, runs the four-branch market/onchain/social/news flow through research debate, risk debate, portfolio decision, verification, and decision extraction, then streams progress to a browser dashboard with Server-Sent Events (SSE).
-
-This repository is no longer a CLI-first demo. The current product focus is a realtime dashboard, backend agent orchestration, and a deployable split frontend/backend architecture.
+TradingAgents Crypto Dashboard is a crypto-focused multi-agent market analysis platform. The FastAPI backend reuses the core orchestration under `tradingagents/`, runs the four-branch market/onchain/social/news flow through research debate, risk debate, portfolio decision, verification, and decision extraction, then streams progress to a browser dashboard via Server-Sent Events (SSE).
 
 Live frontend: https://crypto.nguyenchitrai.id.vn
 
@@ -12,52 +10,89 @@ Live frontend: https://crypto.nguyenchitrai.id.vn
 - Static frontend built with plain HTML, CSS, and JavaScript, suitable for Vercel.
 - FastAPI backend suitable for Render or another Python web host.
 - Realtime analysis flow through `POST /api/analyze` with SSE streaming.
-- MiniMax MCP `web_search` and `understand_image` support for live source cross-checking during agent analysis and chat.
-- Admin-only integrated chat inside the main dashboard through `POST /api/chat`, reusing the Google-authenticated backend session flow.
+- Multi-model support: MiniMax (with MCP web search) or DeepSeek (with webfetch tool).
+- Admin-only integrated chat inside the dashboard through `POST /api/chat`.
 - Live UI updates for agents, teams, reports, trace output, backend logs, and final decisions.
-- Configurable run settings: symbol, date, lookback, language, analysts, depth, model, and checkpoint mode.
+- Configurable run settings: symbol, date, lookback, language, analysts, depth, model, and checkpoint.
 - Google sign-in with admin-managed run permissions.
 - Optional Turso persistence for History and user access control.
 - TradingView chart page with a browser-stored watchlist.
 
 ## Architecture
 
-```text
+```
 Static dashboard
-	-> FastAPI backend
-	-> tradingagents graph/core
-	-> SSE stream back to the UI
-	-> optional Turso History/Admin persistence
+  -> FastAPI backend
+  -> tradingagents graph/core
+  -> SSE stream back to the UI
+  -> optional Turso History/Admin persistence
 ```
 
 Key files:
 
-- `app.py`: uvicorn entrypoint that imports `BE.server:app`.
-- `BE/`: FastAPI backend, auth, analysis streaming, history, and admin APIs.
-- `index.html`, `FE/scripts/*.js`, `FE/styles.css`, `FE/styles/*.css`, `FE/config.js`: frontend dashboard shell, runtime modules, and stylesheet partials.
-- `tradingagents/`: multi-agent orchestration, agents, graph logic, dataflows, and LLM clients.
-- `requirements.txt`: the only dependency installation source.
+| Path | Purpose |
+|------|---------|
+| `app.py` | Uvicorn entrypoint, imports `BE.server:app` |
+| `BE/server.py` | FastAPI app, all routes, CORS, static mount |
+| `BE/analysis/` | AnalysisService split by feature (orchestrator, chat, prefetch, emitter, formatting, graph utils) |
+| `BE/history/` | TursoHistoryStore + section builders |
+| `BE/config.py` | Backend settings from `.env` |
+| `BE/auth.py` | Google sign-in + admin auth |
+| `BE/models.py` | Pydantic request/response models |
+| `index.html` | Dashboard shell + page/modal structure |
+| `FE/config.js` | Frontend base URL + defaults |
+| `FE/scripts/core.js` | Constants, markdown/chat helpers, state factories |
+| `FE/scripts/config.js` | Config bootstrap, auth/session |
+| `FE/scripts/trace.js` | Trace merge, scroll, SSE parsing |
+| `FE/scripts/dashboard.js` | Dashboard panels, live flow diagram |
+| `FE/scripts/history.js` | History archive, pagination, detail |
+| `FE/scripts/reports.js` | Operations rail, reports, detail modals |
+| `FE/scripts/chart.js` | Chart workspace, admin page |
+| `FE/scripts/bootstrap.js` | State bootstrap, SSE consumer, DOM events |
+| `FE/styles/` | 8 CSS partials named by feature (foundation, theme, auth, execution, history, chat, chart, live-flow) |
+| `tradingagents/agents/analysts/` | Market, news, social, onchain analyst factories |
+| `tradingagents/agents/researchers/` | Bull/bear researcher factories |
+| `tradingagents/agents/risk_mgmt/` | Aggressive/conservative/neutral risk debators |
+| `tradingagents/agents/managers/` | Portfolio manager, verifier, decision extractor |
+| `tradingagents/graph/` | LangGraph orchestration + builder |
+| `tradingagents/dataflows/` | CCXT, CoinGlass, endpoint summaries |
+| `tradingagents/llm_clients/` | LLM provider clients (MiniMax MCP, Anthropic, OpenAI, DeepSeek, Google) |
+| `requirements.txt` | Single dependency source |
 
 ## Main Analysis Flow
 
-1. The user signs in with Google.
-2. The frontend loads public configuration from `FE/config.js` and `/api/config`.
-3. The user selects analysis settings and starts a run.
-4. The frontend calls `POST /api/analyze` with a JSON body and auth headers.
-5. The backend runs `TradingAgentsGraph`: Market collects CCXT/technical data for one LLM analysis, Onchain analyzes each CoinGlass endpoint once and then synthesizes, Social and News use MiniMax web search.
-6. The four branch reports feed Bull/Bear research debate, Risk Room debate, Portfolio Manager markdown, Verifier markdown audit, and the Decision Extractor structured payload.
-7. The dashboard renders progress, reports, debates, traces, logs, and the final decision in realtime.
-8. If Turso is configured, completed analysis sections and structured decision fields are saved to History.
+1. User signs in with Google.
+2. Frontend loads public configuration from `FE/config.js` and `/api/config`.
+3. User selects analysis settings and starts a run.
+4. Frontend calls `POST /api/analyze` with auth headers.
+5. Backend runs `TradingAgentsGraph`:
+   - **Market Analyst**: CCXT OHLCV + technical indicators, one LLM analysis.
+   - **Onchain Analyst**: CoinGlass endpoint analysis, then synthesis.
+   - **Social Analyst**: Live web search (MCP web_search or webfetch).
+   - **News Analyst**: Live web search (MCP web_search or webfetch).
+6. Four branch reports feed Bull/Bear research debate.
+7. Research debate flows into Risk Room (Aggressive/Conservative/Neutral debate).
+8. Portfolio Manager produces markdown decision.
+9. Verifier audits the decision; can route back for revision.
+10. Decision Extractor produces structured payload.
+11. Dashboard renders progress, reports, debates, traces, final decision in realtime.
+12. If Turso configured, analysis sections + structured decision saved to History.
 
 ## Local Setup
 
-Create `.env`:
+### 1. Create `.env`
+
+Copy the example file and fill in your keys:
 
 ```powershell
 Copy-Item .env-example .env
 ```
 
-Install dependencies:
+**Minimum required:**
+- `MINIMAX_API_KEY` or `DEEPSEEK_API_KEY` (LLM — pick one)
+- `GOOGLE_CLIENT_ID` (frontend auth)
+
+### 2. Install dependencies
 
 ```powershell
 py -3 -m venv .venv
@@ -65,83 +100,112 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Run the backend and bundled static frontend:
+### 3. Run
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000
 ```
 
-Open the dashboard:
+### 4. Open
 
-```text
+```
 http://127.0.0.1:8000
 ```
 
-Health check:
+Health check: `http://127.0.0.1:8000/health`
 
-```text
-http://127.0.0.1:8000/health
+If `FE/config.js` points to a deployed backend, override it locally:
+
 ```
-
-If `FE/config.js` points to a deployed backend, override it locally with:
-
-```text
 http://127.0.0.1:8000/?api_base_url=http://127.0.0.1:8000
 ```
 
 ## Environment
 
-Minimum variables for a working analysis flow:
+### Required (pick one LLM provider)
 
-- `MINIMAX_API_KEY` or `MINIMAX_CN_API_KEY`: required for analysis.
-- `GOOGLE_CLIENT_ID`: required for Google sign-in.
+| Variable | Description |
+|----------|-------------|
+| `MINIMAX_API_KEY` | MiniMax API key (`sk-xxxx...`) — MCP web_search for live retrieval |
+| `DEEPSEEK_API_KEY` | DeepSeek V4 Flash qua OpenCode (`sk-xxxx...`) — webfetch tool, nhẹ hơn |
 
-Common production variables:
+> **Khuyến nghị:** DeepSeek V4 Flash qua [OpenCode Go](https://opencode.ai/go) 5$/month là lựa chọn đơn giản và tiết kiệm. Chỉ cần `DEEPSEEK_API_KEY` và model `deepseek-v4-flash` là chạy được toàn bộ luồng phân tích. [MiniMax](https://platform.minimax.io/subscribe/token-plan) 10$/month phù hợp khi cần web_search nhiều nguồn chéo hơn và mức chi phí $10/tháng (Starter tier).
 
-- `CORS_ALLOW_ORIGINS`: required when the frontend and backend are deployed on different origins.
-- `ADMIN_EMAILS`: optional seed admins with analysis and user-management permissions.
-- `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`: optional, enables History/Admin persistence.
-- `MINIMAX_MCP_*`: optional controls for the MiniMax MCP server. MCP is enabled by default for MiniMax; credentials are read from `MINIMAX_API_KEY` / `MINIMAX_CN_API_KEY`, and the MCP host is normally derived from `MINIMAX_BASE_URL`.
+### Required (frontend auth)
 
-Trusted web sources for MCP search live in `tradingagents/default_config.py` under `preferred_reference_sources`. When MiniMax MCP web search is enabled, agents are instructed to retrieve or cross-check every configured trusted URL before final market-facing conclusions, then optionally search beyond those sources.
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_CLIENT_ID` | Google OAuth client ID for sign-in |
 
-Most other values in `.env-example` are optional defaults or runtime tuning. Leave them unset unless you need to override the default behavior.
+### Optional (history persistence)
 
-Do not commit real secrets in `.env`.
+| Variable | Description |
+|----------|-------------|
+| `TURSO_DATABASE_URL` | Turso/LibSQL database URL |
+| `TURSO_AUTH_TOKEN` | Turso auth token |
+
+### Optional (on-chain data)
+
+| Variable | Description |
+|----------|-------------|
+| `COINGLASS_API_KEY` | CoinGlass API key for onchain analysis |
+
+### Optional (deployment)
+
+| Variable | Description |
+|----------|-------------|
+| `CORS_ALLOW_ORIGINS` | Comma-separated CORS origins (required for cross-origin deploy) |
+| `FRONTEND_ORIGIN` | Frontend origin added to CORS allow list |
+
+### Optional (tuning)
+
+| Variable | Description |
+|----------|-------------|
+| `ADMIN_EMAILS` | Comma-separated admin emails |
+| `PORT` | Server port (default: `8000`) |
+| `LOG_LEVEL` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+
+See `.env-example` for the full list with descriptions.
 
 ## Deployment
 
-Recommended deployment stack:
+Recommended stack:
 
-- Frontend: [Vercel](https://vercel.com/) static hosting.
-- Backend: [Render](https://render.com/) FastAPI service.
-- Database: [Turso](https://turso.tech), only when History/Admin persistence is needed.
-- LLM: MiniMax. The [MiniMax Token Plan](https://platform.minimax.io/docs/guides/pricing-token-plan) Starter tier starts at `$10/month`, which is enough to run the full analysis flow for this project.
+| Layer | Platform | Notes |
+|-------|----------|-------|
+| Frontend | [Vercel](https://vercel.com/) | Static hosting |
+| Backend | [Render](https://render.com/) | FastAPI service |
+| Database | [Turso](https://turso.tech) | Optional, for History/Admin |
+| LLM | [MiniMax](https://platform.minimax.io/subscribe/token-plan) or [DeepSeek](https://opencode.ai/go) | Opencode Starter tier: $5/month minimum |
 
-This stack keeps the frontend, backend, and database on practical free tiers for small deployments; only the LLM usage normally needs a paid plan.
-
-Backend start command:
+Backend start command on Render:
 
 ```powershell
 uvicorn app:app --host 0.0.0.0 --port $env:PORT
 ```
 
-Deploy the frontend as static assets:
+Deploy the frontend as static assets: `index.html`, `FE/`, `image/`.
 
-- `index.html`
-- `FE/`
-- `image/`
-
-When frontend and backend use different origins:
-
+Cross-origin deploy checklist:
+- Set `CORS_ALLOW_ORIGINS` to the real frontend origin.
 - Set `FE/config.js` `apiBaseUrl` to the backend origin.
-- Set `CORS_ALLOW_ORIGINS` to the real frontend origin for your deployment.
-- Keep MiniMax, Google, and Turso secrets only in backend environment variables.
+- Keep all secrets (API keys, tokens) only in backend environment variables.
+
+## Switching Between MiniMax and DeepSeek
+
+Cả hai model đều chạy được toàn bộ luồng phân tích. Khác biệt chính ở công cụ web retrieval:
+
+| Model | Web Search | Endpoint | Setup |
+|-------|-----------|----------|-------|
+| **DeepSeek V4 Flash** (recommended) | `webfetch` qua urllib | `https://opencode.ai/zen/go/v1` | `DEEPSEEK_API_KEY` trong `.env` |
+| MiniMax M2.5 | MCP `web_search` | `https://api.minimax.io/anthropic` | `MINIMAX_API_KEY` trong `.env` |
+
+**DeepSeek V4 Flash qua OpenCode** là lựa chọn mặc định được khuyến nghị: đơn giản, nhẹ, không cần cài đặt MCP server. Model được chọn trong UI config là `deepseek-v4-flash`.
+
+**MiniMax M2.5** mạnh hơn về web search (kết quả có cấu trúc, cross-check nhiều nguồn), nhưng cần MCP server (`minimax-coding-plan-mcp`) và API key riêng. Phù hợp khi cần độ chính xác cao nhất từ các nguồn web trực tiếp.
 
 ## Notes
 
 - `asset_type` currently supports crypto only.
-- History currently requires login; public history mode is not enabled in the backend.
-- Standalone `llm.html` is no longer the main chat surface; chat now lives directly in the dashboard.
-- Telegram bot, MongoDB, and frontend frameworks are not part of the current implementation.
 - This is a research assistant, not financial advice.
+- Telegram bot, MongoDB, and frontend frameworks are not part of the current implementation.
