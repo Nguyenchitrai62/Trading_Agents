@@ -29,6 +29,23 @@ class TursoHistoryStore:
         return bool(self.database_url and self.auth_token)
 
     @staticmethod
+    def _extract_md_numeric(markdown: str, labels: list[str]) -> float | None:
+        import re
+        if not markdown or not labels:
+            return None
+        for label in labels:
+            escaped = re.escape(label)
+            pattern = rf'(?i)(?:^|\n)\s*[-*]*\s*\**\s*{escaped}\s*\**\s*[:=-]\s*\$?\s*([\d,]+(?:\.\d+)?)'
+            match = re.search(pattern, markdown)
+            if match:
+                raw = match.group(1).replace(",", "").replace("$", "").strip()
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    @staticmethod
     def _coerce_float(value: object) -> float | None:
         try:
             return float(value)
@@ -585,6 +602,39 @@ class TursoHistoryStore:
         if decision_payload or verification_payload or current_price is not None:
             decision_signal = str(decision_payload.get("signal") or signal or "").strip()
             decision_fields = compatibility_decision_fields(decision_payload)
+            if not decision_signal:
+                decision_signal = signal
+            final_markdown = ""
+            for section in (sections or []):
+                if str(section.get("section_key") or "").strip() == "final_trade_decision":
+                    final_markdown = str(section.get("markdown") or "").strip()
+                    break
+            if final_markdown:
+                if not decision_signal or decision_signal in ("", "Completed"):
+                    from tradingagents.agents.utils.rating import parse_rating
+                    decision_signal = str(parse_rating(final_markdown, default=decision_signal or signal)).strip()
+                if decision_fields.get("primary_limit_price") is None:
+                    decision_fields["primary_limit_price"] = self._extract_md_numeric(
+                        final_markdown,
+                        ["Primary Limit Buy", "Limit Buy Price", "Buy Limit", "Entry Limit", "Primary Limit Buy Price",
+                         "Primary Limit Sell", "Limit Sell Price", "Sell Limit", "Exit Limit", "Primary Limit Sell Price"],
+                    )
+                if decision_fields.get("secondary_limit_price") is None:
+                    decision_fields["secondary_limit_price"] = self._extract_md_numeric(
+                        final_markdown,
+                        ["Secondary Limit Buy", "Secondary Buy Limit", "Secondary Limit Buy Price",
+                         "Secondary Limit Sell", "Secondary Sell Limit", "Secondary Limit Sell Price"],
+                    )
+                if decision_fields.get("stop_loss") is None:
+                    decision_fields["stop_loss"] = self._extract_md_numeric(
+                        final_markdown,
+                        ["Stop Loss", "Stop-Loss", "Stop loss", "Invalidation Level", "Invalidation"],
+                    )
+                if decision_fields.get("take_profit") is None:
+                    decision_fields["take_profit"] = self._extract_md_numeric(
+                        final_markdown,
+                        ["Take Profit", "Take-Profit", "Take profit", "Target", "Profit Target", "Exit Target", "Exit Objective"],
+                    )
             statements.append(
                 (
                     """

@@ -1,16 +1,22 @@
-"""Portfolio Manager: prose-first final signal."""
+"""Portfolio Manager: prose-first final signal with inline structured extraction."""
 
 from __future__ import annotations
 
+from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_coinglass_context_instruction,
     get_coinglass_packages_for_role,
     get_language_instruction,
 )
+from tradingagents.agents.utils.decision import validate_portfolio_decision
 from tradingagents.agents.utils.evidence import format_evidence_ledger
 from tradingagents.agents.utils.rating import parse_rating
-from tradingagents.agents.utils.structured import resolve_structured_base_llm
+from tradingagents.agents.utils.structured import (
+    bind_structured,
+    invoke_structured_or_freetext_result,
+    resolve_structured_base_llm,
+)
 from tradingagents.llm_clients.base_client import normalize_content
 
 
@@ -158,6 +164,34 @@ Be decisive and ground every conclusion in specific evidence from the analysts.{
         base_llm = resolve_structured_base_llm(llm)
         final_trade_decision = _force_signal_first_line(_normalize_response_text(base_llm.invoke(prompt)))
 
+        structured_payload = {}
+        structured_llm = bind_structured(llm, PortfolioDecision, "Portfolio Manager")
+        if structured_llm is not None:
+            extraction_prompt = f"""Extract the Portfolio Manager prose decision into the PortfolioDecision schema.
+
+Use only facts explicitly present in the markdown. Do not invent values.
+
+Portfolio Manager decision markdown:
+{final_trade_decision}
+"""
+            rendered, parsed = invoke_structured_or_freetext_result(
+                structured_llm,
+                base_llm,
+                extraction_prompt,
+                render_pm_decision,
+                "Portfolio Manager",
+            )
+            if parsed is not None:
+                payload = parsed.model_dump(mode="json")
+                validation_errors = validate_portfolio_decision(payload)
+                if validation_errors:
+                    payload["decision_validation_status"] = "invalid"
+                    payload["decision_validation_errors"] = validation_errors
+                else:
+                    payload["decision_validation_status"] = "valid"
+                payload["extracted_by"] = "portfolio_manager"
+                structured_payload = payload
+
         new_risk_debate_state = {
             "judge_decision": final_trade_decision,
             "history": risk_debate_state["history"],
@@ -174,7 +208,7 @@ Be decisive and ground every conclusion in specific evidence from the analysts.{
         return {
             "risk_debate_state": new_risk_debate_state,
             "final_trade_decision": final_trade_decision,
-            "final_trade_decision_structured": {},
+            "final_trade_decision_structured": structured_payload,
         }
 
     return portfolio_manager_node

@@ -101,7 +101,9 @@ function renderTopNotice() {
         const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
         const depth = state.run.meta?.research_depth || payload?.research_depth || state.config.analysis_defaults.research_depth;
         const lookback = state.run.meta?.lookback_days || payload?.lookback_days || state.config.analysis_defaults.lookback_days;
-        notice = `${symbol} - ${lookback}d - ${depth} depth - ${progress.completed}/${progress.total} tasks`;
+        const revCount = Number(state.run.revisionCount || 0);
+        const revSuffix = revCount > 0 ? ` (Rev ${revCount})` : "";
+        notice = `${symbol} - ${lookback}d - ${depth} depth - ${progress.completed}/${progress.total} tasks${revSuffix}`;
     } else if (state.run.complete) {
         const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
         const signal = state.run.complete.signal || "analysis completed";
@@ -888,7 +890,6 @@ function buildLiveFlowNodes() {
         return getLiveFlowBlockError(blockKey) ? "error" : statusFor(complete, active, riskCanRun);
     };
     const finalDecisionReady = hasSection("final_trade_decision") && flowSectionCompleted("final_trade_decision");
-    const decisionExtractorReady = hasStructuredPayload("final_trade_decision") && flowSectionCompleted("final_trade_decision_structured");
     const verifierReady = hasSection("verification_report") && flowSectionCompleted("verification_report");
     const persistenceReady = Boolean(state.run.complete);
 
@@ -927,17 +928,28 @@ function buildLiveFlowNodes() {
         riskDebate: { blockKey: "risk_debate", title: "Risk Debate", ready: riskDebateReady, status: getLiveFlowBlockError("risk_debate") ? "error" : statusFor(riskDebateReady, riskCanRun && Boolean(state.run.risk?.history || groupStatus("risk", "Aggressive Analyst") === "in_progress" || groupStatus("risk", "Conservative Analyst") === "in_progress" || groupStatus("risk", "Neutral Analyst") === "in_progress"), riskCanRun), tone: "risk", detail: { key: "riskDebate" }, error: getLiveFlowBlockError("risk_debate") },
         portfolioManager: {
             blockKey: "portfolio_manager",
-            title: "Portfolio Manager",
+            title: (() => {
+                const rc = Number(state.run.revisionCount || 0);
+                if (rc > 0) {
+                    return `Portfolio Manager (Rev ${rc})`;
+                }
+                return "Portfolio Manager";
+            })(),
             ready: finalDecisionReady,
             status: getLiveFlowBlockError("portfolio_manager") ? "error" : statusFor(finalDecisionReady, portfolioBackendStatus === "in_progress" || isCurrent("Portfolio Manager"), riskDebateReady),
             tone: "decision",
             detail: { type: "report", section: "final_trade_decision", title: "Portfolio Manager", subtitle: "Final decision" },
             error: getLiveFlowBlockError("portfolio_manager"),
         },
-        decisionExtractor: { blockKey: "decision_extractor", title: "Decision Extractor", ready: decisionExtractorReady, status: getLiveFlowBlockError("decision_extractor") ? "error" : statusFor(decisionExtractorReady, groupStatus("portfolio", "Decision Extractor") === "in_progress" || isCurrent("Decision Extractor"), verifierReady), tone: "evidence", detail: { key: "decisionExtractor" }, error: getLiveFlowBlockError("decision_extractor") },
         verifier: {
             blockKey: "verifier",
-            title: "Verifier",
+            title: (() => {
+                const rc = Number(state.run.revisionCount || 0);
+                if (rc > 0) {
+                    return `Verifier (Rev ${rc})`;
+                }
+                return "Verifier";
+            })(),
             ready: verifierReady,
             status: getLiveFlowBlockError("verifier") ? "error" : statusFor(verifierReady, groupStatus("portfolio", "Verifier") === "in_progress" || isCurrent("Verifier"), finalDecisionReady),
             tone: "review",
@@ -959,6 +971,9 @@ function buildLiveFlowBoardState() {
     const currentFocus = state.run.status?.current_agent || "Waiting";
     const latestOutput = state.run.latestReportTitle || complete.signal || state.run.cancelled?.message || latestTool?.title || "-";
     const tone = state.run.cancelled ? "warning" : state.isBusy ? "progress" : state.run.complete ? "completed" : "idle";
+    const revisionCount = Number(state.run.revisionCount || 0);
+    const maxRevisions = Number(state.run.maxRevisions || 2);
+    const isRevising = revisionCount > 0 && !state.run.complete;
 
     return {
         complete,
@@ -971,6 +986,9 @@ function buildLiveFlowBoardState() {
         currentFocus,
         latestOutput,
         tone,
+        revisionCount,
+        maxRevisions,
+        isRevising,
     };
 }
 
@@ -1298,6 +1316,29 @@ function renderLiveFlowWireIf(visible, className = "", fromNode = null, toNode =
     return visible ? renderLiveFlowWire(className, fromNode, toNode) : "";
 }
 
+function renderLiveFlowRevisionLoop(flow = {}) {
+    const revisionCount = Number(state.run.revisionCount || 0);
+    const verifierReady = flow.verifier?.ready;
+    const isRevising = revisionCount > 0 && verifierReady && !state.run.complete;
+    if (!isRevising) {
+        return "";
+    }
+    const revisionIssues = Array.isArray(state.run.revisionIssues) ? state.run.revisionIssues : [];
+    const issueSummary = revisionIssues.length
+        ? revisionIssues.map((issue) => escapeHtml(String(issue).slice(0, 120))).join("; ")
+        : "Portfolio Manager is re-evaluating the decision.";
+    return renderLiveFlowCurveWire(
+        ["M50 0 C80 0 80 80 50 80"],
+        `live-flow-wire live-flow-wire--revision live-flow-wire--revision-${Math.min(revisionCount, 2)}`,
+        "0 0 100 80",
+    ) + `
+        <div class="live-flow-revision-notice" title="${issueSummary}">
+            <span class="live-flow-revision-badge">Revision ${revisionCount}/2</span>
+            <span class="live-flow-revision-hint">Verifier sent decision back to Portfolio Manager</span>
+        </div>
+    `;
+}
+
 function renderLiveFlowSingle(node = {}, className = "") {
     if (!isLiveFlowNodeVisible(node)) {
         return "";
@@ -1340,7 +1381,6 @@ function getLiveFlowSignature() {
         flow.riskDebate,
         flow.portfolioManager,
         flow.verifier,
-        flow.decisionExtractor,
         flow.persistence,
     ]
         .filter(Boolean)
@@ -1405,7 +1445,6 @@ function walkLiveFlowNodes(visitor) {
         flow.riskDebate,
         flow.portfolioManager,
         flow.verifier,
-        flow.decisionExtractor,
         flow.persistence,
     ].filter(Boolean).forEach(visitor);
 }
@@ -1425,7 +1464,6 @@ function renderLiveAgentFlow() {
     const riskDebateVisible = isLiveFlowNodeVisible(flow.riskDebate);
     const portfolioVisible = isLiveFlowNodeVisible(flow.portfolioManager);
     const verifierVisible = isLiveFlowNodeVisible(flow.verifier);
-    const decisionExtractorVisible = isLiveFlowNodeVisible(flow.decisionExtractor);
     const persistenceVisible = isLiveFlowNodeVisible(flow.persistence);
     const analystGroupNode = combineLiveFlowNodes(flow.analystNodes || []);
     const researcherGroupNode = combineLiveFlowNodes([flow.bullResearcher, flow.bearResearcher]);
@@ -1449,9 +1487,8 @@ function renderLiveAgentFlow() {
         renderLiveFlowSingle(flow.portfolioManager, "live-flow-single--portfolio"),
         renderLiveFlowWireIf(portfolioVisible && verifierVisible, "live-flow-wire--portfolio-to-verifier", flow.portfolioManager, flow.verifier),
         renderLiveFlowSingle(flow.verifier, "live-flow-single--verifier"),
-        renderLiveFlowWireIf(verifierVisible && decisionExtractorVisible, "live-flow-wire--verifier-to-extractor", flow.verifier, flow.decisionExtractor),
-        renderLiveFlowSingle(flow.decisionExtractor, "live-flow-single--extractor"),
-        renderLiveFlowWireIf(decisionExtractorVisible && persistenceVisible, "live-flow-wire--extractor-to-persistence", flow.decisionExtractor, flow.persistence),
+        renderLiveFlowRevisionLoop(flow),
+        renderLiveFlowWireIf(verifierVisible && persistenceVisible, "live-flow-wire--verifier-to-persistence", flow.verifier, flow.persistence),
         renderLiveFlowSingle(flow.persistence, "live-flow-single--persistence"),
     ];
 

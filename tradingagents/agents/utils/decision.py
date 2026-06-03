@@ -46,14 +46,18 @@ def active_limit_prices(decision: dict[str, Any]) -> tuple[float | None, float |
 def compatibility_decision_fields(decision: dict[str, Any]) -> dict[str, Any]:
     """Return DB-compatible fields without parsing prose markdown."""
     primary, secondary = active_limit_prices(decision)
+    stop_loss = coerce_float(decision.get("stop_loss"))
+    take_profit = coerce_float(decision.get("take_profit"))
     if str(decision.get("decision_validation_status") or "").lower() == "invalid":
-        primary = None
-        secondary = None
-        stop_loss = None
-        take_profit = None
-    else:
-        stop_loss = coerce_float(decision.get("stop_loss"))
-        take_profit = coerce_float(decision.get("take_profit"))
+        errors = list(decision.get("decision_validation_errors") or [])
+        if any("primary_limit" in str(e).lower() for e in errors):
+            primary = None
+        if any("secondary_limit" in str(e).lower() for e in errors):
+            secondary = None
+        if any("stop_loss" in str(e).lower() for e in errors):
+            stop_loss = None
+        if any("take_profit" in str(e).lower() for e in errors):
+            take_profit = None
     return {
         "primary_limit_price": primary,
         "secondary_limit_price": secondary,

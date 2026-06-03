@@ -1720,14 +1720,6 @@ class AnalysisService:
             return "Portfolio Manager"
         if not sections.get("verification_report"):
             return "Verifier"
-        structured = snapshot.get("structured", {})
-        verification = structured.get("verification_report") or {}
-        verdict = str(verification.get("verdict") or "").strip().lower()
-        if verdict == "approved" and not structured.get("final_trade_decision"):
-            return "Decision Extractor"
-        revision_count = int(snapshot.get("decision_revision_count") or 0)
-        if revision_count < 2 and not structured.get("final_trade_decision"):
-            return "Portfolio Manager"
         return None
 
     @staticmethod
@@ -1736,7 +1728,7 @@ class AnalysisService:
             return "research"
         if agent in {"Aggressive Analyst", "Conservative Analyst", "Neutral Analyst"}:
             return "risk"
-        if agent in {"Portfolio Manager", "Verifier", "Decision Extractor"}:
+        if agent in {"Portfolio Manager", "Verifier"}:
             return "portfolio"
         if agent:
             return "analysts"
@@ -1869,28 +1861,19 @@ class AnalysisService:
             {
                 "key": "portfolio_manager",
                 "label": "Portfolio Manager",
-                "status": "completed"
-                if sections.get("final_trade_decision")
-                else "in_progress"
+                "status": "in_progress"
                 if current_agent == "Portfolio Manager"
+                else "completed"
+                if sections.get("final_trade_decision")
                 else "pending",
             },
             {
                 "key": "verifier",
                 "label": "Verifier",
-                "status": "completed"
+                "status": "in_progress"
+                if current_agent == "Verifier" or (sections.get("final_trade_decision") and not sections.get("verification_report"))
+                else "completed"
                 if sections.get("verification_report")
-                else "in_progress"
-                if sections.get("final_trade_decision")
-                else "pending",
-            },
-            {
-                "key": "decision_extractor",
-                "label": "Decision Extractor",
-                "status": "completed"
-                if snapshot.get("structured", {}).get("final_trade_decision")
-                else "in_progress"
-                if current_agent == "Decision Extractor"
                 else "pending",
             },
         ]
@@ -1906,10 +1889,8 @@ class AnalysisService:
         completed_sections += int(bool(sections.get("verification_report")))
         completed_sections += int(bool(snapshot.get("structured", {}).get("final_trade_decision")))
 
-        if snapshot.get("structured", {}).get("final_trade_decision"):
+        if sections.get("verification_report") and snapshot.get("structured", {}).get("final_trade_decision"):
             phase = "complete"
-        elif sections.get("verification_report"):
-            phase = "extraction"
         elif sections.get("final_trade_decision"):
             phase = "verification"
         elif risk["history"] or research_turns_complete:
@@ -1924,6 +1905,7 @@ class AnalysisService:
         return {
             "current_agent": current_agent,
             "phase": phase,
+            "decision_revision_count": snapshot.get("decision_revision_count", 0) or 0,
             "progress": {
                 "completed": completed_sections,
                 "total": total_sections,
@@ -1963,8 +1945,8 @@ class AnalysisService:
                 "team": "Analyst Team",
             },
             "final_trade_decision": {
-                "title": "Decision Extractor",
-                "agent": "Decision Extractor",
+                "title": "Portfolio Manager Structured",
+                "agent": "Portfolio Manager",
                 "team": "Portfolio Management",
             },
             "verification_report": {
@@ -2455,6 +2437,19 @@ class AnalysisService:
                             max_debate_rounds=max_debate_rounds,
                             max_risk_rounds=max_risk_rounds,
                         )
+                        if next_agent == "Portfolio Manager" and current_snapshot.get("sections", {}).get("final_trade_decision"):
+                            revision_count = int(current_snapshot.get("decision_revision_count") or 0)
+                            verification = current_snapshot.get("structured", {}).get("verification_report") or {}
+                            emit(
+                                "verification_revision",
+                                {
+                                    "revision_count": revision_count,
+                                    "max_revisions": 2,
+                                    "previous_verdict": str(verification.get("verdict") or "Revise").strip(),
+                                    "issues": verification.get("issues") or [],
+                                    "message": f"Verifier requested revision {revision_count}/2. Portfolio Manager is re-evaluating the decision.",
+                                },
+                            )
                         emit_analysis_log(
                             self.agent_start_message(
                                 next_agent,

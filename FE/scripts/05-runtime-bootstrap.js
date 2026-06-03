@@ -250,6 +250,7 @@ function handleServerEvent(event, data) {
 
     if (event === "status_snapshot") {
         state.run.status = data;
+        state.run.revisionCount = Number(data.decision_revision_count || 0);
         if (data.current_agent && data.current_agent !== state.run.lastTrackedAgent) {
             state.run.lastTrackedAgent = data.current_agent;
             pushStreamFeed({
@@ -352,6 +353,19 @@ function handleServerEvent(event, data) {
         pushStreamFeed({
             title: "Warning",
             content: compactText(data.message || data, 220),
+            tone: "warning",
+        });
+        renderSoon();
+        return;
+    }
+
+    if (event === "verification_revision") {
+        state.run.revisionCount = Number(data.revision_count || 0);
+        state.run.maxRevisions = Number(data.max_revisions || 2);
+        state.run.revisionIssues = Array.isArray(data.issues) ? data.issues : [];
+        pushStreamFeed({
+            title: "Verifier → Revision",
+            content: compactText(data.message || `Revision ${state.run.revisionCount}/${state.run.maxRevisions}: Portfolio Manager is re-evaluating.`, 260),
             tone: "warning",
         });
         renderSoon();

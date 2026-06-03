@@ -70,7 +70,6 @@ class GraphSetup:
         conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
         portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
         verifier_node = create_verifier(self.deep_thinking_llm)
-        decision_extractor_node = create_decision_extractor(self.deep_thinking_llm)
 
         # Create workflow
         workflow = StateGraph(AgentState)
@@ -105,7 +104,6 @@ class GraphSetup:
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
         workflow.add_node("Verifier", verifier_node)
-        workflow.add_node("Decision Extractor", decision_extractor_node)
 
         # Define edges
         if use_parallel_analysts:
@@ -183,10 +181,8 @@ class GraphSetup:
             self.conditional_logic.should_continue_portfolio_verification,
             {
                 "Portfolio Manager": "Portfolio Manager",
-                "Decision Extractor": "Decision Extractor",
                 END: END,
             },
         )
-        workflow.add_edge("Decision Extractor", END)
 
         return workflow
