@@ -296,17 +296,30 @@ def create_app() -> FastAPI:
         return result
 
     @app.get("/api/admin/users")
-    async def list_admin_users(http_request: Request) -> dict:
+    async def list_admin_users(http_request: Request, page: int = 1, limit: int = 20) -> dict:
         await auth_service.require_admin_user(http_request)
         if not history_store.configured:
             raise HTTPException(status_code=503, detail="Turso history database is not configured.")
-        users = await asyncio.to_thread(
-            history_store.list_users,
-            SETTINGS.default_history_access_days,
-            SETTINGS.admin_emails,
+        safe_page = max(1, int(page or 1))
+        safe_limit = max(1, min(int(limit or 20), 200))
+        offset = (safe_page - 1) * safe_limit
+        users, total_count = await asyncio.gather(
+            asyncio.to_thread(
+                history_store.list_users,
+                SETTINGS.default_history_access_days,
+                SETTINGS.admin_emails,
+                safe_limit,
+                offset,
+            ),
+            asyncio.to_thread(history_store.count_users),
         )
+        total_pages = max(1, (total_count + safe_limit - 1) // safe_limit) if total_count else 1
         return {
             "items": users,
+            "page": safe_page,
+            "limit": safe_limit,
+            "total_count": total_count,
+            "total_pages": total_pages,
             "history_public_read": current_history_public_read(),
         }
 

@@ -65,6 +65,8 @@ const elements = {
     adminTabUsers: document.getElementById("adminTabUsers"),
     adminTabProcesses: document.getElementById("adminTabProcesses"),
     adminUsersPanel: document.getElementById("adminUsersPanel"),
+    adminUsersLayout: document.getElementById("adminUsersLayout"),
+    adminUserDetail: document.getElementById("adminUserDetail"),
     adminProcessesPanel: document.getElementById("adminProcessesPanel"),
     adminProcessList: document.getElementById("adminProcessList"),
     chatNewButton: document.getElementById("chatNewButton"),
@@ -1041,20 +1043,58 @@ elements.saveAdminHistoryPolicyButton?.addEventListener("click", () => {
         renderAdminPage();
     });
 });
-elements.adminUserList.addEventListener("change", (event) => {
+elements.adminUserList.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+
+    const pageNavButton = target.closest("[data-admin-page-nav]");
+    if (pageNavButton instanceof HTMLElement) {
+        const nav = pageNavButton.dataset.adminPageNav;
+        if (nav === "first") {
+            setAdminUsersPage(1);
+        } else if (nav === "prev") {
+            setAdminUsersPage(Math.max(1, state.admin.usersPage - 1));
+        } else if (nav === "next") {
+            setAdminUsersPage(Math.min(state.admin.usersTotalPages, state.admin.usersPage + 1));
+        } else if (nav === "last") {
+            setAdminUsersPage(state.admin.usersTotalPages);
+        }
+        return;
+    }
+
+    const pageTargetButton = target.closest("[data-admin-page-target]");
+    if (pageTargetButton instanceof HTMLElement) {
+        setAdminUsersPage(Number(pageTargetButton.dataset.adminPageTarget));
+        return;
+    }
+
+    const row = target.closest("[data-admin-email]");
+    if (row instanceof HTMLElement) {
+        const email = row.dataset.adminEmail || "";
+        selectUserForEdit(email);
+        return;
+    }
+});
+
+elements.adminUserDetail?.addEventListener("change", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) {
         return;
     }
-    const card = target.closest("[data-admin-email]");
-    if (!(card instanceof HTMLElement)) {
-        return;
-    }
-    syncAdminCardControls(card);
+    syncAdminDetailControls(elements.adminUserDetail);
 });
-elements.adminUserList.addEventListener("click", (event) => {
+
+elements.adminUserDetail?.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const closeBtn = target.closest("[data-admin-close-detail]");
+    if (closeBtn instanceof HTMLElement) {
+        state.admin.activeUserId = "";
+        renderAdminPage();
         return;
     }
     const saveButton = target.closest("[data-admin-save-user]");

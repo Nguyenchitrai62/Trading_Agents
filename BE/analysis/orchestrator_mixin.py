@@ -717,6 +717,7 @@ class AnalysisOrchestratorMixin:
         stream_active.set()
         slot_release_lock = threading.Lock()
         slot_released = False
+        run_cleaned_up = threading.Event()
 
         def release_slot_once() -> None:
             nonlocal slot_released
@@ -727,6 +728,15 @@ class AnalysisOrchestratorMixin:
                     return
                 self.release_analysis_slot()
                 slot_released = True
+
+        def cleanup_run_once() -> None:
+            if run_cleaned_up.is_set():
+                return
+            run_cleaned_up.set()
+            if analysis_request.run_id:
+                with self.active_analysis_lock:
+                    self.active_analysis_cancel_events.pop(analysis_request.run_id, None)
+            self._unregister_active_run(analysis_request.run_id)
 
         if analysis_request.run_id:
             with self.active_analysis_lock:
@@ -782,7 +792,8 @@ class AnalysisOrchestratorMixin:
                 logger.exception("analysis stream crashed")
                 emit("error", {"error": str(exc)})
             finally:
-                self._unregister_active_run(analysis_request.run_id)
+                cleanup_run_once()
+                release_slot_once()
                 try:
                     finish_future = asyncio.run_coroutine_threadsafe(queue.put(None), loop)
                     finish_future.result(timeout=1.0)
@@ -790,8 +801,6 @@ class AnalysisOrchestratorMixin:
                     finish_future.cancel()
                 except RuntimeError:
                     pass
-                finally:
-                    release_slot_once()
 
         worker_task = asyncio.create_task(asyncio.to_thread(worker))
         try:
@@ -844,11 +853,7 @@ class AnalysisOrchestratorMixin:
                 analysis_request.run_id,
                 analysis_request.symbol,
             )
-            raise
         finally:
-            if analysis_request.run_id:
-                with self.active_analysis_lock:
-                    self.active_analysis_cancel_events.pop(analysis_request.run_id, None)
             if not worker_task.done():
                 logger.info(
                     "analysis still running in background after stream ended: run_id=%s symbol=%s",
@@ -856,6 +861,7 @@ class AnalysisOrchestratorMixin:
                     analysis_request.symbol,
                 )
             else:
+                cleanup_run_once()
                 try:
                     await worker_task
                 except AnalysisCancelled:

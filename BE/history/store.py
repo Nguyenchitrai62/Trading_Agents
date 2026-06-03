@@ -447,7 +447,7 @@ class TursoHistoryStore:
         )
         return self._format_user_access(rows[0] if rows else None, normalized_email, default_history_access_days, admin_emails)
 
-    def list_users(self, default_history_access_days: int, admin_emails: frozenset[str], limit: int = 500) -> list[dict]:
+    def list_users(self, default_history_access_days: int, admin_emails: frozenset[str], limit: int = 500, offset: int = 0) -> list[dict]:
         self.ensure_schema()
         rows = self._query_rows(
             """
@@ -456,14 +456,21 @@ class TursoHistoryStore:
             FROM auth_users
             ORDER BY last_seen_at DESC
             LIMIT ?
+            OFFSET ?
             """,
-            [limit],
+            [limit, offset],
         )
         users = [self._format_user_access(row, row["email"], default_history_access_days, admin_emails) for row in rows]
-        seen = {user["email"] for user in users}
-        for email in sorted(admin_emails - seen):
-            users.append(self._format_user_access(None, email, default_history_access_days, admin_emails))
+        if offset == 0:
+            seen = {user["email"] for user in users}
+            for email in sorted(admin_emails - seen):
+                users.append(self._format_user_access(None, email, default_history_access_days, admin_emails))
         return users
+
+    def count_users(self) -> int:
+        self.ensure_schema()
+        rows = self._query_rows("SELECT COUNT(*) AS total_count FROM auth_users", [])
+        return int((rows[0].get("total_count") or 0) if rows else 0)
 
     def update_user_access(
         self,

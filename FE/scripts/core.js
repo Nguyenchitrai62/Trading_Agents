@@ -329,10 +329,15 @@ function createEmptyHistoryState() {
 function createEmptyAdminState() {
     return {
         users: [],
+        usersPage: 1,
+        usersLimit: 20,
+        usersTotalCount: 0,
+        usersTotalPages: 1,
         loading: false,
         loaded: false,
         error: "",
         savingEmail: "",
+        activeUserId: "",
         historyPublicRead: false,
         historyPolicySaving: false,
         activeTab: "users",
