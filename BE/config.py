@@ -22,8 +22,8 @@ CPU_THREAD_ENV_VARS = (
 )
 DEFAULT_ANALYSTS = ("market", "onchain", "social", "news")
 APP_TITLE = "TradingAgents Analysis API"
-APP_VERSION = "0.2.0"
-DEFAULT_MODEL = "MiniMax-M2.5"
+APP_VERSION = "v0.0.1"
+DEFAULT_MODEL = "deepseek-v4-flash"
 DEEPSEEK_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
 DEEPSEEK_MODEL_PREFIXES = ("deepseek-v4-flash", "deepseek-v4-pro")
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 14

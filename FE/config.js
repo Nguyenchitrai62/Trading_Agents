@@ -2,7 +2,7 @@
     apiBaseUrl: "https://apicrypto.nguyenchitrai.id.vn",
     // apiBaseUrl: "http://localhost:8000",
     provider: "minimax",
-    defaultModel: "MiniMax-M2.5",
+    defaultModel: "deepseek-v4-flash",
     app: {
         pages: ["agent", "history", "chart", "admin", "chat"],
         defaultPage: "agent",
@@ -35,7 +35,7 @@
         outputLanguage: "vietnamese",
         selectedAnalysts: ["market", "onchain", "social", "news"],
         researchDepth: "auto",
-        model: "MiniMax-M2.5",
+        model: "deepseek-v4-flash",
         reasoningEffort: "max",
         checkpointEnabled: false,
     },
