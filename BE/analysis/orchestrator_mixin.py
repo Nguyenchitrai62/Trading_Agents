@@ -846,10 +846,10 @@ class AnalysisOrchestratorMixin:
                 if item is None:
                     break
                 yield item
-        except asyncio.CancelledError:
+        except BaseException:
             stream_active.clear()
-            logger.info(
-                "analysis stream task cancelled, letting analysis continue in background: run_id=%s symbol=%s",
+            logger.exception(
+                "analysis stream terminated unexpectedly, analysis continues in background: run_id=%s symbol=%s",
                 analysis_request.run_id,
                 analysis_request.symbol,
             )
@@ -863,6 +863,8 @@ class AnalysisOrchestratorMixin:
             else:
                 cleanup_run_once()
                 try:
-                    await worker_task
+                    await asyncio.shield(worker_task)
                 except AnalysisCancelled:
+                    pass
+                except BaseException:
                     pass
