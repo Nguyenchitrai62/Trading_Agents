@@ -25,6 +25,7 @@ const elements = {
     runStatusBadge: document.getElementById("runStatusBadge"),
     currentAgentText: document.getElementById("currentAgentText"),
     endpointText: document.getElementById("endpointText"),
+    appVersionBadge: document.getElementById("appVersionBadge"),
     topNoticeText: document.getElementById("topNoticeText"),
     pageTabs: document.getElementById("pageTabs"),
     agentPageButton: document.getElementById("agentPageButton"),
@@ -645,6 +646,19 @@ function bindConfigInputListeners() {
     elements.depthOptions.addEventListener("change", sync);
 }
 
+async function loadVersionBadge() {
+    const badge = elements.appVersionBadge;
+    if (!badge) return;
+    try {
+        const res = await fetch(state.apiBaseUrl + "/health", { signal: AbortSignal.timeout(5000) });
+        if (!res.ok) { badge.textContent = "0.0.0"; return; }
+        const data = await res.json();
+        badge.textContent = (data && data.version) ? data.version : "0.0.0";
+    } catch {
+        badge.textContent = "0.0.0";
+    }
+}
+
 async function loadConfig() {
     let config = normalizeFrontendConfig();
     state.config = config;
@@ -671,6 +685,7 @@ async function loadConfig() {
     initializeGoogleAuth();
     refreshConfigUi();
     renderAll();
+    loadVersionBadge();
 }
 
 async function runAnalysis() {
@@ -1206,4 +1221,5 @@ loadConfig().catch((error) => {
     appendLog("config-error", error instanceof Error ? error.message : String(error));
     state.run.warnings.unshift(error instanceof Error ? error.message : String(error));
     renderAll();
+    loadVersionBadge();
 });

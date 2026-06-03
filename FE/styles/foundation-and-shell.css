@@ -333,10 +333,20 @@ p {
 }
 
 .topbar-copy strong {
-    display: block;
+    display: inline;
     font-size: 0.94rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+}
+
+.version-badge {
+    font-size: 0.72rem;
+    color: var(--ink);
+    vertical-align: super;
+    line-height: 1;
+    white-space: nowrap;
+    position: relative;
+    top: -0.15em;
 }
 
 .top-notice {
