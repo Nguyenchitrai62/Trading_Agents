@@ -217,7 +217,7 @@ __marimo__/
 
 # Cache
 **/data_cache/
-_test
+_test_dev
 docs
 .codegraph
 .plan_done
