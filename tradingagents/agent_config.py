@@ -16,13 +16,11 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS": "max_debate_rounds",
     "TRADINGAGENTS_MAX_RISK_ROUNDS": "max_risk_discuss_rounds",
     "TRADINGAGENTS_ANALYST_CONCURRENCY_LIMIT": "analyst_concurrency_limit",
-    "TRADINGAGENTS_LIVE_WEB_SEARCH_OWNER_ANALYST": "live_web_search_owner_analyst",
     "TRADINGAGENTS_COINGLASS_OWNER_ANALYST": "coinglass_owner_analyst",
     "TRADINGAGENTS_COINGLASS_OWNER_AGENT_LABEL": "coinglass_owner_agent_label",
     "TRADINGAGENTS_COINGLASS_PROMPT_CHAR_LIMIT": "coinglass_prompt_char_limit",
     "TRADINGAGENTS_ONCHAIN_ENDPOINT_LLM_CONCURRENCY": "onchain_endpoint_llm_concurrency",
     "TRADINGAGENTS_CHECKPOINT_ENABLED": "checkpoint_enabled",
-    "TRADINGAGENTS_BENCHMARK_TICKER": "benchmark_ticker",
     "MINIMAX_MCP_ENABLED": "minimax_mcp_enabled",
     "MINIMAX_MCP_COMMAND": "minimax_mcp_command",
     "MINIMAX_MCP_ARGS": "minimax_mcp_args",
@@ -59,11 +57,6 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "project_dir": os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
     "results_dir": os.getenv("TRADINGAGENTS_RESULTS_DIR", os.path.join(_TRADINGAGENTS_HOME, "logs")),
     "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR", os.path.join(_TRADINGAGENTS_HOME, "cache")),
-    "memory_log_path": os.getenv("TRADINGAGENTS_MEMORY_LOG_PATH", os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md")),
-    # Optional cap on the number of resolved memory log entries. When set,
-    # the oldest resolved entries are pruned once this limit is exceeded.
-    # Pending entries are never pruned. None disables rotation entirely.
-    "memory_log_max_entries": None,
     # LLM settings
     "llm_provider": "openai",
     "deep_think_llm": "gpt-5.4",
@@ -110,9 +103,6 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "max_risk_discuss_rounds": 1,
     "max_recur_limit": 100,
     "analyst_concurrency_limit": 4,
-    # Legacy live-web owner switch. The current crypto flow assigns live web
-    # retrieval directly to Social and News, while Market is code-first.
-    "live_web_search_owner_analyst": "",
     # CoinGlass context is owned by the Onchain analyst branch.
     "coinglass_owner_analyst": "onchain",
     "coinglass_owner_agent_label": "Onchain Analyst",
@@ -177,25 +167,4 @@ DEFAULT_CONFIG = _apply_env_overrides({
         "bitcoin miners hashrate difficulty exchange reserves whale flows on-chain accumulation distribution",
         "Binance Coinbase Bybit derivatives basis options skew perp funding crypto market sentiment",
     ],
-    # Data vendor configuration
-    # Category-level configuration (default for all tools in category)
-    "data_vendors": {
-        "core_stock_apis": "yfinance",       # Kept for legacy compatibility and benchmark/reflection paths
-        "crypto_market_apis": "ccxt",        # Options: ccxt
-        "technical_indicators": "yfinance",  # Legacy fallback; primary crypto market work stays on ccxt
-        "fundamental_data": "yfinance",      # Legacy fallback for any non-price contextual pulls
-        "news_data": "yfinance",             # Primary news vendor; tool-level fallback extends this below
-    },
-    # Tool-level configuration (takes precedence over category-level)
-    "tool_vendors": {
-        "get_news": "yfinance,alpha_vantage",
-        "get_global_news": "yfinance,alpha_vantage",
-    },
-    # Benchmark for alpha calculation in the reflection layer.
-    # The product is now crypto-first, so BTC is the default baseline for
-    # relative performance instead of SPY.
-    "benchmark_ticker": "BTC-USD",
-    "benchmark_map": {
-        "": "BTC-USD",  # fallback if explicit benchmark_ticker is disabled
-    },
 })

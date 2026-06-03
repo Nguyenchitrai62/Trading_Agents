@@ -99,7 +99,11 @@ function renderTopNotice() {
     } else if (state.isBusy) {
         const progress = state.run.status?.progress || { completed: 0, total: 0 };
         const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
-        const depth = state.run.meta?.research_depth || payload?.research_depth || state.config.analysis_defaults.research_depth;
+        const depth = state.run.depthEscalation
+            ? `${state.run.depthEscalation.to_label || state.run.depthEscalation.to_rounds}r`
+            : (state.run.meta?.effective_research_depth && state.run.meta.effective_research_depth !== state.run.meta.research_depth
+                ? `${state.run.meta.research_depth || state.run.meta.effective_research_depth || "auto"} / ${state.run.meta.effective_research_depth}`
+                : state.run.meta?.research_depth || payload?.research_depth || state.config.analysis_defaults.research_depth);
         const lookback = state.run.meta?.lookback_days || payload?.lookback_days || state.config.analysis_defaults.lookback_days;
         const revCount = Number(state.run.revisionCount || 0);
         const revSuffix = revCount > 0 ? ` (Rev ${revCount})` : "";

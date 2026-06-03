@@ -660,18 +660,22 @@ function getSelectedLookbackDays() {
 }
 
 function collectConfigDraft() {
-    return {
+    const depth = getSelectedDepth();
+    const payload = {
         symbol: normalizeCryptoSymbol(elements.symbolInput.value),
         asset_type: "crypto",
-            analysis_date: todayIsoDate(),
+        analysis_date: todayIsoDate(),
         lookback_days: getSelectedLookbackDays(),
         output_language: getOutputLanguage(),
         selected_analysts: getCheckedAnalysts(),
-        research_depth: getSelectedDepth(),
         model: String(elements.modelSelect?.value || "").trim(),
         reasoning_effort: getReasoningEffort(),
         checkpoint_enabled: false,
     };
+    if (depth !== "auto") {
+        payload.research_depth = depth;
+    }
+    return payload;
 }
 
 function createRunId() {

@@ -1,20 +1,8 @@
 from langchain_core.messages import HumanMessage, RemoveMessage
 
-# Import tools from separate utility files
-from tradingagents.agents.utils.core_stock_tools import (
-    get_stock_data
-)
-from tradingagents.agents.utils.technical_indicators_tools import (
-    get_indicators
-)
 from tradingagents.agents.utils.crypto_market_tools import (
     get_crypto_indicators,
     get_crypto_ohlcv
-)
-from tradingagents.agents.utils.news_data_tools import (
-    get_news,
-    get_insider_transactions,
-    get_global_news
 )
 
 
@@ -91,21 +79,6 @@ def get_preferred_reference_sources_instruction() -> str:
         " If a trusted source is unreachable, state that limitation:\n"
         + "\n".join(lines)
     )
-
-
-def is_live_web_search_owner(*role_keys: str) -> bool:
-    """Return True when one of the supplied role aliases owns broad web validation."""
-    from tradingagents.dataflows.config import get_config
-
-    owner = _normalize_role_key(get_config().get("live_web_search_owner_analyst") or "")
-    if owner in {"", "none", "off", "disabled", "false"}:
-        return False
-
-    owner_aliases = _role_aliases(owner)
-    for role_key in role_keys:
-        if owner_aliases.intersection(_role_aliases(role_key)):
-            return True
-    return False
 
 
 def get_coinglass_packages_for_role(role_key: str) -> tuple[str, ...]:

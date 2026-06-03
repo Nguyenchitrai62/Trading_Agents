@@ -220,6 +220,14 @@ def _execute_tool_calls(
             )
             if isinstance(response, ToolMessage):
                 tool_messages.append(response)
+            elif response is None:
+                tool_messages.append(
+                    ToolMessage(
+                        content=f"{tool_name} returned no data.",
+                        name=tool_name,
+                        tool_call_id=tool_call_id,
+                    )
+                )
             else:
                 tool_messages.append(
                     ToolMessage(

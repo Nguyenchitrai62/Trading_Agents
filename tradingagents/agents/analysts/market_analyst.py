@@ -79,7 +79,8 @@ def _invoke_tool(tool, args: dict, trace_id: str) -> str:
     tool_name = str(getattr(tool, "name", "tool") or "tool")
     _emit_market_tool_trace("tool_call", tool_name, trace_id, _format_tool_call(tool_name, args))
     try:
-        result = str(tool.invoke(args))
+        raw = tool.invoke(args)
+        result = str(raw) if raw is not None else f"{tool_name} returned empty data"
     except Exception as exc:
         result = f"Error: {tool_name} failed: {exc}"
     _emit_market_tool_trace("tool_result", tool_name, trace_id, result)

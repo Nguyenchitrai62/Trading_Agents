@@ -304,6 +304,7 @@ function createEmptyRunState() {
         latestReportTitle: null,
         latestTraceId: null,
         flashLatestTrace: false,
+        depthEscalation: null,
     };
 }
 

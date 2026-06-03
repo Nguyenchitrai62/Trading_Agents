@@ -11,6 +11,8 @@ def normalize_content(response):
     Downstream agents expect response.content to be a string. This extracts
     and joins the text blocks, discarding reasoning/metadata blocks.
     """
+    if response is None:
+        return None
     content = response.content
     if isinstance(content, list):
         texts = [

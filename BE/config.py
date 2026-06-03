@@ -53,10 +53,10 @@ DEFAULT_COINGLASS_CONCURRENCY_LIMIT = 4
 RESEARCH_DEPTH_OPTIONS = {
     "auto": {
         "label": "Auto",
-        "rounds": 3,
-        "mcp_tool_rounds": 5,
-        "description": "Backend-managed baseline depth. Future escalation will be driven by evidence quality.",
-        "effective_depth": "medium",
+        "rounds": 1,
+        "mcp_tool_rounds": 3,
+        "description": "Evidence-driven escalation. Starts quick; escalates to deeper debate when analyst evidence is thin, contradictory, or low-confidence.",
+        "auto_escalation": True,
     },
     "quick": {
         "label": "Quick",

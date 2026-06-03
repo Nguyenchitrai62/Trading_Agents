@@ -538,6 +538,7 @@ class AnalysisService:
         depth_config = RESEARCH_DEPTH_OPTIONS[request.research_depth]
         effective_depth = str(depth_config.get("effective_depth") or request.research_depth)
         requested_rounds = depth_config["rounds"]
+        auto_escalation = bool(depth_config.get("auto_escalation"))
         return {
             "requested_depth": request.research_depth,
             "effective_depth": effective_depth,
@@ -545,6 +546,7 @@ class AnalysisService:
             "effective_rounds": requested_rounds,
             "llm_max_tokens": self.settings.analysis_llm_max_tokens,
             "mcp_max_tool_rounds": depth_config["mcp_tool_rounds"],
+            "auto_escalation": auto_escalation,
         }
 
     def get_minimax_client(self) -> AsyncAnthropic:
@@ -993,9 +995,6 @@ class AnalysisService:
                 "analyst_concurrency_limit": analyst_parallelism,
                 "openai_reasoning_effort": request.reasoning_effort,
                 "checkpoint_enabled": request.checkpoint_enabled,
-                "memory_log_path": None,
-                "historical_decision_context_enabled": False,
-                "persist_analysis_artifacts": False,
             }
         )
         owner_key = str(config.get("coinglass_owner_analyst") or "").strip()
@@ -1245,6 +1244,96 @@ class AnalysisService:
                 "count": risk_state.get("count", 0) or 0,
             },
             "decision_revision_count": state.get("decision_revision_count", 0) or 0,
+        }
+
+    @staticmethod
+    def evaluate_evidence_quality(snapshot: dict, selected_analysts: list[str]) -> dict:
+        evidence_items = list(snapshot.get("evidence_items") or [])
+        sections = snapshot.get("sections") or {}
+        spec_map = {key: ANALYST_NODE_SPECS[key] for key in selected_analysts if key in ANALYST_NODE_SPECS}
+
+        analyst_report_count = sum(1 for spec in spec_map.values() if sections.get(spec.report_key))
+        total_analysts = len(spec_map)
+        if analyst_report_count < total_analysts:
+            return {
+                "score": 0.0,
+                "should_escalate": False,
+                "escalated_rounds": 1,
+                "reason": f"Analysts still in progress ({analyst_report_count}/{total_analysts} reports complete).",
+                "label": "quick",
+                "evidence_count": len(evidence_items),
+                "confidence_mean": 0.0,
+            }
+
+        if not evidence_items:
+            return {
+                "score": 0.0,
+                "should_escalate": True,
+                "escalated_rounds": 5,
+                "reason": "Zero structured evidence items from any analyst — escalating to deep to force more rigorous debate and cross-validation.",
+                "label": "deep",
+                "evidence_count": 0,
+                "confidence_mean": 0.0,
+            }
+
+        confidences = [float(item.get("confidence", 0.0) or 0.0) for item in evidence_items]
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+        low_conf_count = sum(1 for c in confidences if c < 0.5)
+        evidence_count = len(evidence_items)
+        fresh_count = sum(
+            1 for item in evidence_items if str(item.get("freshness") or "").lower() in ("realtime", "recent")
+        )
+        unknown_direction = sum(
+            1 for item in evidence_items if str(item.get("direction") or "").lower() in ("unknown", "")
+        )
+        source_types = {str(item.get("source_type") or "other") for item in evidence_items}
+        source_diversity = len(source_types)
+        agent_labels = {str(item.get("agent_label") or item.get("agent") or "unknown") for item in evidence_items}
+        agent_contributors = len(agent_labels)
+
+        quality_score = (
+            avg_confidence * 0.35
+            + min(evidence_count / 12.0, 1.0) * 0.25
+            + min(fresh_count / 4.0, 1.0) * 0.20
+            + min(source_diversity / 4.0, 1.0) * 0.10
+            + min(agent_contributors / max(total_analysts, 1), 1.0) * 0.10
+        )
+
+        if quality_score < 0.35:
+            escalated, label, reason = 5, "deep", (
+                "Evidence quality critically low "
+                f"(score={quality_score:.2f}, conf={avg_confidence:.2f}, items={evidence_count}, "
+                f"fresh={fresh_count}, low-conf={low_conf_count}/{evidence_count}) — "
+                "escalating to deep for maximum debate rigor and cross-validation."
+            )
+        elif quality_score < 0.55:
+            escalated, label, reason = 3, "medium", (
+                "Evidence quality moderate "
+                f"(score={quality_score:.2f}, conf={avg_confidence:.2f}, items={evidence_count}, "
+                f"fresh={fresh_count}, sources={source_diversity}, low-conf={low_conf_count}) — "
+                "escalating to medium-depth debate."
+            )
+        else:
+            escalated, label, reason = 1, "quick", (
+                "Evidence quality sufficient "
+                f"(score={quality_score:.2f}, conf={avg_confidence:.2f}, items={evidence_count}, "
+                f"fresh={fresh_count}, sources={source_diversity}, contributors={agent_contributors}/{total_analysts}) — "
+                "keeping quick baseline; no escalation needed."
+            )
+
+        return {
+            "score": round(quality_score, 3),
+            "should_escalate": escalated > 1,
+            "escalated_rounds": escalated,
+            "reason": reason,
+            "label": label,
+            "evidence_count": evidence_count,
+            "confidence_mean": round(avg_confidence, 3),
+            "fresh_count": fresh_count,
+            "low_confidence_count": low_conf_count,
+            "source_diversity": source_diversity,
+            "agent_contributors": agent_contributors,
+            "total_analysts": total_analysts,
         }
 
     @staticmethod
@@ -2154,9 +2243,10 @@ class AnalysisService:
                 "asset_type": asset_type,
                 "output_language": request.output_language,
                 "research_depth": request.research_depth,
-                "effective_research_depth": runtime_profile["effective_depth"],
+                "effective_research_depth": runtime_profile["effective_depth"] or request.research_depth,
                 "depth_rounds": runtime_profile["effective_rounds"],
                 "mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
+                "auto_escalation_enabled": runtime_profile.get("auto_escalation", False),
                 "model": request.model,
                 "llm_max_tokens": runtime_profile["llm_max_tokens"],
                 "resource_constrained": self.settings.resource_constrained_mode,
@@ -2340,17 +2430,7 @@ class AnalysisService:
         seen_message_signatures: set[str] = set()
         try:
             ensure_not_cancelled()
-            if config.get("historical_decision_context_enabled") and config.get("memory_log_path"):
-                emit_analysis_log("Loading past context from memory log.", "memory")
-                past_context = graph.memory_log.get_past_context(symbol)
-            else:
-                emit_analysis_log(
-                    "Historical decision context disabled for stateless realtime API run.",
-                    "memory",
-                    future_ready=True,
-                )
-                past_context = ""
-            ensure_not_cancelled()
+            past_context = ""
             emit_analysis_log("Creating initial graph state.", "graph_setup")
             init_state = graph.propagator.create_initial_state(
                 symbol,
@@ -2373,6 +2453,7 @@ class AnalysisService:
             started_at = time.time()
             chunk_index = 0
             last_announced_agent = current_agent
+            auto_depth_evaluated = False
             emit_analysis_log("Graph stream started.", "stream", current_agent=current_agent)
             final_state.update(init_state)
             final_state["messages"] = []
@@ -2382,6 +2463,54 @@ class AnalysisService:
                     chunk_index += 1
                     updated_keys = self.merge_graph_state_update(final_state, update)
                     current_snapshot = self.extract_runtime_snapshot(final_state)
+
+                    if runtime_profile.get("auto_escalation") and not auto_depth_evaluated:
+                        quality = self.evaluate_evidence_quality(current_snapshot, filtered_analysts)
+                        if quality["should_escalate"] or quality["score"] > 0:
+                            spec_map = {
+                                key: ANALYST_NODE_SPECS[key] for key in filtered_analysts if key in ANALYST_NODE_SPECS
+                            }
+                            all_complete = all(
+                                current_snapshot.get("sections", {}).get(spec.report_key)
+                                for spec in spec_map.values()
+                            )
+                            if all_complete:
+                                auto_depth_evaluated = True
+                                new_rounds = quality["escalated_rounds"]
+                                old_rounds = graph.conditional_logic.max_debate_rounds
+                                if new_rounds != old_rounds:
+                                    graph.conditional_logic.max_debate_rounds = new_rounds
+                                    graph.conditional_logic.max_risk_discuss_rounds = new_rounds
+                                    config["max_debate_rounds"] = new_rounds
+                                    config["max_risk_discuss_rounds"] = new_rounds
+                                    emit(
+                                        "depth_escalation",
+                                        {
+                                            "from_rounds": old_rounds,
+                                            "from_label": {1: "quick", 3: "medium", 5: "deep"}.get(old_rounds, str(old_rounds)),
+                                            "to_rounds": new_rounds,
+                                            "to_label": quality["label"],
+                                            "reason": quality["reason"],
+                                            "quality_score": quality["score"],
+                                            "evidence_summary": {
+                                                "count": quality["evidence_count"],
+                                                "mean_confidence": quality["confidence_mean"],
+                                                "fresh_count": quality["fresh_count"],
+                                                "low_confidence_count": quality["low_confidence_count"],
+                                                "source_diversity": quality["source_diversity"],
+                                                "agent_contributors": quality["agent_contributors"],
+                                                "total_analysts": quality["total_analysts"],
+                                            },
+                                        },
+                                    )
+                                    emit_analysis_log(
+                                        f"Auto depth escalated from {old_rounds} to {new_rounds} rounds ({quality['label']}): {quality['reason']}",
+                                        "research",
+                                        current_agent=current_agent,
+                                    )
+                                else:
+                                    auto_depth_evaluated = True
+
                     current_agent = (
                         self.detect_current_agent(previous_snapshot, current_snapshot)
                         or self.graph_node_to_agent_label(node_name)
@@ -2475,13 +2604,6 @@ class AnalysisService:
                 raise RuntimeError("Analysis finished without a verification_report.")
 
             graph.curr_state = final_state
-            if config.get("persist_analysis_artifacts"):
-                graph._log_state(request.analysis_date, final_state)
-                graph.memory_log.store_decision(
-                    ticker=symbol,
-                    trade_date=request.analysis_date,
-                    final_trade_decision=final_state["final_trade_decision"],
-                )
             if config.get("checkpoint_enabled"):
                 clear_checkpoint(config["data_cache_dir"], symbol, request.analysis_date)
 

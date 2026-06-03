@@ -348,6 +348,28 @@ function handleServerEvent(event, data) {
         return;
     }
 
+    if (event === "depth_escalation") {
+        state.run.depthEscalation = data;
+        const fromLabel = data.from_label || `level ${data.from_rounds}`;
+        const toLabel = data.to_label || `level ${data.to_rounds}`;
+        const roundsDelta = (data.to_rounds || 1) - (data.from_rounds || 1);
+        const direction = roundsDelta > 0 ? "escalated" : "reduced";
+        pushStreamFeed({
+            title: `Depth ${direction}`,
+            content: compactText(
+                `Auto depth ${direction} from ${fromLabel} (${data.from_rounds}r) → ${toLabel} (${data.to_rounds}r). ${data.reason || ""}`,
+                300,
+            ),
+            tone: roundsDelta > 0 ? "warning" : "live",
+        });
+        if (state.run.meta) {
+            state.run.meta.effective_research_depth = toLabel;
+            state.run.meta.depth_rounds = data.to_rounds;
+        }
+        renderSoon();
+        return;
+    }
+
     if (event === "warning") {
         state.run.warnings.unshift(data.message || "Unknown warning");
         pushStreamFeed({
