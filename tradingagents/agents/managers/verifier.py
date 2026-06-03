@@ -233,6 +233,13 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
             warnings.append("Secondary Limit Sell is below the primary limit; staged exits usually step higher.")
         if current_price is not None and stop_loss is not None and stop_loss >= current_price:
             warnings.append("Limit Sell stop loss sits above current spot price; confirm it only applies to a retained long tranche.")
+        if stop_loss is not None and primary is not None and stop_loss < primary:
+            blockers.append("Limit Sell stop loss is below the primary limit price. For a sell signal the invalidation must be above the sell limit (to cancel the sell if the trend turns bullish). A stop below the sell limit belongs to a retained long tranche, not the sell order itself.")
+        if take_profit is not None and primary is not None and take_profit > primary:
+            blockers.append(f"Limit Sell take profit ({take_profit:.2f}) is above the primary limit price ({primary:.2f}). For a sell signal the take-profit target must be below the sell limit to capture downside profit. A target above the limit belongs to a retained long tranche, not the sell order.")
+        if current_price is not None and stop_loss is not None and primary is not None:
+            if stop_loss < current_price < primary:
+                blockers.append(f"Limit Sell stop loss ({stop_loss:.2f}) is below current price ({current_price:.2f}) while the limit price ({primary:.2f}) is above. This sell order has no invalidation above — either set stop_loss above the limit price or use Market Sell for immediate execution at current.")
     elif signal == "Market Sell":
         if primary is not None or secondary is not None:
             blockers.append("Market Sell should not include limit prices.")

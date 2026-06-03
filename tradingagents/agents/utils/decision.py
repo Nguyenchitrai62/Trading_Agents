@@ -137,6 +137,13 @@ def validate_portfolio_decision(
             errors.append("Sell signals must not contain buy entry ladders.")
         if current_price is not None and primary is not None and primary < current_price:
             errors.append("Limit Sell price is below current price; use Market Sell when selling at or below spot is intended.")
+        if stop_loss is not None and primary is not None and stop_loss < primary:
+            errors.append("Limit Sell stop loss is below the primary limit price. For a sell signal the invalidation must be above the sell limit.")
+        if take_profit is not None and primary is not None and take_profit > primary:
+            errors.append("Limit Sell take profit is above the primary limit price. For a sell signal the target must be below the sell limit.")
+        if current_price is not None and stop_loss is not None and primary is not None:
+            if stop_loss < current_price < primary:
+                errors.append("Limit Sell stop loss is below current price while the limit price is above. This sell order has no invalidation above.")
 
     if signal == "Market Sell":
         if any(value is not None for value in (buy_primary, buy_secondary, sell_primary, sell_secondary)):

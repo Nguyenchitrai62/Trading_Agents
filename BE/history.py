@@ -23,10 +23,23 @@ class TursoHistoryStore:
         self._schema_ready = False
         self._schema_error = ""
         self._schema_lock = threading.Lock()
+        self._session: requests.Session | None = None
 
     @property
     def configured(self) -> bool:
         return bool(self.database_url and self.auth_token)
+
+    def _ensure_session(self) -> requests.Session:
+        if self._session is None:
+            self._session = requests.Session()
+            adapter = requests.adapters.HTTPAdapter(
+                pool_connections=2,
+                pool_maxsize=4,
+                max_retries=0,
+            )
+            self._session.mount("https://", adapter)
+            self._session.mount("http://", adapter)
+        return self._session
 
     @staticmethod
     def _extract_md_numeric(markdown: str, labels: list[str]) -> float | None:
@@ -95,7 +108,7 @@ class TursoHistoryStore:
             raise RuntimeError("Turso history database is not configured.")
         if not statements:
             return []
-        response = requests.post(
+        response = self._ensure_session().post(
             self.pipeline_url,
             headers={
                 "Authorization": f"Bearer {self.auth_token}",
@@ -436,7 +449,7 @@ class TursoHistoryStore:
         )
         return self._format_user_access(rows[0] if rows else None, normalized_email, default_history_access_days, admin_emails)
 
-    def list_users(self, default_history_access_days: int, admin_emails: frozenset[str]) -> list[dict]:
+    def list_users(self, default_history_access_days: int, admin_emails: frozenset[str], limit: int = 500) -> list[dict]:
         self.ensure_schema()
         rows = self._query_rows(
             """
@@ -444,7 +457,9 @@ class TursoHistoryStore:
                 can_run_analysis, history_access_unlimited, history_access_days, first_seen_at, last_seen_at
             FROM auth_users
             ORDER BY last_seen_at DESC
-            """
+            LIMIT ?
+            """,
+            [limit],
         )
         users = [self._format_user_access(row, row["email"], default_history_access_days, admin_emails) for row in rows]
         seen = {user["email"] for user in users}
@@ -692,20 +707,20 @@ class TursoHistoryStore:
             SELECT
                 r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
                 r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
+                d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
                 d.verification_verdict, d.verification_action,
                 r.elapsed_seconds, r.created_at, r.section_count,
-                (
-                    SELECT s.markdown
-                    FROM analysis_sections s
-                    WHERE s.run_id = r.id AND s.section_key = 'final_trade_decision'
-                    ORDER BY s.display_order DESC
-                    LIMIT 1
-                ) AS final_markdown
+                fm.markdown AS final_markdown
             FROM analysis_runs r
             LEFT JOIN analysis_decisions d ON d.run_id = r.id
+            LEFT JOIN (
+                SELECT run_id, MAX(markdown) AS markdown
+                FROM analysis_sections
+                WHERE section_key = 'final_trade_decision'
+                GROUP BY run_id
+            ) fm ON fm.run_id = r.id
             WHERE r.user_email = ?
             ORDER BY r.created_at DESC
             LIMIT ?
@@ -722,7 +737,7 @@ class TursoHistoryStore:
             SELECT
                 r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
                 r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
+                d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
                 d.verification_verdict, d.verification_action,
@@ -748,7 +763,7 @@ class TursoHistoryStore:
             SELECT
                 r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
                 r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
+                d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
                 d.verification_verdict, d.verification_action,
@@ -840,7 +855,7 @@ class TursoHistoryStore:
             SELECT
                 r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
                 r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
+                d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
                 d.verification_verdict, d.verification_action,
@@ -1008,7 +1023,7 @@ class TursoHistoryStore:
             SELECT
                 r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
                 r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
+                d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
                 d.verification_verdict, d.verification_action,
@@ -1041,7 +1056,7 @@ class TursoHistoryStore:
             SELECT
                 r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
                 r.output_language, r.research_depth, r.model,
-                COALESCE(d.signal, r.signal) AS signal,
+                d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
                 d.verification_verdict, d.verification_action,

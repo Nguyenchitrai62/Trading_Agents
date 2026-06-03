@@ -661,9 +661,11 @@ function renderHistoryPage() {
         scheduleHistoryTableLayoutMetrics();
     }
 
-    elements.historyStatusText.textContent = history.loaded ? "Select a row" : "Waiting";
-    elements.historyDetailTitle.textContent = "Final Decision";
-    elements.historyDetail.innerHTML = '<div class="history-empty">Select a saved analysis row to open the final decision.</div>';
+    if (!history.detailLoading) {
+        elements.historyStatusText.textContent = history.loaded ? "Select a row" : "Waiting";
+        elements.historyDetailTitle.textContent = "Final Decision";
+        elements.historyDetail.innerHTML = '<div class="history-empty">Select a saved analysis row to open the final decision.</div>';
+    }
 }
 
 async function loadHistoryList(force = false) {
@@ -741,6 +743,14 @@ async function loadHistoryDetail(historyId) {
     state.history.active = cachedEntry;
     state.history.detailLoading = true;
     renderHistoryPage();
+    openDetailModal({
+        type: "history-final-decision",
+        title: `Final Decision - ${cachedItem.symbol || "Loading..."}`,
+        subtitle: "Loading...",
+        content: "",
+        fallback: "Loading final decision markdown...",
+        mode: "markdown",
+    }, { pushHistory: false });
     try {
         const response = await apiFetch(`/api/history/${encodeURIComponent(historyId)}/final-decision`, {
             headers: getAuthHeaders(),
@@ -753,16 +763,25 @@ async function loadHistoryDetail(historyId) {
         const item = payload.item || cachedItem || { id: historyId };
         state.history.active = cacheHistoryItem(item);
         state.history.error = "";
-        openDetailModal({
+        state.activeDetail = {
             type: "history-final-decision",
             title: `Final Decision - ${item.symbol || "Analysis"}`,
             subtitle: [item.analysis_date, item.signal].filter(Boolean).join(" - ") || "History",
             content: payload.section?.markdown || "",
             mode: "markdown",
-        });
-        state.history.error = "";
+        };
+        renderActiveDetail();
     } catch (error) {
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history detail.");
+        state.activeDetail = {
+            type: "history-final-decision",
+            title: "Final Decision - Error",
+            subtitle: "Could not load",
+            content: "",
+            fallback: `Could not load: ${escapeHtml(state.history.error)}`,
+            mode: "markdown",
+        };
+        renderActiveDetail();
     } finally {
         state.history.detailLoading = false;
         renderHistoryPage();
