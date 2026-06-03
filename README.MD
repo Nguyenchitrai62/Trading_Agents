@@ -210,3 +210,4 @@ Both models can run the full analysis pipeline. The main difference is in the we
 - This is a research assistant, not financial advice.
 - Telegram bot, MongoDB, and frontend frameworks are not part of the current implementation.
 - The Admin Chat page is planned to evolve into an Agent RAG system, enabling natural-language queries against historical analysis decisions and section data persisted in the database.
+- This project is based on the original idea from [Tauric Research / tradingagents](https://github.com/tauricresearch/tradingagents).
