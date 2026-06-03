@@ -6,7 +6,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from time import monotonic
 from typing import Callable, Dict, Optional
 
-from langchain_core.messages import AIMessage, RemoveMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
 from langgraph.prebuilt import ToolNode
 
 from .analyst_execution import AnalystExecutionPlan, AnalystNodeSpec
@@ -326,8 +326,53 @@ def create_parallel_analyst_team(
                 ),
             )
 
-        raise RuntimeError(
-            f"{spec.agent_node} exceeded {max_tool_iterations} analyst/tool iterations."
+        logger.warning(
+            "%s reached max tool iterations (%s). Forcing final report.",
+            spec.agent_node,
+            max_tool_iterations,
+        )
+
+        local_state.setdefault("messages", []).append(
+            HumanMessage(
+                content=(
+                    "You have reached the maximum number of tool calls allowed. "
+                    "Based on all the information you have gathered so far, "
+                    "please now produce your complete final analysis report. "
+                    "Do not request any more tools or searches."
+                )
+            )
+        )
+
+        _check_cancel(cancel_check)
+        _merge_state_update(local_state, analyst_node(local_state))
+
+        report = str(local_state.get(spec.report_key) or "").strip()
+        if not report:
+            report = _message_content(local_state)
+
+        elapsed = monotonic() - started_at
+        logger.info(
+            "%s completed (forced) in %.2fs after exhausting %s iterations.",
+            spec.agent_node,
+            elapsed,
+            max_tool_iterations,
+        )
+
+        trace_messages = [
+            _tag_trace_message(message, spec.agent_node)
+            for message in (local_state.get("messages") or [])[initial_message_count:]
+        ]
+        extra_updates = {
+            key: local_state.get(key)
+            for key in EXTRA_ANALYST_STATE_KEYS
+            if key in local_state and local_state.get(key) != state.get(key)
+        }
+        return (
+            spec.report_key,
+            report,
+            list((local_state.get("evidence_items") or [])[initial_evidence_count:]),
+            [] if trace_callback else trace_messages,
+            extra_updates,
         )
 
     def parallel_analyst_team_node(state: dict) -> dict:
