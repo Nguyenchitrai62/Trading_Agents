@@ -713,6 +713,8 @@ class AnalysisOrchestratorMixin:
         queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=self.settings.analysis_sse_queue_maxsize)
         stream_started_at = time.time()
         cancel_event = threading.Event()
+        stream_active = threading.Event()
+        stream_active.set()
         slot_release_lock = threading.Lock()
         slot_released = False
 
@@ -730,6 +732,8 @@ class AnalysisOrchestratorMixin:
             with self.active_analysis_lock:
                 self.active_analysis_cancel_events[analysis_request.run_id] = cancel_event
 
+        self._register_active_run(analysis_request.run_id, analysis_request.symbol, user, stream_started_at)
+
         async def queue_sse_item(payload: str, drop_if_full: bool) -> bool:
             if drop_if_full:
                 try:
@@ -741,6 +745,8 @@ class AnalysisOrchestratorMixin:
             return True
 
         def emit(event: str, data: dict) -> None:
+            if not stream_active.is_set():
+                return
             if cancel_event.is_set() and event not in {"cancelled", "error"}:
                 return
             future = asyncio.run_coroutine_threadsafe(
@@ -776,6 +782,7 @@ class AnalysisOrchestratorMixin:
                 logger.exception("analysis stream crashed")
                 emit("error", {"error": str(exc)})
             finally:
+                self._unregister_active_run(analysis_request.run_id)
                 try:
                     finish_future = asyncio.run_coroutine_threadsafe(queue.put(None), loop)
                     finish_future.result(timeout=1.0)
@@ -790,9 +797,9 @@ class AnalysisOrchestratorMixin:
         try:
             while True:
                 if await http_request.is_disconnected():
-                    cancel_event.set()
+                    stream_active.clear()
                     logger.info(
-                        "analysis client disconnected: run_id=%s symbol=%s",
+                        "analysis client disconnected (analysis continues in background): run_id=%s symbol=%s",
                         analysis_request.run_id,
                         analysis_request.symbol,
                     )
@@ -804,9 +811,9 @@ class AnalysisOrchestratorMixin:
                     if worker_task.done():
                         break
                     if await http_request.is_disconnected():
-                        cancel_event.set()
+                        stream_active.clear()
                         logger.info(
-                            "analysis client disconnected during heartbeat: run_id=%s symbol=%s",
+                            "analysis client disconnected during heartbeat (analysis continues in background): run_id=%s symbol=%s",
                             analysis_request.run_id,
                             analysis_request.symbol,
                         )
@@ -831,9 +838,9 @@ class AnalysisOrchestratorMixin:
                     break
                 yield item
         except asyncio.CancelledError:
-            cancel_event.set()
+            stream_active.clear()
             logger.info(
-                "analysis stream task cancelled: run_id=%s symbol=%s",
+                "analysis stream task cancelled, letting analysis continue in background: run_id=%s symbol=%s",
                 analysis_request.run_id,
                 analysis_request.symbol,
             )
@@ -843,14 +850,13 @@ class AnalysisOrchestratorMixin:
                 with self.active_analysis_lock:
                     self.active_analysis_cancel_events.pop(analysis_request.run_id, None)
             if not worker_task.done():
-                cancel_event.set()
-                try:
-                    await asyncio.wait_for(asyncio.shield(worker_task), timeout=1.0)
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "analysis worker is waiting for the active graph call to return: run_id=%s symbol=%s",
-                        analysis_request.run_id,
-                        analysis_request.symbol,
-                    )
+                logger.info(
+                    "analysis still running in background after stream ended: run_id=%s symbol=%s",
+                    analysis_request.run_id,
+                    analysis_request.symbol,
+                )
             else:
-                await worker_task
+                try:
+                    await worker_task
+                except AnalysisCancelled:
+                    pass

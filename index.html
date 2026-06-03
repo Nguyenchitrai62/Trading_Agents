@@ -227,16 +227,16 @@
             </section>
         </main>
 
-        <main id="adminPage" class="page-view admin-page hidden" aria-label="User administration">
+        <main id="adminPage" class="page-view admin-page hidden" aria-label="Admin dashboard">
             <section class="window admin-window">
                 <div class="window-header">
                     <div>
-                        <p class="window-kicker">Access control</p>
-                        <h2>User Management</h2>
+                        <p class="window-kicker">Admin tools</p>
+                        <h2>Dashboard</h2>
                     </div>
                     <div class="admin-header-actions">
                         <span id="adminStatusText" class="window-status">Admin only</span>
-                        <button id="refreshAdminUsersButton" class="toolbar-button" type="button" aria-label="Refresh users">
+                        <button id="refreshAdminButton" class="toolbar-button" type="button" aria-label="Refresh">
                             <svg viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
                                 <path d="M21 3v6h-6"></path>
@@ -244,17 +244,26 @@
                         </button>
                     </div>
                 </div>
-                <div id="adminHistoryPolicyPanel" class="admin-global-panel admin-history-panel" aria-label="Global history access policy">
-                    <label class="admin-switch">
-                        <input id="adminHistoryPublicReadToggle" type="checkbox">
-                        <span>
-                            <strong>Non-admin can read History</strong>
-                            <small>When off, only admin can open History. Per-user History window still applies, and 0 blocks that user.</small>
-                        </span>
-                    </label>
-                    <button id="saveAdminHistoryPolicyButton" class="button secondary admin-save-button" type="button">Save policy</button>
+                <nav class="admin-sub-tabs" aria-label="Admin sub-pages">
+                    <button id="adminTabUsers" class="admin-sub-tab is-active" type="button" data-admin-tab="users">Users</button>
+                    <button id="adminTabProcesses" class="admin-sub-tab" type="button" data-admin-tab="processes">Processes</button>
+                </nav>
+                <div id="adminUsersPanel" class="admin-sub-panel" aria-label="User management">
+                    <div id="adminHistoryPolicyPanel" class="admin-global-panel admin-history-panel" aria-label="Global history access policy">
+                        <label class="admin-switch">
+                            <input id="adminHistoryPublicReadToggle" type="checkbox">
+                            <span>
+                                <strong>Non-admin can read History</strong>
+                                <small>When off, only admin can open History. Per-user History window still applies, and 0 blocks that user.</small>
+                            </span>
+                        </label>
+                        <button id="saveAdminHistoryPolicyButton" class="button secondary admin-save-button" type="button">Save policy</button>
+                    </div>
+                    <div id="adminUserList" class="admin-user-list" aria-live="polite"></div>
                 </div>
-                <div id="adminUserList" class="admin-user-list" aria-live="polite"></div>
+                <div id="adminProcessesPanel" class="admin-sub-panel hidden" aria-label="Process management">
+                    <div id="adminProcessList" class="admin-process-list" aria-live="polite"></div>
+                </div>
             </section>
         </main>
 

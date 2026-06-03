@@ -318,6 +318,12 @@ def create_app() -> FastAPI:
         history_public_read = await asyncio.to_thread(history_store.set_history_public_read, payload.history_public_read)
         return {"history_public_read": history_public_read}
 
+    @app.get("/api/admin/runs")
+    async def list_admin_runs(http_request: Request) -> dict:
+        await auth_service.require_admin_user(http_request)
+        runs = analysis_service.list_active_runs()
+        return {"runs": runs, "count": len(runs)}
+
     @app.patch("/api/admin/users/{email}")
     async def update_admin_user(email: str, payload: AdminUserAccessUpdate, http_request: Request) -> dict:
         await auth_service.require_admin_user(http_request)

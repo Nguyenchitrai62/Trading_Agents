@@ -335,6 +335,12 @@ function createEmptyAdminState() {
         savingEmail: "",
         historyPublicRead: false,
         historyPolicySaving: false,
+        activeTab: "users",
+        processes: [],
+        processesLoaded: false,
+        processesLoading: false,
+        processesError: "",
+        cancellingRunId: "",
     };
 }
 

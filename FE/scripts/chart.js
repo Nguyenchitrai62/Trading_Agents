@@ -428,10 +428,38 @@ function renderAdminHistoryPolicyControls() {
 }
 
 function renderAdminPage() {
-    if (!(elements.adminUserList instanceof HTMLElement)) {
+    if (!(elements.adminUserList instanceof HTMLElement) || !(elements.adminProcessList instanceof HTMLElement)) {
         return;
     }
     renderAdminHistoryPolicyControls();
+    renderAdminSubTabs();
+
+    const activeTab = state.admin.activeTab === "processes" ? "processes" : "users";
+
+    if (elements.adminUsersPanel instanceof HTMLElement) {
+        elements.adminUsersPanel.classList.toggle("hidden", activeTab !== "users");
+    }
+    if (elements.adminProcessesPanel instanceof HTMLElement) {
+        elements.adminProcessesPanel.classList.toggle("hidden", activeTab !== "processes");
+    }
+
+    if (activeTab === "users") {
+        renderAdminUsersTab();
+    } else {
+        renderAdminProcessesTab();
+    }
+}
+
+function renderAdminSubTabs() {
+    if (!(elements.adminTabUsers instanceof HTMLElement) || !(elements.adminTabProcesses instanceof HTMLElement)) {
+        return;
+    }
+    const activeTab = state.admin.activeTab === "processes" ? "processes" : "users";
+    elements.adminTabUsers.classList.toggle("is-active", activeTab === "users");
+    elements.adminTabProcesses.classList.toggle("is-active", activeTab === "processes");
+}
+
+function renderAdminUsersTab() {
     setElementLoadingState(elements.adminUserList, state.admin.loading, "Loading users");
     if (!state.auth.isAdmin) {
         elements.adminStatusText.textContent = "Admin only";
@@ -503,6 +531,129 @@ function renderAdminPage() {
             `;
         })
         .join("");
+}
+
+function renderAdminProcessesTab() {
+    setElementLoadingState(elements.adminProcessList, state.admin.processesLoading, "Loading active processes");
+    if (!state.auth.isAdmin) {
+        elements.adminStatusText.textContent = "Admin only";
+        elements.adminProcessList.innerHTML = '<div class="history-empty">Admin permission is required.</div>';
+        return;
+    }
+    if (state.admin.processesLoading) {
+        elements.adminStatusText.textContent = "Loading processes";
+        elements.adminProcessList.innerHTML = '<div class="history-empty">Loading active processes...</div>';
+        return;
+    }
+    if (state.admin.processesError) {
+        elements.adminStatusText.textContent = "Process issue";
+        elements.adminProcessList.innerHTML = `<div class="history-empty">${escapeHtml(state.admin.processesError)}</div>`;
+        return;
+    }
+    const runs = state.admin.processes || [];
+    if (!runs.length) {
+        elements.adminStatusText.textContent = "0 active runs";
+        elements.adminProcessList.innerHTML = '<div class="history-empty">No active analysis runs found.</div>';
+        return;
+    }
+    elements.adminStatusText.textContent = `${runs.length} active run${runs.length > 1 ? "s" : ""}`;
+    elements.adminProcessList.innerHTML = runs
+        .map((run) => {
+            const elapsed = formatElapsedTime(run.elapsed_seconds);
+            const isCancelling = state.admin.cancellingRunId === run.run_id;
+            return `
+                <article class="admin-process-card ${isCancelling ? "is-cancelling" : ""}" data-admin-run-id="${escapeHtml(run.run_id)}">
+                    <div class="admin-process-main">
+                        <div class="admin-process-title">
+                            <strong>${escapeHtml(run.symbol)}</strong>
+                            <span class="admin-process-badge">Running</span>
+                        </div>
+                        <small>ID: ${escapeHtml(run.run_id)}</small>
+                        <span class="admin-process-user">
+                            <span>${escapeHtml(run.user_name || run.user_email || "Unknown")}</span>
+                            <small>${escapeHtml(run.user_email)}</small>
+                        </span>
+                        <small class="admin-process-elapsed">Elapsed: ${escapeHtml(elapsed)}</small>
+                    </div>
+                    <button class="button primary admin-cancel-button" type="button" data-admin-cancel-run="${escapeHtml(run.run_id)}" ${isCancelling ? "disabled" : ""}>${isCancelling ? "Cancelling" : "Cancel Analysis"}</button>
+                </article>
+            `;
+        })
+        .join("");
+}
+
+function formatElapsedTime(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) {
+        return "0s";
+    }
+    const secs = Math.round(seconds);
+    if (secs < 60) {
+        return `${secs}s`;
+    }
+    const mins = Math.floor(secs / 60);
+    const remain = secs % 60;
+    if (mins < 60) {
+        return `${mins}m ${remain}s`;
+    }
+    const hours = Math.floor(mins / 60);
+    return `${hours}h ${mins % 60}m`;
+}
+
+async function loadAdminProcesses(force = false) {
+    if (!state.auth.isAdmin) {
+        openAuthRequiredAlert("Admin permission is required to view active processes.");
+        return;
+    }
+    if (state.admin.processesLoading || (state.admin.processesLoaded && !force)) {
+        renderAdminPage();
+        return;
+    }
+    state.admin.processesLoading = true;
+    state.admin.processesError = "";
+    renderAdminPage();
+    try {
+        const response = await apiFetch("/api/admin/runs", {
+            headers: getAdminAuthHeaders(),
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+        const payload = await response.json();
+        state.admin.processes = payload.runs || [];
+        state.admin.processesLoaded = true;
+    } catch (error) {
+        state.admin.processesError = error instanceof Error ? error.message : String(error || "Could not load active processes.");
+    } finally {
+        state.admin.processesLoading = false;
+        renderAdminPage();
+    }
+}
+
+async function cancelAdminRun(runId) {
+    if (!state.auth.isAdmin || !runId) {
+        return;
+    }
+    state.admin.cancellingRunId = runId;
+    state.admin.processesError = "";
+    renderAdminPage();
+    try {
+        const response = await apiFetch(`/api/analyze/${encodeURIComponent(runId)}/cancel`, {
+            method: "POST",
+            headers: getAdminAuthHeaders({ "Content-Type": "application/json" }),
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+        await new Promise((r) => setTimeout(r, 500));
+        await loadAdminProcesses(true);
+    } catch (error) {
+        state.admin.processesError = error instanceof Error ? error.message : String(error || "Could not cancel analysis.");
+    } finally {
+        state.admin.cancellingRunId = "";
+        renderAdminPage();
+    }
 }
 
 function syncAdminCardControls(card) {

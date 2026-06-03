@@ -1477,7 +1477,7 @@ p {
 
 .admin-window {
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto minmax(0, 1fr);
     gap: 12px;
 }
 
@@ -1653,6 +1653,112 @@ p {
 
 .admin-save-button {
     min-width: 82px;
+    align-self: center;
+}
+
+.admin-sub-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 0;
+}
+
+.admin-sub-tab {
+    padding: 8px 20px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.admin-sub-tab:hover {
+    color: var(--ink);
+}
+
+.admin-sub-tab.is-active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.admin-sub-panel {
+    display: grid;
+    gap: 10px;
+    min-height: 0;
+    overflow: auto;
+}
+
+.admin-process-list {
+    display: grid;
+    gap: 10px;
+    min-height: 0;
+    overflow: auto;
+}
+
+.admin-process-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 16px;
+    align-items: center;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: rgba(14, 24, 38, 0.86);
+}
+
+.admin-process-card.is-cancelling {
+    opacity: 0.6;
+}
+
+.admin-process-main {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.admin-process-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.admin-process-title strong {
+    color: var(--ink);
+    font-size: 0.92rem;
+    font-weight: 800;
+}
+
+.admin-process-badge {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+    border: 1px solid rgba(101, 208, 173, 0.32);
+    border-radius: 999px;
+    background: rgba(101, 208, 173, 0.1);
+    color: var(--accent);
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.admin-process-user {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.admin-process-elapsed {
+    color: var(--muted);
+    font-size: 0.72rem;
+}
+
+.admin-cancel-button {
+    min-width: 140px;
     align-self: center;
 }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from copy import deepcopy
 
 from fastapi import HTTPException
@@ -54,6 +55,8 @@ class AnalysisService(
         self.active_analysis_cancel_events: dict[str, threading.Event] = {}
         self.active_analysis_lock = threading.Lock()
         self.active_analysis_count = 0
+        self.active_analyses: dict[str, dict] = {}
+        self._active_analyses_lock = threading.Lock()
 
     def ensure_analysis_runtime_available(self) -> None:
         if ANALYSIS_RUNTIME_IMPORT_ERROR is None:
@@ -108,6 +111,39 @@ class AnalysisService(
             "run_id": run_id,
             "message": "Cancellation requested for the active analysis stream.",
         }
+
+    def _register_active_run(self, run_id: str, symbol: str, user: dict, started_at: float) -> None:
+        if not run_id:
+            return
+        with self._active_analyses_lock:
+            self.active_analyses[run_id] = {
+                "run_id": run_id,
+                "symbol": symbol,
+                "user_email": str(user.get("email") or ""),
+                "user_name": str(user.get("name") or ""),
+                "started_at": started_at,
+            }
+
+    def _unregister_active_run(self, run_id: str) -> None:
+        if not run_id:
+            return
+        with self._active_analyses_lock:
+            self.active_analyses.pop(run_id, None)
+
+    def list_active_runs(self) -> list[dict]:
+        with self._active_analyses_lock:
+            now = time.time()
+            return [
+                {
+                    "run_id": run["run_id"],
+                    "symbol": run["symbol"],
+                    "user_email": run["user_email"],
+                    "user_name": run["user_name"],
+                    "started_at": run["started_at"],
+                    "elapsed_seconds": round(now - run["started_at"], 1),
+                }
+                for run in self.active_analyses.values()
+            ]
 
     def build_analysis_runtime_profile(self, request: AnalysisRequest) -> dict:
         depth_config = RESEARCH_DEPTH_OPTIONS[request.research_depth]

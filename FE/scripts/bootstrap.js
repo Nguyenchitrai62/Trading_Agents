@@ -56,12 +56,17 @@ const elements = {
     chartSymbolForm: document.getElementById("chartSymbolForm"),
     chartSymbolInput: document.getElementById("chartSymbolInput"),
     addChartSymbolButton: document.getElementById("addChartSymbolButton"),
-    refreshAdminUsersButton: document.getElementById("refreshAdminUsersButton"),
+    refreshAdminUsersButton: document.getElementById("refreshAdminButton"),
     adminHistoryPolicyPanel: document.getElementById("adminHistoryPolicyPanel"),
     adminHistoryPublicReadToggle: document.getElementById("adminHistoryPublicReadToggle"),
     saveAdminHistoryPolicyButton: document.getElementById("saveAdminHistoryPolicyButton"),
     adminUserList: document.getElementById("adminUserList"),
     adminStatusText: document.getElementById("adminStatusText"),
+    adminTabUsers: document.getElementById("adminTabUsers"),
+    adminTabProcesses: document.getElementById("adminTabProcesses"),
+    adminUsersPanel: document.getElementById("adminUsersPanel"),
+    adminProcessesPanel: document.getElementById("adminProcessesPanel"),
+    adminProcessList: document.getElementById("adminProcessList"),
     chatNewButton: document.getElementById("chatNewButton"),
     chatHistoryList: document.getElementById("chatHistoryList"),
     chatCurrentTitle: document.getElementById("chatCurrentTitle"),
@@ -987,11 +992,48 @@ elements.chartSymbolForm.addEventListener("submit", (event) => {
     addChartSymbolFromInput();
 });
 elements.refreshAdminUsersButton.addEventListener("click", () => {
-    state.admin.loaded = false;
-    loadAdminUsers(true).catch((error) => {
-        state.admin.error = error instanceof Error ? error.message : String(error || "Could not refresh users.");
+    if (state.admin.activeTab === "processes") {
+        loadAdminProcesses(true).catch((error) => {
+            state.admin.processesError = error instanceof Error ? error.message : String(error || "Could not refresh processes.");
+            renderAdminPage();
+        });
+    } else {
+        state.admin.loaded = false;
+        loadAdminUsers(true).catch((error) => {
+            state.admin.error = error instanceof Error ? error.message : String(error || "Could not refresh users.");
+            renderAdminPage();
+        });
+    }
+});
+elements.adminTabUsers?.addEventListener("click", () => {
+    state.admin.activeTab = "users";
+    renderAdminPage();
+    loadAdminUsers().catch((error) => {
+        state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
         renderAdminPage();
     });
+});
+elements.adminTabProcesses?.addEventListener("click", () => {
+    state.admin.activeTab = "processes";
+    renderAdminPage();
+    loadAdminProcesses().catch((error) => {
+        state.admin.processesError = error instanceof Error ? error.message : String(error || "Could not load processes.");
+        renderAdminPage();
+    });
+});
+elements.adminProcessList?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+    const cancelButton = target.closest("[data-admin-cancel-run]");
+    if (cancelButton instanceof HTMLElement) {
+        const runId = cancelButton.dataset.adminCancelRun || "";
+        cancelAdminRun(runId).catch((error) => {
+            state.admin.processesError = error instanceof Error ? error.message : String(error || "Could not cancel analysis.");
+            renderAdminPage();
+        });
+    }
 });
 elements.saveAdminHistoryPolicyButton?.addEventListener("click", () => {
     saveAdminHistoryAccessPolicy().catch((error) => {
