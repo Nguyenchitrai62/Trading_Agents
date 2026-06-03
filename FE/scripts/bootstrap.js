@@ -1286,14 +1286,6 @@ window.addEventListener("keydown", (event) => {
 
 window.addEventListener("message", handleTradingViewWidgetMessage);
 
-window.addEventListener("beforeunload", () => {
-    if (!state.isBusy) {
-        return;
-    }
-    requestBackendCancel(state.activeRunId);
-    state.controller?.abort();
-});
-
 loadConfig().catch((error) => {
     appendLog("config-error", error instanceof Error ? error.message : String(error));
     state.run.warnings.unshift(error instanceof Error ? error.message : String(error));

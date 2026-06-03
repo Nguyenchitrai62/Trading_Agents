@@ -1836,13 +1836,13 @@ p {
 }
 
 .admin-col-email {
-    min-width: 160px;
+    width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
 .admin-col-name {
-    min-width: 100px;
+    width: 120px;
     overflow: hidden;
     text-overflow: ellipsis;
 }
