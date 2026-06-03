@@ -494,52 +494,99 @@ function setAdminUsersPage(nextPage) {
     });
 }
 
-function selectUserForEdit(email) {
-    if (state.admin.activeUserId === email) {
-        state.admin.activeUserId = "";
-    } else {
-        state.admin.activeUserId = email;
-    }
-    renderAdminPage();
+function adminToggleIcon(value) {
+    return value
+        ? '<span class="admin-toggle-on" role="img" aria-label="Enabled">&#10003;</span>'
+        : '<span class="admin-toggle-off" role="img" aria-label="Disabled">&#10007;</span>';
 }
 
-function getActiveUser() {
-    if (!state.admin.activeUserId) {
-        return null;
+function getAdminRowValue(row, field) {
+    const cell = row instanceof HTMLElement ? row.querySelector(`[data-admin-field="${field}"]`) : null;
+    if (!(cell instanceof HTMLElement)) return null;
+    if (cell.dataset.adminField === field && cell.classList.contains("admin-col-toggle")) {
+        return cell.dataset.adminValue === "true";
     }
-    return state.admin.users.find((u) => (u.email || "") === state.admin.activeUserId) || null;
+    if (cell instanceof HTMLInputElement) {
+        return cell.value;
+    }
+    return null;
+}
+
+function setAdminRowToggle(cell, value) {
+    if (!(cell instanceof HTMLElement)) return;
+    cell.dataset.adminValue = value ? "true" : "false";
+    cell.innerHTML = adminToggleIcon(value);
+}
+
+function syncAdminRowControls(row) {
+    if (!(row instanceof HTMLElement)) return;
+    const email = row.dataset.adminEmail || "";
+    const user = state.admin.users.find((u) => (u.email || "") === email);
+    const isSeedAdmin = Boolean(user && user.is_seed_admin);
+    const adminCell = row.querySelector('[data-admin-field="is_admin"]');
+    const canRunCell = row.querySelector('[data-admin-field="can_run_analysis"]');
+    const unlimCell = row.querySelector('[data-admin-field="history_unlimited"]');
+    const daysInput = row.querySelector('[data-admin-field="history_days"]');
+    const roleBadge = row.querySelector(".admin-role-badge");
+    const isAdmin = adminCell instanceof HTMLElement && adminCell.dataset.adminValue === "true";
+    if (isSeedAdmin && adminCell instanceof HTMLElement) {
+        setAdminRowToggle(adminCell, true);
+        adminCell.classList.add("admin-toggle-locked");
+    }
+    if (canRunCell instanceof HTMLElement) {
+        if (isAdmin || isSeedAdmin) {
+            setAdminRowToggle(canRunCell, true);
+            canRunCell.classList.add("admin-toggle-locked");
+        } else {
+            canRunCell.classList.remove("admin-toggle-locked");
+        }
+    }
+    if (unlimCell instanceof HTMLElement) {
+        if (isAdmin || isSeedAdmin) {
+            setAdminRowToggle(unlimCell, true);
+            unlimCell.classList.add("admin-toggle-locked");
+        } else {
+            unlimCell.classList.remove("admin-toggle-locked");
+        }
+    }
+    const unlimOn = unlimCell instanceof HTMLElement && unlimCell.dataset.adminValue === "true";
+    if (daysInput instanceof HTMLInputElement) {
+        daysInput.disabled = unlimOn || isAdmin || isSeedAdmin;
+    }
+    if (roleBadge instanceof HTMLElement) {
+        const canRun = canRunCell instanceof HTMLElement && canRunCell.dataset.adminValue === "true";
+        const daysVal = daysInput instanceof HTMLInputElement ? Number(daysInput.value || 0) : 0;
+        const hasHistory = isAdmin || isSeedAdmin || unlimOn || daysVal > 0;
+        roleBadge.textContent = isAdmin || isSeedAdmin ? "Admin" : canRun ? "Can run" : hasHistory ? "History only" : "No history";
+    }
 }
 
 function renderAdminUsersTab() {
-    if (!(elements.adminUserList instanceof HTMLElement) || !(elements.adminUserDetail instanceof HTMLElement)) {
+    if (!(elements.adminUserList instanceof HTMLElement)) {
         return;
     }
 
     if (!state.auth.isAdmin) {
         elements.adminStatusText.textContent = "Admin only";
         elements.adminUserList.innerHTML = '<div class="history-empty">Admin permission is required.</div>';
-        elements.adminUserDetail.classList.add("hidden");
         return;
     }
 
     if (state.admin.loading) {
         elements.adminStatusText.textContent = "Loading users";
         elements.adminUserList.innerHTML = '<div class="history-empty">Loading users...</div>';
-        elements.adminUserDetail.classList.add("hidden");
         return;
     }
 
     if (state.admin.error) {
         elements.adminStatusText.textContent = "Admin issue";
         elements.adminUserList.innerHTML = `<div class="history-empty">${escapeHtml(state.admin.error)}</div>`;
-        elements.adminUserDetail.classList.add("hidden");
         return;
     }
 
     if (!state.admin.users.length) {
         elements.adminStatusText.textContent = state.admin.loaded ? "No users" : "Waiting";
         elements.adminUserList.innerHTML = '<div class="history-empty">No users have signed in yet.</div>';
-        elements.adminUserDetail.classList.add("hidden");
         return;
     }
 
@@ -548,7 +595,6 @@ function renderAdminUsersTab() {
     const currentPage = Math.min(Math.max(1, Number(state.admin.usersPage || 1)), totalPages);
     const currentLimit = Math.max(1, Number(state.admin.usersLimit || 20));
     const startIndex = totalCount ? (currentPage - 1) * currentLimit + 1 : 0;
-    const endIndex = totalCount ? Math.min(startIndex + state.admin.users.length - 1, totalCount) : 0;
 
     elements.adminStatusText.textContent = `${totalCount} user${totalCount !== 1 ? "s" : ""}`;
 
@@ -564,7 +610,7 @@ function renderAdminUsersTab() {
             <div class="history-table-toolbar">
                 <div class="history-table-stats">
                     <strong>${totalCount} user${totalCount !== 1 ? "s" : ""}</strong>
-                    <span>Showing ${startIndex}&ndash;${endIndex} of ${totalCount}</span>
+                    <span>Page ${currentPage} of ${totalPages}</span>
                 </div>
             </div>
             <div class="admin-table-wrap">
@@ -575,8 +621,12 @@ function renderAdminUsersTab() {
                             <th class="admin-col-email">Email</th>
                             <th class="admin-col-name">Name</th>
                             <th class="admin-col-role">Role</th>
-                            <th class="admin-col-history">History</th>
+                            <th class="admin-col-toggle-h">Run</th>
+                            <th class="admin-col-toggle-h">Admin</th>
+                            <th class="admin-col-toggle-h">Unlim</th>
+                            <th class="admin-col-days-h">Days</th>
                             <th class="admin-col-seen">Last seen</th>
+                            <th class="admin-col-save">Save</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -585,21 +635,24 @@ function renderAdminUsersTab() {
                                 const email = user.email || "";
                                 const unlimited = Boolean(user.history_access_unlimited || user.history_access_days == null);
                                 const isAdmin = Boolean(user.is_admin);
+                                const isSeedAdmin = Boolean(user.is_seed_admin);
                                 const canRunAnalysis = isAdmin || Boolean(user.can_run_analysis);
+                                const dayValue = user.history_access_days ?? "";
                                 const hasHistoryAccess = isAdmin || unlimited || Number(user.history_access_days ?? 0) > 0;
                                 const roleLabel = isAdmin ? "Admin" : canRunAnalysis ? "Can run" : hasHistoryAccess ? "History only" : "No history";
-                                const dayValue = user.history_access_days ?? "";
-                                const historyLabel = isAdmin || unlimited ? "Unlimited" : user.history_access_days == null ? "Unlimited" : String(user.history_access_days ?? 0) === "0" ? "Blocked" : `${user.history_access_days} days`;
-                                const isActive = state.admin.activeUserId === email;
+                                const isSaving = state.admin.savingEmail === email;
                                 return `
-                                    <tr class="admin-user-row ${isActive ? "is-active" : ""} ${isAdmin ? "is-admin-role" : ""} ${canRunAnalysis ? "can-run-analysis" : ""}"
-                                        data-admin-email="${escapeHtml(email)}">
+                                    <tr class="admin-user-row" data-admin-email="${escapeHtml(email)}">
                                         <td class="admin-col-num">${startIndex + index}</td>
                                         <td class="admin-col-email">${escapeHtml(email || "Unknown")}</td>
                                         <td class="admin-col-name">${escapeHtml(user.name || "Google user")}</td>
                                         <td class="admin-col-role"><span class="admin-role-badge">${escapeHtml(roleLabel)}</span></td>
-                                        <td class="admin-col-history">${escapeHtml(historyLabel)}</td>
+                                        <td class="admin-col-toggle ${isAdmin || isSeedAdmin ? "admin-toggle-locked" : ""}" data-admin-field="can_run_analysis" data-admin-value="${canRunAnalysis ? "true" : "false"}">${adminToggleIcon(canRunAnalysis)}</td>
+                                        <td class="admin-col-toggle ${isSeedAdmin ? "admin-toggle-locked" : ""}" data-admin-field="is_admin" data-admin-value="${isAdmin ? "true" : "false"}">${adminToggleIcon(isAdmin)}</td>
+                                        <td class="admin-col-toggle ${isAdmin || isSeedAdmin ? "admin-toggle-locked" : ""}" data-admin-field="history_unlimited" data-admin-value="${unlimited ? "true" : "false"}">${adminToggleIcon(unlimited)}</td>
+                                        <td class="admin-col-days"><input type="number" min="0" step="1" data-admin-field="history_days" value="${escapeHtml(String(dayValue))}" ${unlimited || isAdmin || isSeedAdmin ? "disabled" : ""}></td>
                                         <td class="admin-col-seen">${escapeHtml(formatHistoryTimestamp(user.last_seen_at || ""))}</td>
+                                        <td class="admin-col-save"><button class="button secondary admin-save-button" type="button" data-admin-save-user="${escapeHtml(email)}" ${isSaving ? "disabled" : ""}>${isSaving ? "Saving" : "Save"}</button></td>
                                     </tr>
                                 `;
                             })
@@ -619,75 +672,6 @@ function renderAdminUsersTab() {
                     </nav>
                 </div>`
                 : ""}
-        </div>
-    `;
-
-    renderAdminUserDetail();
-    elements.adminUserDetail.classList.toggle("hidden", !state.admin.activeUserId);
-}
-
-function renderAdminUserDetail() {
-    if (!(elements.adminUserDetail instanceof HTMLElement)) {
-        return;
-    }
-    const user = getActiveUser();
-    if (!user) {
-        elements.adminUserDetail.innerHTML = "";
-        return;
-    }
-    const email = user.email || "";
-    const unlimited = Boolean(user.history_access_unlimited || user.history_access_days == null);
-    const isAdmin = Boolean(user.is_admin);
-    const canRunAnalysis = isAdmin || Boolean(user.can_run_analysis);
-    const isSeedAdmin = Boolean(user.is_seed_admin);
-    const isSaving = state.admin.savingEmail === email;
-    const roleLabel = isAdmin ? "Admin" : canRunAnalysis ? "Can run" : "No history";
-    const dayValue = user.history_access_days ?? "";
-
-    elements.adminUserDetail.innerHTML = `
-        <div class="admin-detail-header">
-            <strong>${escapeHtml(email)}</strong>
-            <button class="admin-detail-close" type="button" data-admin-close-detail aria-label="Close detail">&times;</button>
-        </div>
-        <div class="admin-detail-body">
-            <div class="admin-detail-field">
-                <span class="admin-detail-label">Name</span>
-                <span>${escapeHtml(user.name || "Google user")}</span>
-            </div>
-            <div class="admin-detail-field">
-                <span class="admin-detail-label">Role</span>
-                <span class="admin-role-badge">${escapeHtml(roleLabel)}</span>
-            </div>
-            <div class="admin-detail-field">
-                <span class="admin-detail-label">Last seen</span>
-                <span>${escapeHtml(formatHistoryTimestamp(user.last_seen_at || ""))}</span>
-            </div>
-            <hr>
-            <div class="admin-permission-panel" aria-label="User permissions">
-                <label class="admin-switch">
-                    <input type="checkbox" data-admin-field="can_run_analysis" ${canRunAnalysis ? "checked" : ""} ${isAdmin ? "disabled" : ""}>
-                    <span><strong>Run agent</strong><small>Can start analysis jobs</small></span>
-                </label>
-                <label class="admin-switch">
-                    <input type="checkbox" data-admin-field="is_admin" ${isAdmin ? "checked" : ""} ${isSeedAdmin ? "disabled" : ""}>
-                    <span><strong>Admin</strong><small>Manage users and access</small></span>
-                </label>
-            </div>
-            <hr>
-            <div class="admin-history-panel" aria-label="History access">
-                <label class="admin-switch admin-unlimited-switch">
-                    <input type="checkbox" data-admin-field="history_unlimited" ${unlimited ? "checked" : ""} ${isAdmin ? "disabled" : ""}>
-                    <span><strong>Unlimited history</strong><small>View all saved runs</small></span>
-                </label>
-                <label class="admin-days-field">
-                    <span>History window</span>
-                    <div class="admin-days-input-wrap">
-                        <input type="number" min="0" step="1" data-admin-field="history_days" value="${escapeHtml(String(dayValue))}" ${unlimited ? "disabled" : ""}>
-                        <small>days, 0 = blocked</small>
-                    </div>
-                </label>
-            </div>
-            <button class="button secondary admin-save-button" type="button" data-admin-save-user="${escapeHtml(email)}" ${isSaving ? "disabled" : ""}>${isSaving ? "Saving" : "Save"}</button>
         </div>
     `;
 }
@@ -815,41 +799,6 @@ async function cancelAdminRun(runId) {
     }
 }
 
-function syncAdminDetailControls(detail) {
-    if (!(detail instanceof HTMLElement)) {
-        return;
-    }
-    const isAdminInput = detail.querySelector('[data-admin-field="is_admin"]');
-    const canRunInput = detail.querySelector('[data-admin-field="can_run_analysis"]');
-    const unlimitedInput = detail.querySelector('[data-admin-field="history_unlimited"]');
-    const daysInput = detail.querySelector('[data-admin-field="history_days"]');
-    const isAdmin = isAdminInput instanceof HTMLInputElement && isAdminInput.checked;
-    if (canRunInput instanceof HTMLInputElement) {
-        if (isAdmin) {
-            canRunInput.checked = true;
-            canRunInput.disabled = true;
-        } else {
-            canRunInput.disabled = false;
-        }
-    }
-    if (unlimitedInput instanceof HTMLInputElement) {
-        if (isAdmin) {
-            unlimitedInput.checked = true;
-            unlimitedInput.disabled = true;
-        } else {
-            unlimitedInput.disabled = false;
-        }
-    }
-    const historyUnlimited = unlimitedInput instanceof HTMLInputElement && unlimitedInput.checked;
-    if (daysInput instanceof HTMLInputElement) {
-        daysInput.disabled = historyUnlimited;
-    }
-}
-
-function syncAdminCardControls(card) {
-    syncAdminDetailControls(card);
-}
-
 async function saveAdminHistoryAccessPolicy() {
     if (!state.auth.isAdmin) {
         openAuthRequiredAlert("Admin permission is required to update history access.");
@@ -928,17 +877,17 @@ async function loadAdminUsers(force = false) {
 }
 
 async function saveAdminUser(email) {
-    const detail = elements.adminUserDetail;
-    if (!(detail instanceof HTMLElement)) {
+    const row = elements.adminUserList?.querySelector(`[data-admin-email="${CSS.escape(email)}"]`);
+    if (!(row instanceof HTMLElement)) {
         return;
     }
-    const isAdminInput = detail.querySelector('[data-admin-field="is_admin"]');
-    const canRunInput = detail.querySelector('[data-admin-field="can_run_analysis"]');
-    const unlimitedInput = detail.querySelector('[data-admin-field="history_unlimited"]');
-    const daysInput = detail.querySelector('[data-admin-field="history_days"]');
-    const isAdmin = isAdminInput instanceof HTMLInputElement ? isAdminInput.checked : false;
-    const canRunAnalysis = canRunInput instanceof HTMLInputElement ? canRunInput.checked : false;
-    const unlimited = unlimitedInput instanceof HTMLInputElement ? unlimitedInput.checked : false;
+    const adminCell = row.querySelector('[data-admin-field="is_admin"]');
+    const canRunCell = row.querySelector('[data-admin-field="can_run_analysis"]');
+    const unlimCell = row.querySelector('[data-admin-field="history_unlimited"]');
+    const daysInput = row.querySelector('[data-admin-field="history_days"]');
+    const isAdmin = adminCell instanceof HTMLElement && adminCell.dataset.adminValue === "true";
+    const canRunAnalysis = canRunCell instanceof HTMLElement && canRunCell.dataset.adminValue === "true";
+    const unlimited = unlimCell instanceof HTMLElement && unlimCell.dataset.adminValue === "true";
     const days = daysInput instanceof HTMLInputElement ? Number(daysInput.value || 0) : 0;
     state.admin.savingEmail = email;
     renderAdminPage();
@@ -1001,7 +950,6 @@ function switchPage(page) {
         loadTradingViewChart();
     }
     if (page === "admin") {
-        state.admin.activeUserId = "";
         loadAdminUsers().catch((error) => {
             state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
             renderAdminPage();

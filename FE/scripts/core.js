@@ -337,7 +337,6 @@ function createEmptyAdminState() {
         loaded: false,
         error: "",
         savingEmail: "",
-        activeUserId: "",
         historyPublicRead: false,
         historyPolicySaving: false,
         activeTab: "users",

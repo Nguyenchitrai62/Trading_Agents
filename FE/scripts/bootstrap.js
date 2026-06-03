@@ -65,8 +65,6 @@ const elements = {
     adminTabUsers: document.getElementById("adminTabUsers"),
     adminTabProcesses: document.getElementById("adminTabProcesses"),
     adminUsersPanel: document.getElementById("adminUsersPanel"),
-    adminUsersLayout: document.getElementById("adminUsersLayout"),
-    adminUserDetail: document.getElementById("adminUserDetail"),
     adminProcessesPanel: document.getElementById("adminProcessesPanel"),
     adminProcessList: document.getElementById("adminProcessList"),
     chatNewButton: document.getElementById("chatNewButton"),
@@ -1070,36 +1068,33 @@ elements.adminUserList.addEventListener("click", (event) => {
         return;
     }
 
-    const row = target.closest("[data-admin-email]");
-    if (row instanceof HTMLElement) {
-        const email = row.dataset.adminEmail || "";
-        selectUserForEdit(email);
-        return;
-    }
-});
-
-elements.adminUserDetail?.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLInputElement)) {
-        return;
-    }
-    syncAdminDetailControls(elements.adminUserDetail);
-});
-
-elements.adminUserDetail?.addEventListener("click", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLElement)) {
-        return;
-    }
-    const closeBtn = target.closest("[data-admin-close-detail]");
-    if (closeBtn instanceof HTMLElement) {
-        state.admin.activeUserId = "";
-        renderAdminPage();
-        return;
-    }
     const saveButton = target.closest("[data-admin-save-user]");
     if (saveButton instanceof HTMLElement) {
         saveAdminUser(saveButton.dataset.adminSaveUser || "");
+        return;
+    }
+
+    const toggleCell = target.closest(".admin-col-toggle");
+    if (toggleCell instanceof HTMLElement && !toggleCell.classList.contains("admin-toggle-locked")) {
+        const row = toggleCell.closest("[data-admin-email]");
+        const currentValue = toggleCell.dataset.adminValue === "true";
+        const newValue = !currentValue;
+        setAdminRowToggle(toggleCell, newValue);
+        if (row instanceof HTMLElement) {
+            syncAdminRowControls(row);
+        }
+        return;
+    }
+});
+
+elements.adminUserList.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.dataset.adminField !== "history_days") {
+        return;
+    }
+    const row = target.closest("[data-admin-email]");
+    if (row instanceof HTMLElement) {
+        syncAdminRowControls(row);
     }
 });
 elements.chatNewButton?.addEventListener("click", () => {
