@@ -126,10 +126,10 @@ http://127.0.0.1:8000/?api_base_url=http://127.0.0.1:8000
 
 | Variable | Description |
 |----------|-------------|
-| `MINIMAX_API_KEY` | MiniMax API key (`sk-xxxx...`) — MCP web_search for live retrieval |
-| `DEEPSEEK_API_KEY` | DeepSeek V4 Flash qua OpenCode (`sk-xxxx...`) — webfetch tool, nhẹ hơn |
+| `MINIMAX_API_KEY` | MiniMax API key — MCP web_search for live retrieval |
+| `DEEPSEEK_API_KEY` | DeepSeek V4 Flash via OpenCode — webfetch tool, lighter option |
 
-> **Khuyến nghị:** DeepSeek V4 Flash qua [OpenCode Go](https://opencode.ai/go) 5$/month là lựa chọn đơn giản và tiết kiệm. Chỉ cần `DEEPSEEK_API_KEY` và model `deepseek-v4-flash` là chạy được toàn bộ luồng phân tích. [MiniMax](https://platform.minimax.io/subscribe/token-plan) 10$/month phù hợp khi cần web_search nhiều nguồn chéo hơn và mức chi phí $10/tháng (Starter tier).
+> **Recommendation:** DeepSeek V4 Flash through [OpenCode Go](https://opencode.ai/go) at $5/month is the simpler and more cost-effective choice. You only need `DEEPSEEK_API_KEY` and the `deepseek-v4-flash` model to run the full analysis pipeline. [MiniMax](https://platform.minimax.io/subscribe/token-plan) at $10/month is suitable when you need more cross-source web_search capability at the $10/month Starter tier.
 
 ### Required (frontend auth)
 
@@ -193,16 +193,16 @@ Cross-origin deploy checklist:
 
 ## Switching Between MiniMax and DeepSeek
 
-Cả hai model đều chạy được toàn bộ luồng phân tích. Khác biệt chính ở công cụ web retrieval:
+Both models can run the full analysis pipeline. The main difference is in the web retrieval tool:
 
 | Model | Web Search | Endpoint | Setup |
 |-------|-----------|----------|-------|
-| **DeepSeek V4 Flash** (recommended) | `webfetch` qua urllib | `https://opencode.ai/zen/go/v1` | `DEEPSEEK_API_KEY` trong `.env` |
-| MiniMax M2.5 | MCP `web_search` | `https://api.minimax.io/anthropic` | `MINIMAX_API_KEY` trong `.env` |
+| **DeepSeek V4 Flash** (recommended) | `webfetch` via urllib | `https://opencode.ai/zen/go/v1` | `DEEPSEEK_API_KEY` in `.env` |
+| MiniMax M2.5 | MCP `web_search` | `https://api.minimax.io/anthropic` | `MINIMAX_API_KEY` in `.env` |
 
-**DeepSeek V4 Flash qua OpenCode** là lựa chọn mặc định được khuyến nghị: đơn giản, nhẹ, không cần cài đặt MCP server. Model được chọn trong UI config là `deepseek-v4-flash`.
+**DeepSeek V4 Flash via OpenCode** is the recommended default: simple, lightweight, no MCP server setup required. The model is selected in the UI config as `deepseek-v4-flash`.
 
-**MiniMax M2.5** mạnh hơn về web search (kết quả có cấu trúc, cross-check nhiều nguồn), nhưng cần MCP server (`minimax-coding-plan-mcp`) và API key riêng. Phù hợp khi cần độ chính xác cao nhất từ các nguồn web trực tiếp.
+**MiniMax M2.5** is stronger at web search (structured results, cross-referencing multiple sources), but requires an MCP server (`minimax-coding-plan-mcp`) and a separate API key. Suitable when you need the highest accuracy from live web sources.
 
 ## Notes
 
