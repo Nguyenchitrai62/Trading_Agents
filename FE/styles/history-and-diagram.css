@@ -1,4 +1,4 @@
-﻿.history-page {
+.history-page {
     display: grid;
     grid-template-columns: fit-content(760px) minmax(0, 1fr);
     gap: 12px;
@@ -1434,4 +1434,3 @@
 @keyframes detailBodySpin {
     to { transform: rotate(360deg); }
 }
-

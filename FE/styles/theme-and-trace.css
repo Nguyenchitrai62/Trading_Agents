@@ -1,4 +1,4 @@
-﻿:root {
+:root {
     color-scheme: dark;
     --bg: #050c14;
     --bg-layer: radial-gradient(circle at 12% 12%, rgba(74, 163, 255, 0.2), transparent 24%),
@@ -1487,4 +1487,3 @@ body {
 .tool-result-empty {
     color: var(--muted);
 }
-

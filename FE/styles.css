@@ -1,5 +1,8 @@
-@import url("./styles/01-shell-and-dashboard.css");
-@import url("./styles/02-trace-and-detail.css");
-@import url("./styles/03-chat-and-workspace.css");
-@import url("./styles/04-history-table.css");
-@import url("./styles/05-chat-chart.css");
+@import url("./styles/foundation-and-shell.css");
+@import url("./styles/theme-and-trace.css");
+@import url("./styles/auth-and-navigation.css");
+@import url("./styles/execution-and-states.css");
+@import url("./styles/history-and-diagram.css");
+@import url("./styles/chat.css");
+@import url("./styles/chart-and-config.css");
+@import url("./styles/live-flow.css");

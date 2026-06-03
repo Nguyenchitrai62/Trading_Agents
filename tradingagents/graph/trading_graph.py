@@ -37,7 +37,7 @@ from tradingagents.agents.utils.web_search_tools import webfetch
 
 from .checkpointer import checkpoint_step, clear_checkpoint, get_checkpointer, thread_id
 from .conditional_logic import ConditionalLogic
-from .setup import GraphSetup
+from .builder import GraphSetup
 from .propagation import Propagator
 from .signal_processing import SignalProcessor
 

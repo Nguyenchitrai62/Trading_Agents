@@ -187,29 +187,53 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 
 - `app.py`: wrapper export `BE.server:app` va khoi dong uvicorn khi chay truc tiep.
 - `BE/server.py`: FastAPI app, routes, CORS, static mount, auth/history/admin/chat/analyze endpoints.
-- `BE/analysis.py`: config bootstrap cho run, SSE streaming, CoinGlass prefetch, graph execution, event emission, history save.
+- `BE/analysis/service.py`: AnalysisService core class, slot management, config builder.
+- `BE/analysis/orchestrator_mixin.py`: run_trading_analysis + generate_analysis_stream core orchestration.
+- `BE/analysis/chat_mixin.py`: chat streaming, MCP chat tools, message builders.
+- `BE/analysis/prefetch_mixin.py`: CoinGlass snapshot prefetch orchestration.
+- `BE/analysis/emitter_mixin.py`: status snapshot, SSE section/debate/evidence emission.
+- `BE/analysis/graph_mixin.py`: graph state utilities, agent detection, progress prediction.
+- `BE/analysis/formatting_mixin.py`: tool display formatting, CoinGlass markdown, source artifacts.
+- `BE/analysis/constants.py`: STATE_UPDATE_KEYS, chat hint term constants.
+- `BE/history/store.py`: TursoHistoryStore class, DB transport, schema, persistence, queries.
+- `BE/history/sections.py`: history section builder functions (build_history_sections).
 - `BE/models.py`: request/response Pydantic models cho analysis, chat, auth, admin.
-- `BE/history.py`: Turso schema, history save/list/detail, markdown sections.
 - `BE/config.py`: backend settings tu `.env`, MiniMax, CoinGlass, Turso, CORS, runtime limits.
+- `BE/auth.py`: Google sign-in, admin auth service.
+- `BE/analysis_telemetry.py`: telemetry/observability for analysis runs.
 - `index.html`: dashboard shell va page/modal structure.
 - `FE/config.js`: FE backend base URL, default analysis config, options.
-- `FE/scripts/01-core-chat.js`: constants, markdown/chat helpers, state factory helpers.
-- `FE/scripts/02-config-auth-trace.js`: config bootstrap, auth/session helpers, trace merge logic.
-- `FE/scripts/03-dashboard-history.js`: dashboard rendering, operations/detail modal helpers, page shell rendering.
-- `FE/scripts/03b-history-archive.js`: history archive rendering, pagination, detail loading, section markdown flow.
-- `FE/scripts/04-chart-admin.js`: chart workspace, admin page, page switching.
-- `FE/scripts/05-runtime-bootstrap.js`: state/elements bootstrap, SSE consumption, DOM listeners.
-- `FE/styles.css` va `FE/styles/*.css`: stylesheet manifest va cac partial theo domain.
+- `FE/scripts/core.js`: constants, markdown/chat helpers, state factory helpers.
+- `FE/scripts/config.js`: config bootstrap, auth/session helpers.
+- `FE/scripts/trace.js`: trace merge logic, scroll management, SSE parsing.
+- `FE/scripts/dashboard.js`: dashboard rendering, live flow diagram, operations/detail modal helpers.
+- `FE/scripts/history.js`: history archive rendering, pagination, detail loading, section markdown flow.
+- `FE/scripts/reports.js`: operations rail, reports rendering, detail modals, page shell.
+- `FE/scripts/chart.js`: chart workspace, admin page, page switching.
+- `FE/scripts/bootstrap.js`: state/elements bootstrap, SSE consumption, DOM listeners.
+- `FE/styles.css`: stylesheet manifest, @import cac partial theo feature.
+- `FE/styles/foundation-and-shell.css`: light theme, CSS variables, app shell, window/dashboard grid, modals, config form, admin.
+- `FE/styles/theme-and-trace.css`: dark theme variants, trace panel, operations rail, markdown dark.
+- `FE/styles/auth-and-navigation.css`: Google auth, topbar, page tabs, analysis button.
+- `FE/styles/execution-and-states.css`: execution table, running states, animations, transitions, danger states.
+- `FE/styles/history-and-diagram.css`: history page, data table, pagination, flow diagram (horizontal + vertical).
+- `FE/styles/chat.css`: chat page, sidebar sessions, messages, composer, thinking panel, streaming states.
+- `FE/styles/chart-and-config.css`: TradingView chart workspace, symbol panel drag-drop, compact config modal.
+- `FE/styles/live-flow.css`: live analysis flow board, nodes, wires, inspector, source artifact tables.
 - `tradingagents/agent_config.py`: default graph/runtime config, depth/tool/source/data defaults.
 - `tradingagents/graph/trading_graph.py`: core `TradingAgentsGraph`, LLM clients, tool nodes, graph compile.
-- `tradingagents/graph/setup.py`: LangGraph node/edge flow.
+- `tradingagents/graph/builder.py`: LangGraph node/edge flow (GraphSetup).
 - `tradingagents/graph/parallel_analysts.py`: analyst parallel execution and tool loop.
 - `tradingagents/graph/analyst_execution.py`: analyst node/report mapping.
 - `tradingagents/dataflows/ccxt_crypto.py`: crypto OHLCV/indicator fetching and compact output.
 - `tradingagents/dataflows/coinglass_client.py`: CoinGlass endpoint prefetch, summaries, evidence items.
+- `tradingagents/agents/__init__.py`: central hub, exports all agent factories + AgentState types.
+- `tradingagents/agents/analysts/`: market, news, social, onchain analyst factories.
+- `tradingagents/agents/researchers/`: bull/bear researcher factories.
+- `tradingagents/agents/risk_mgmt/`: aggressive/conservative/neutral risk debator factories.
+- `tradingagents/agents/managers/`: portfolio manager, verifier, decision extractor.
+- `tradingagents/agents/utils/`: agent states, helpers, evidence, decision, rating, structured output.
 - `tradingagents/agents/schemas.py`: structured output schemas for debate turns, portfolio decision extraction, and verifier.
-- `tradingagents/agents/managers/portfolio_manager.py`: markdown-first portfolio decision.
-- `tradingagents/agents/managers/verifier.py`: deterministic and evidence verification.
 - `requirements.txt`: dependency source of truth.
 
 ## Definition Of Done For Core Product Work

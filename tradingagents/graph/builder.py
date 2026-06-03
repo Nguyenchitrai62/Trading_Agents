@@ -1,4 +1,4 @@
-# TradingAgents/graph/setup.py
+# TradingAgents/graph/builder.py
 
 from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
