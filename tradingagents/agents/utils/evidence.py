@@ -103,7 +103,7 @@ def format_evidence_ledger(items: list[dict[str, Any]] | None, limit: int = 16) 
         direction = _normalize_choice(item.get("direction"), _VALID_DIRECTIONS, "unknown")
         confidence = _coerce_confidence(item.get("confidence"))
         timestamp = _clean_text(item.get("timestamp") or "unknown time", 40)
-        claim = _clean_text(item.get("claim") or "No claim supplied.", 220)
+        claim = _clean_text(item.get("claim") or "No claim supplied.", 400)
         notes = _clean_text(item.get("notes") or "", 140)
         line = (
             f"- [{agent}] {direction} confidence={confidence:.2f}; "
@@ -176,7 +176,7 @@ def _normalize_evidence_items(
 ) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for item in items[:8]:
-        claim = _clean_text(item.get("claim"), 500)
+        claim = _clean_text(item.get("claim"), 1000)
         if not claim:
             continue
 

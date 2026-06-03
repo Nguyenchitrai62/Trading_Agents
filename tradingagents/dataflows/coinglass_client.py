@@ -454,7 +454,7 @@ def build_coinglass_prompt_context(
     snapshot: dict[str, Any],
     *,
     focus_packages: Iterable[str] | None = None,
-    char_limit: int = 24000,
+    char_limit: int = 50000,
 ) -> str:
     if not snapshot:
         return ""

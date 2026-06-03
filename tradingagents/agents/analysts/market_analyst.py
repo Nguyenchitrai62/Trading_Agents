@@ -31,8 +31,8 @@ MARKET_INDICATORS = (
     "mfi",
 )
 
-_MAX_TOOL_BLOCK_CHARS = 2400
-_MAX_MARKET_CONTEXT_CHARS = 20000
+_MAX_TOOL_BLOCK_CHARS = 4000
+_MAX_MARKET_CONTEXT_CHARS = 40000
 
 
 def _response_text(response: object) -> str:

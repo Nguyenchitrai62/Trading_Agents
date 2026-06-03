@@ -150,8 +150,21 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 - `MINIMAX_API_KEY` hoac `MINIMAX_CN_API_KEY` phai nam trong `.env` de backend goi LLM.
 - `MINIMAX_BASE_URL` tro toi anthropic-compatible MiniMax endpoint.
 - `CORS_ALLOW_ORIGINS` phai cau hinh theo domain FE that khi deploy.
-- CoinGlass dung `COINGLASS_API_KEY` hoac cac alias duoc ho tro trong `BE/config.py`.
+- `COINGLASS_API_KEY` la **REQUIRED** — day la nguon du lieu on-chain chinh cho Onchain Analyst (exchange reserves, liquidation, funding rate, open interest, institutional flow). Khong co key nay, Onchain Analyst khong the phan tich. Chi phi: $35/thang.
 - Turso history dung `TURSO_DATABASE_URL` va `TURSO_AUTH_TOKEN`.
+
+## Cost Reference
+
+| Component | Provider | Monthly Cost | Required |
+|-----------|----------|:----------:|:--------:|
+| LLM | [DeepSeek V4 Flash via OpenCode](https://opencode.ai/go) | $5 | Yes (pick one) |
+| LLM | [MiniMax M2.5](https://platform.minimax.io/subscribe/token-plan) | $10 | Yes (pick one) |
+| On-Chain Data | [CoinGlass](https://www.coinglass.com/) | $35 | **Yes** |
+| Database | [Turso](https://turso.tech) | Free | Optional |
+| Hosting (FE) | [Vercel](https://vercel.com) | Free | — |
+| Hosting (BE) | [Render](https://render.com) | Free | — |
+
+**Total minimum: $40/thang** (DeepSeek $5 + CoinGlass $35).
 
 ## Dependency Policy
 
@@ -182,6 +195,11 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 - Khong bien FE hien tai thanh framework app lon neu chua co yeu cau cu the.
 - Khong them DB chi vi co the can; chi them khi co nhu cau persistence ro rang.
 - Khong dua phan quyet cu vao prompt phan tich neu chua co du lieu execution/outcome that su.
+
+## Credits & Origin
+
+- Y tuong goc va kien truc multi-agent lay tu [Tauric Research / TradingAgents](https://github.com/tauricresearch/tradingagents): cac vai tro analyst (Market, Onchain, Social, News), co che Bull/Bear debate, Risk Room, Portfolio Manager, Verifier, va LangGraph orchestration.
+- Du an nay mo rong phien ban goc voi: FastAPI backend, SSE streaming dashboard, tich hop CoinGlass cho on-chain data, ho tro dual LLM (MiniMax MCP + DeepSeek), Google OAuth, Turso persistence, va TradingView chart.
 
 ## Key Files
 

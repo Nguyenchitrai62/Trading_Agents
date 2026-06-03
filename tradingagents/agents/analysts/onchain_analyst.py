@@ -16,9 +16,9 @@ from tradingagents.dataflows.endpoint_summary import format_endpoint_summaries_f
 from tradingagents.llm_clients.base_client import normalize_content
 
 
-_MAX_ENDPOINT_PROMPT_CHARS = 4200
+_MAX_ENDPOINT_PROMPT_CHARS = 8000
 _MAX_ENDPOINT_ANALYSIS_CHARS = 1800
-_MAX_AGGREGATE_INPUT_CHARS = 18000
+_MAX_AGGREGATE_INPUT_CHARS = 35000
 
 
 def _response_text(response: object) -> str:
