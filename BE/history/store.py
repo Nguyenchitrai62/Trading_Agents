@@ -520,7 +520,7 @@ class TursoHistoryStore:
             return None
         normalized_days = max(0, int(history_access_days))
         if normalized_days == 0:
-            return (datetime.utcnow() + timedelta(days=365 * 200)).replace(microsecond=0).isoformat() + "Z"
+            return "1970-01-01T00:00:00Z"
         return (datetime.utcnow() - timedelta(days=normalized_days)).replace(microsecond=0).isoformat() + "Z"
 
     def save_analysis(
@@ -760,7 +760,7 @@ class TursoHistoryStore:
         self.ensure_schema()
         safe_limit = limit or self.page_size
         cutoff = self._history_cutoff(history_access_days)
-        where_clause = "WHERE r.created_at >= ?" if cutoff else ""
+        where_clause = "WHERE r.created_at <= ?" if cutoff else ""
         args: list[object] = [cutoff] if cutoff else []
         args.extend([safe_limit, offset])
         return self._query_rows(
@@ -791,7 +791,7 @@ class TursoHistoryStore:
 
         placeholders = ", ".join("?" for _ in safe_run_ids)
         cutoff = self._history_cutoff(history_access_days)
-        extra_where = "AND r.created_at >= ?" if cutoff else ""
+        extra_where = "AND r.created_at <= ?" if cutoff else ""
         args: list[object] = [*safe_run_ids]
         if cutoff:
             args.append(cutoff)
@@ -834,7 +834,7 @@ class TursoHistoryStore:
     def count_accessible_runs(self, history_access_days: int | None) -> int:
         self.ensure_schema()
         cutoff = self._history_cutoff(history_access_days)
-        where_clause = "WHERE created_at >= ?" if cutoff else ""
+        where_clause = "WHERE created_at <= ?" if cutoff else ""
         args: list[object] = [cutoff] if cutoff else []
         rows = self._query_rows(
             f"""
@@ -851,7 +851,7 @@ class TursoHistoryStore:
     def get_accessible_run_meta(self, run_id: str, history_access_days: int | None) -> dict | None:
         self.ensure_schema()
         cutoff = self._history_cutoff(history_access_days)
-        where_clause = "AND r.created_at >= ?" if cutoff else ""
+        where_clause = "AND r.created_at <= ?" if cutoff else ""
         args: list[object] = [run_id]
         if cutoff:
             args.append(cutoff)

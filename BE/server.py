@@ -131,9 +131,6 @@ def create_app() -> FastAPI:
                 request = AnalysisRequest(
                     symbol=AUTO_ANALYSIS_SYMBOL,
                     run_id=run_id,
-                    research_depth="quick",
-                    lookback_days=7,
-                    selected_analysts=["market", "onchain", "social", "news"],
                 )
                 analysis_service.run_analysis_background(request, on_complete=_on_auto_complete)
                 logger.info("auto-analysis triggered via health check: run_id=%s symbol=%s", run_id, AUTO_ANALYSIS_SYMBOL)
