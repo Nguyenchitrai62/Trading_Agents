@@ -719,16 +719,14 @@ async function loadHistoryList(force = false, silent = false) {
                 && prevFirst === newFirst;
             if (noChange) shouldRender = false;
         }
-        if (shouldRender) {
-            state.history.items = newItems;
-            state.history.page = Number(payload.page || 1);
-            state.history.limit = Number(payload.limit || HISTORY_PAGE_SIZE);
-            state.history.hasMore = Boolean(payload.has_more);
-            state.history.totalCount = newTotalCount;
-            state.history.totalPages = Math.max(1, Number(payload.total_pages || 1));
-            state.history.loaded = true;
-            state.history.active = state.history.activeId ? getHistoryArchiveEntry(state.history.activeId) : null;
-        }
+        state.history.items = newItems;
+        state.history.page = Number(payload.page || 1);
+        state.history.limit = Number(payload.limit || HISTORY_PAGE_SIZE);
+        state.history.hasMore = Boolean(payload.has_more);
+        state.history.totalCount = newTotalCount;
+        state.history.totalPages = Math.max(1, Number(payload.total_pages || 1));
+        state.history.loaded = true;
+        state.history.active = state.history.activeId ? getHistoryArchiveEntry(state.history.activeId) : null;
     } catch (error) {
         if (silent) return;
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history.");

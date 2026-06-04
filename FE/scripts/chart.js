@@ -573,6 +573,44 @@ function updateRowSaveButton(row) {
     saveBtn.disabled = isSaving;
 }
 
+function refreshAdminUserCellsSilently(users) {
+    if (!(elements.adminUserList instanceof HTMLElement)) return;
+
+    const rows = elements.adminUserList.querySelectorAll("[data-admin-email]");
+    for (const row of rows) {
+        const email = row.dataset.adminEmail;
+        const user = users.find((u) => (u.email || "") === email);
+        if (!user) continue;
+
+        const seenCell = row.querySelector(".admin-col-seen");
+        if (seenCell instanceof HTMLElement) {
+            const newSeen = formatHistoryTimestamp(user.last_seen_at || "");
+            if (seenCell.textContent !== newSeen) {
+                seenCell.textContent = newSeen;
+            }
+        }
+
+        const roleBadge = row.querySelector(".admin-role-badge");
+        if (roleBadge instanceof HTMLElement) {
+            const isAdmin = Boolean(user.is_admin);
+            const canRun = isAdmin || Boolean(user.can_run_analysis);
+            const unlimited = Boolean(user.history_access_unlimited);
+            const days = Number(user.history_access_days ?? 0);
+            const hasHistory = isAdmin || unlimited || days > 0;
+            const newRole = isAdmin ? "Admin" : canRun ? "Can run" : hasHistory ? "History only" : "No history";
+            if (roleBadge.textContent !== newRole) {
+                roleBadge.textContent = newRole;
+            }
+        }
+    }
+
+    const totalCount = Math.max(0, Number(state.admin.usersTotalCount || 0));
+    const statusText = `${totalCount} user${totalCount !== 1 ? "s" : ""}`;
+    if (elements.adminStatusText && elements.adminStatusText.textContent !== statusText) {
+        elements.adminStatusText.textContent = statusText;
+    }
+}
+
 function renderAdminUsersTab() {
     if (!(elements.adminUserList instanceof HTMLElement)) {
         return;
@@ -757,6 +795,42 @@ function formatElapsedTime(seconds) {
     return `${hours}h ${mins % 60}m`;
 }
 
+function refreshProcessesElapsedSilently(runs) {
+    if (!(elements.adminProcessList instanceof HTMLElement)) return;
+
+    const cards = elements.adminProcessList.querySelectorAll("[data-admin-run-id]");
+    for (const card of cards) {
+        const runId = card.dataset.adminRunId;
+        const run = runs.find((r) => r.run_id === runId);
+        if (!run) continue;
+
+        const elapsedEl = card.querySelector(".admin-process-elapsed");
+        if (elapsedEl instanceof HTMLElement) {
+            const newElapsed = formatElapsedTime(run.elapsed_seconds);
+            if (elapsedEl.textContent !== `Elapsed: ${newElapsed}`) {
+                elapsedEl.textContent = `Elapsed: ${newElapsed}`;
+            }
+        }
+
+        const cancelBtn = card.querySelector("[data-admin-cancel-run]");
+        if (cancelBtn instanceof HTMLButtonElement) {
+            const isCancelling = state.admin.cancellingRunId === runId;
+            card.classList.toggle("is-cancelling", isCancelling);
+            if (isCancelling) {
+                cancelBtn.disabled = true;
+                if (cancelBtn.textContent !== "Cancelling") {
+                    cancelBtn.textContent = "Cancelling";
+                }
+            }
+        }
+    }
+
+    const statusText = `${runs.length} active run${runs.length !== 1 ? "s" : ""}`;
+    if (elements.adminStatusText && elements.adminStatusText.textContent !== statusText) {
+        elements.adminStatusText.textContent = statusText;
+    }
+}
+
 async function loadAdminProcesses(force = false, silent = false) {
     if (!state.auth.isAdmin) {
         if (silent) return;
@@ -784,15 +858,21 @@ async function loadAdminProcesses(force = false, silent = false) {
         const payload = await response.json();
         const newProcesses = payload.runs || [];
         if (silent) {
-            const prevFirst = state.admin.processes.length > 0 ? state.admin.processes[0].run_id : "";
-            const newFirst = newProcesses.length > 0 ? newProcesses[0].run_id : "";
-            const noChange = state.admin.processes.length === newProcesses.length && prevFirst === newFirst;
-            if (noChange) shouldRender = false;
-        }
-        if (shouldRender) {
+            const prevIds = state.admin.processes.map((r) => r.run_id).sort().join(",");
+            const newIds = newProcesses.map((r) => r.run_id).sort().join(",");
+            const noChange = state.admin.processes.length === newProcesses.length && prevIds === newIds;
             state.admin.processes = newProcesses;
             state.admin.processesLoaded = true;
+            shouldRender = false;
+            if (!noChange) {
+                renderAdminPage();
+            } else {
+                refreshProcessesElapsedSilently(newProcesses);
+            }
+            return;
         }
+        state.admin.processes = newProcesses;
+        state.admin.processesLoaded = true;
     } catch (error) {
         if (silent) return;
         state.admin.processesError = error instanceof Error ? error.message : String(error || "Could not load active processes.");
@@ -896,11 +976,25 @@ async function loadAdminUsers(force = false, silent = false) {
         if (silent) {
             const prevFirst = state.admin.users.length > 0 ? state.admin.users[0].email : "";
             const newFirst = newUsers.length > 0 ? newUsers[0].email : "";
-            const noChange = state.admin.usersTotalCount === newTotalCount
-                && state.admin.users.length === newUsers.length
-                && prevFirst === newFirst;
-            if (noChange) {
+            const prevIds = state.admin.users.map((u) => u.email).sort().join(",");
+            const newIdsStr = newUsers.map((u) => u.email).sort().join(",");
+            const structuralChange = state.admin.usersTotalCount !== newTotalCount
+                || state.admin.users.length !== newUsers.length
+                || prevIds !== newIdsStr;
+            if (!structuralChange) {
                 shouldRender = false;
+                state.admin.users = newUsers;
+                state.admin.usersPage = Number(payload.page || 1);
+                state.admin.usersLimit = Number(payload.limit || 20);
+                state.admin.usersTotalCount = newTotalCount;
+                state.admin.usersTotalPages = Math.max(1, Number(payload.total_pages || 1));
+                state.admin.historyPublicRead = Boolean(payload.history_public_read ?? state.config?.history?.public_read ?? false);
+                if (state.config?.history) {
+                    state.config.history.public_read = state.admin.historyPublicRead;
+                }
+                state.admin.loaded = true;
+                refreshAdminUserCellsSilently(newUsers);
+                return;
             }
         }
         if (shouldRender) {
