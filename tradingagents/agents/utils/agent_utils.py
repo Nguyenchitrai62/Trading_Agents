@@ -1,12 +1,9 @@
 from langchain_core.messages import HumanMessage, RemoveMessage
-import threading
 
 from tradingagents.agents.utils.crypto_market_tools import (
     get_crypto_indicators,
     get_crypto_ohlcv
 )
-
-LLM_INVOKE_LOCK = threading.Lock()
 
 
 _ANALYST_ROLE_ALIASES = {

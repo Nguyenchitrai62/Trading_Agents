@@ -812,14 +812,7 @@ elements.pageTabs.addEventListener("click", (event) => {
 });
 elements.adminPageButton.addEventListener("click", () => switchPage("admin"));
 elements.chatPageButton?.addEventListener("click", () => switchPage("chat"));
-elements.refreshHistoryButton.addEventListener("click", () => {
-    if (!state.auth.idToken && !state.auth.isAuthorized) {
-        openAuthRequiredAlert();
-        return;
-    }
-    state.history = { ...createEmptyHistoryState(), activeId: state.history.activeId };
-    triggerHistoryListReload("Could not refresh history.");
-});
+
 elements.historyList.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
@@ -984,20 +977,7 @@ elements.chartSymbolForm.addEventListener("submit", (event) => {
     event.preventDefault();
     addChartSymbolFromInput();
 });
-elements.refreshAdminUsersButton.addEventListener("click", () => {
-    if (state.admin.activeTab === "processes") {
-        loadAdminProcesses(true).catch((error) => {
-            state.admin.processesError = error instanceof Error ? error.message : String(error || "Could not refresh processes.");
-            renderAdminPage();
-        });
-    } else {
-        state.admin.loaded = false;
-        loadAdminUsers(true).catch((error) => {
-            state.admin.error = error instanceof Error ? error.message : String(error || "Could not refresh users.");
-            renderAdminPage();
-        });
-    }
-});
+
 elements.adminTabUsers?.addEventListener("click", () => {
     state.admin.activeTab = "users";
     renderAdminPage();
@@ -1075,6 +1055,8 @@ elements.adminUserList.addEventListener("click", (event) => {
         setAdminRowToggle(toggleCell, newValue);
         if (row instanceof HTMLElement) {
             syncAdminRowControls(row);
+            const email = row.dataset.adminEmail;
+            if (email) state.admin.dirtyEmails.add(email);
         }
         return;
     }
@@ -1088,6 +1070,8 @@ elements.adminUserList.addEventListener("change", (event) => {
     const row = target.closest("[data-admin-email]");
     if (row instanceof HTMLElement) {
         syncAdminRowControls(row);
+        const email = row.dataset.adminEmail;
+        if (email) state.admin.dirtyEmails.add(email);
     }
 });
 elements.chatNewButton?.addEventListener("click", () => {

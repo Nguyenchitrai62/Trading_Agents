@@ -345,6 +345,7 @@ function createEmptyAdminState() {
         processesLoading: false,
         processesError: "",
         cancellingRunId: "",
+        dirtyEmails: new Set(),
     };
 }
 

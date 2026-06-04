@@ -7,7 +7,6 @@ from langchain_core.messages import AIMessage
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
-    LLM_INVOKE_LOCK,
 )
 from tradingagents.agents.utils.evidence import (
     get_structured_evidence_instruction,
@@ -155,8 +154,7 @@ Produce a concise {tf} timeframe report covering:
 Keep the report focused on what the {tf} timeframe reveals. Preserve concrete values from the tool outputs.
 {get_language_instruction()}"""
 
-    with LLM_INVOKE_LOCK:
-        raw_report = _response_text(base_llm.invoke(prompt))
+    raw_report = _response_text(base_llm.invoke(prompt))
 
     _emit_market_tool_trace(
         "analysis",
@@ -254,8 +252,7 @@ Synthesize into a unified market report covering:
             f"Synthesizing {len(tf_results)} timeframe reports into unified analysis...",
         )
 
-        with LLM_INVOKE_LOCK:
-            raw_report = _response_text(base_llm.invoke(synthesis_prompt))
+        raw_report = _response_text(base_llm.invoke(synthesis_prompt))
 
         _emit_market_tool_trace(
             "analysis",

@@ -641,6 +641,9 @@ function renderAdminUsersTab() {
                                 const hasHistoryAccess = isAdmin || unlimited || Number(user.history_access_days ?? 0) > 0;
                                 const roleLabel = isAdmin ? "Admin" : canRunAnalysis ? "Can run" : hasHistoryAccess ? "History only" : "No history";
                                 const isSaving = state.admin.savingEmail === email;
+                                const isDirty = state.admin.dirtyEmails.has(email);
+                                const saveClass = isDirty ? "button primary admin-save-button admin-save-dirty" : "button secondary admin-save-button";
+                                const saveText = isSaving ? "Saving" : isDirty ? "Save *" : "Save";
                                 return `
                                     <tr class="admin-user-row" data-admin-email="${escapeHtml(email)}">
                                         <td class="admin-col-num">${startIndex + index}</td>
@@ -652,7 +655,7 @@ function renderAdminUsersTab() {
                                         <td class="admin-col-toggle ${isAdmin || isSeedAdmin ? "admin-toggle-locked" : ""}" data-admin-field="history_unlimited" data-admin-value="${unlimited ? "true" : "false"}">${adminToggleIcon(unlimited)}</td>
                                         <td class="admin-col-days"><input type="number" min="0" step="1" data-admin-field="history_days" value="${escapeHtml(String(dayValue))}" ${unlimited || isAdmin || isSeedAdmin ? "disabled" : ""}></td>
                                         <td class="admin-col-seen">${escapeHtml(formatHistoryTimestamp(user.last_seen_at || ""))}</td>
-                                        <td class="admin-col-save"><button class="button secondary admin-save-button" type="button" data-admin-save-user="${escapeHtml(email)}" ${isSaving ? "disabled" : ""}>${isSaving ? "Saving" : "Save"}</button></td>
+                                        <td class="admin-col-save"><button class="${saveClass}" type="button" data-admin-save-user="${escapeHtml(email)}" ${isSaving ? "disabled" : ""}>${escapeHtml(saveText)}</button></td>
                                     </tr>
                                 `;
                             })
@@ -868,6 +871,7 @@ async function loadAdminUsers(force = false) {
             state.config.history.public_read = state.admin.historyPublicRead;
         }
         state.admin.loaded = true;
+        state.admin.dirtyEmails = new Set();
     } catch (error) {
         state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
     } finally {
@@ -909,6 +913,7 @@ async function saveAdminUser(email) {
         const payload = await response.json();
         const updated = payload.item;
         state.admin.users = state.admin.users.map((user) => (user.email === email ? updated : user));
+        state.admin.dirtyEmails.delete(email);
         state.admin.error = "";
     } catch (error) {
         state.admin.error = error instanceof Error ? error.message : String(error || "Could not save user.");
@@ -916,6 +921,38 @@ async function saveAdminUser(email) {
         state.admin.savingEmail = "";
         renderAdminPage();
     }
+}
+
+let _pollTimer = null;
+
+function stopPollingInterval() {
+    if (_pollTimer !== null) {
+        clearInterval(_pollTimer);
+        _pollTimer = null;
+    }
+}
+
+function startPollingInterval(page) {
+    stopPollingInterval();
+    _pollTimer = setInterval(() => {
+        if (state.page !== page) {
+            stopPollingInterval();
+            return;
+        }
+        if (page === "history") {
+            if (state.history.loading) return;
+            loadHistoryList(true).catch(() => {});
+        }
+        if (page === "admin") {
+            if (state.admin.activeTab === "processes") {
+                if (state.admin.processesLoading) return;
+                loadAdminProcesses(true).catch(() => {});
+            } else {
+                if (state.admin.loading) return;
+                loadAdminUsers(true).catch(() => {});
+            }
+        }
+    }, 2000);
 }
 
 function switchPage(page) {
@@ -940,11 +977,13 @@ function switchPage(page) {
     }
     state.page = page;
     renderPageShell();
+    stopPollingInterval();
     if (page === "history") {
         loadHistoryList().catch((error) => {
             state.history.error = error instanceof Error ? error.message : String(error || "Could not load history.");
             renderHistoryPage();
         });
+        startPollingInterval("history");
     }
     if (page === "chart") {
         loadTradingViewChart();
@@ -954,6 +993,7 @@ function switchPage(page) {
             state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
             renderAdminPage();
         });
+        startPollingInterval("admin");
     }
     if (page === "chat") {
         renderChatPage();
