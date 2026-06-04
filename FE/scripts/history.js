@@ -668,26 +668,31 @@ function renderHistoryPage() {
     }
 }
 
-async function loadHistoryList(force = false) {
+async function loadHistoryList(force = false, silent = false) {
     if (state.history.loading || (state.history.loaded && !force)) {
-        renderHistoryPage();
+        if (!silent) renderHistoryPage();
         return;
     }
     if (!state.auth.idToken && !state.auth.isAuthorized) {
+        if (silent) return;
         openAuthRequiredAlert();
         renderHistoryPage();
         return;
     }
     if (!canReadHistory()) {
+        if (silent) return;
         await ensureAuthorizedSession();
         if (!canReadHistory()) {
             renderHistoryPage();
             return;
         }
     }
-    state.history.loading = true;
-    state.history.error = "";
-    renderHistoryPage();
+    if (!silent) {
+        state.history.loading = true;
+        state.history.error = "";
+        renderHistoryPage();
+    }
+    let shouldRender = true;
     try {
         const response = await apiFetch(`/api/history?page=${state.history.page}&limit=${state.history.limit}`, {
             headers: getAuthHeaders(),
@@ -697,7 +702,7 @@ async function loadHistoryList(force = false) {
             throw new Error(await readResponseError(response));
         }
         const payload = await response.json();
-        state.history.items = (payload.items || []).map((item) => {
+        const newItems = (payload.items || []).map((item) => {
             const entry = cacheHistoryItem(item);
             return entry
                 ? {
@@ -705,18 +710,31 @@ async function loadHistoryList(force = false) {
                 }
                 : item;
         });
-        state.history.page = Number(payload.page || 1);
-        state.history.limit = Number(payload.limit || HISTORY_PAGE_SIZE);
-        state.history.hasMore = Boolean(payload.has_more);
-        state.history.totalCount = Math.max(0, Number(payload.total_count || 0));
-        state.history.totalPages = Math.max(1, Number(payload.total_pages || 1));
-        state.history.loaded = true;
-        state.history.active = state.history.activeId ? getHistoryArchiveEntry(state.history.activeId) : null;
+        const newTotalCount = Math.max(0, Number(payload.total_count || 0));
+        if (silent) {
+            const prevFirst = state.history.items.length > 0 ? state.history.items[0].id : "";
+            const newFirst = newItems.length > 0 ? newItems[0].id : "";
+            const noChange = state.history.totalCount === newTotalCount
+                && state.history.items.length === newItems.length
+                && prevFirst === newFirst;
+            if (noChange) shouldRender = false;
+        }
+        if (shouldRender) {
+            state.history.items = newItems;
+            state.history.page = Number(payload.page || 1);
+            state.history.limit = Number(payload.limit || HISTORY_PAGE_SIZE);
+            state.history.hasMore = Boolean(payload.has_more);
+            state.history.totalCount = newTotalCount;
+            state.history.totalPages = Math.max(1, Number(payload.total_pages || 1));
+            state.history.loaded = true;
+            state.history.active = state.history.activeId ? getHistoryArchiveEntry(state.history.activeId) : null;
+        }
     } catch (error) {
+        if (silent) return;
         state.history.error = error instanceof Error ? error.message : String(error || "Could not load history.");
     } finally {
         state.history.loading = false;
-        renderHistoryPage();
+        if (shouldRender) renderHistoryPage();
     }
 }
 

@@ -561,6 +561,18 @@ function syncAdminRowControls(row) {
     }
 }
 
+function updateRowSaveButton(row) {
+    if (!(row instanceof HTMLElement)) return;
+    const email = row.dataset.adminEmail;
+    const saveBtn = row.querySelector("[data-admin-save-user]");
+    if (!(saveBtn instanceof HTMLElement) || !email) return;
+    const isDirty = state.admin.dirtyEmails.has(email);
+    const isSaving = state.admin.savingEmail === email;
+    saveBtn.className = isDirty ? "button primary admin-save-button admin-save-dirty" : "button secondary admin-save-button";
+    saveBtn.textContent = isSaving ? "Saving" : isDirty ? "Save *" : "Save";
+    saveBtn.disabled = isSaving;
+}
+
 function renderAdminUsersTab() {
     if (!(elements.adminUserList instanceof HTMLElement)) {
         return;
@@ -745,18 +757,22 @@ function formatElapsedTime(seconds) {
     return `${hours}h ${mins % 60}m`;
 }
 
-async function loadAdminProcesses(force = false) {
+async function loadAdminProcesses(force = false, silent = false) {
     if (!state.auth.isAdmin) {
+        if (silent) return;
         openAuthRequiredAlert("Admin permission is required to view active processes.");
         return;
     }
     if (state.admin.processesLoading || (state.admin.processesLoaded && !force)) {
-        renderAdminPage();
+        if (!silent) renderAdminPage();
         return;
     }
-    state.admin.processesLoading = true;
-    state.admin.processesError = "";
-    renderAdminPage();
+    if (!silent) {
+        state.admin.processesLoading = true;
+        state.admin.processesError = "";
+        renderAdminPage();
+    }
+    let shouldRender = true;
     try {
         const response = await apiFetch("/api/admin/runs", {
             headers: getAdminAuthHeaders(),
@@ -766,13 +782,23 @@ async function loadAdminProcesses(force = false) {
             throw new Error(await readResponseError(response));
         }
         const payload = await response.json();
-        state.admin.processes = payload.runs || [];
-        state.admin.processesLoaded = true;
+        const newProcesses = payload.runs || [];
+        if (silent) {
+            const prevFirst = state.admin.processes.length > 0 ? state.admin.processes[0].run_id : "";
+            const newFirst = newProcesses.length > 0 ? newProcesses[0].run_id : "";
+            const noChange = state.admin.processes.length === newProcesses.length && prevFirst === newFirst;
+            if (noChange) shouldRender = false;
+        }
+        if (shouldRender) {
+            state.admin.processes = newProcesses;
+            state.admin.processesLoaded = true;
+        }
     } catch (error) {
+        if (silent) return;
         state.admin.processesError = error instanceof Error ? error.message : String(error || "Could not load active processes.");
     } finally {
         state.admin.processesLoading = false;
-        renderAdminPage();
+        if (shouldRender) renderAdminPage();
     }
 }
 
@@ -835,18 +861,22 @@ async function saveAdminHistoryAccessPolicy() {
     }
 }
 
-async function loadAdminUsers(force = false) {
+async function loadAdminUsers(force = false, silent = false) {
     if (!state.auth.isAdmin) {
+        if (silent) return;
         openAuthRequiredAlert("Admin permission is required to open user management.");
         return;
     }
     if (state.admin.loading || (state.admin.loaded && !force)) {
-        renderAdminPage();
+        if (!silent) renderAdminPage();
         return;
     }
-    state.admin.loading = true;
-    state.admin.error = "";
-    renderAdminPage();
+    if (!silent) {
+        state.admin.loading = true;
+        state.admin.error = "";
+        renderAdminPage();
+    }
+    let shouldRender = true;
     try {
         const page = state.admin.usersPage || 1;
         const limit = state.admin.usersLimit || 20;
@@ -858,25 +888,40 @@ async function loadAdminUsers(force = false) {
             throw new Error(await readResponseError(response));
         }
         const payload = await response.json();
-        state.admin.users = (payload.items || []).map((user) => ({
+        const newUsers = (payload.items || []).map((user) => ({
             ...user,
             email: user.email || "",
         }));
-        state.admin.usersPage = Number(payload.page || 1);
-        state.admin.usersLimit = Number(payload.limit || 20);
-        state.admin.usersTotalCount = Math.max(0, Number(payload.total_count || 0));
-        state.admin.usersTotalPages = Math.max(1, Number(payload.total_pages || 1));
-        state.admin.historyPublicRead = Boolean(payload.history_public_read ?? state.config?.history?.public_read ?? false);
-        if (state.config?.history) {
-            state.config.history.public_read = state.admin.historyPublicRead;
+        const newTotalCount = Math.max(0, Number(payload.total_count || 0));
+        if (silent) {
+            const prevFirst = state.admin.users.length > 0 ? state.admin.users[0].email : "";
+            const newFirst = newUsers.length > 0 ? newUsers[0].email : "";
+            const noChange = state.admin.usersTotalCount === newTotalCount
+                && state.admin.users.length === newUsers.length
+                && prevFirst === newFirst;
+            if (noChange) {
+                shouldRender = false;
+            }
         }
-        state.admin.loaded = true;
-        state.admin.dirtyEmails = new Set();
+        if (shouldRender) {
+            state.admin.users = newUsers;
+            state.admin.usersPage = Number(payload.page || 1);
+            state.admin.usersLimit = Number(payload.limit || 20);
+            state.admin.usersTotalCount = newTotalCount;
+            state.admin.usersTotalPages = Math.max(1, Number(payload.total_pages || 1));
+            state.admin.historyPublicRead = Boolean(payload.history_public_read ?? state.config?.history?.public_read ?? false);
+            if (state.config?.history) {
+                state.config.history.public_read = state.admin.historyPublicRead;
+            }
+            state.admin.loaded = true;
+            state.admin.dirtyEmails = new Set();
+        }
     } catch (error) {
+        if (silent) return;
         state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
     } finally {
         state.admin.loading = false;
-        renderAdminPage();
+        if (shouldRender) renderAdminPage();
     }
 }
 
@@ -941,18 +986,18 @@ function startPollingInterval(page) {
         }
         if (page === "history") {
             if (state.history.loading) return;
-            loadHistoryList(true).catch(() => {});
+            loadHistoryList(true, true).catch(() => {});
         }
         if (page === "admin") {
             if (state.admin.activeTab === "processes") {
                 if (state.admin.processesLoading) return;
-                loadAdminProcesses(true).catch(() => {});
+                loadAdminProcesses(true, true).catch(() => {});
             } else {
                 if (state.admin.loading) return;
-                loadAdminUsers(true).catch(() => {});
+                loadAdminUsers(true, true).catch(() => {});
             }
         }
-    }, 2000);
+    }, 5000);
 }
 
 function switchPage(page) {

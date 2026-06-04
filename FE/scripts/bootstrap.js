@@ -1056,7 +1056,10 @@ elements.adminUserList.addEventListener("click", (event) => {
         if (row instanceof HTMLElement) {
             syncAdminRowControls(row);
             const email = row.dataset.adminEmail;
-            if (email) state.admin.dirtyEmails.add(email);
+            if (email) {
+                state.admin.dirtyEmails.add(email);
+                updateRowSaveButton(row);
+            }
         }
         return;
     }
@@ -1071,7 +1074,10 @@ elements.adminUserList.addEventListener("change", (event) => {
     if (row instanceof HTMLElement) {
         syncAdminRowControls(row);
         const email = row.dataset.adminEmail;
-        if (email) state.admin.dirtyEmails.add(email);
+        if (email) {
+            state.admin.dirtyEmails.add(email);
+            updateRowSaveButton(row);
+        }
     }
 });
 elements.chatNewButton?.addEventListener("click", () => {
