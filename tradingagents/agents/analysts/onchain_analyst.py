@@ -10,6 +10,7 @@ from tradingagents.agents.utils.evidence import (
     get_structured_evidence_instruction,
     split_report_and_evidence,
 )
+from tradingagents.agents.utils.agent_utils import LLM_INVOKE_LOCK
 from tradingagents.agents.utils.structured import resolve_structured_base_llm
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.endpoint_summary import format_endpoint_summaries_for_prompt
@@ -92,7 +93,8 @@ Write a concise endpoint analysis for downstream onchain synthesis. Use only the
 - Key findings with concrete metrics from the payload.
 - Caveats and freshness limitations.
 Keep the answer under 180 words."""
-    analysis = _trim(_response_text(base_llm.invoke(prompt)), _MAX_ENDPOINT_ANALYSIS_CHARS)
+    with LLM_INVOKE_LOCK:
+        analysis = _trim(_response_text(base_llm.invoke(prompt)), _MAX_ENDPOINT_ANALYSIS_CHARS)
     return {
         "endpoint_key": endpoint_key,
         "title": title,
@@ -213,7 +215,8 @@ Produce a detailed markdown report with:
 6. Key contradictions, missing data, and confidence.
 7. A final markdown table of the highest-signal endpoint findings.
 {get_structured_evidence_instruction('onchain')}"""
-            raw_report = _response_text(base_llm.invoke(prompt))
+            with LLM_INVOKE_LOCK:
+                raw_report = _response_text(base_llm.invoke(prompt))
             report, evidence_items = split_report_and_evidence(
                 raw_report,
                 agent_key="onchain",

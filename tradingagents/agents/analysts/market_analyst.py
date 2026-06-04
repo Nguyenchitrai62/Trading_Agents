@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
     get_language_instruction,
+    LLM_INVOKE_LOCK,
 )
 from tradingagents.agents.utils.evidence import (
     get_structured_evidence_instruction,
@@ -111,6 +112,13 @@ def _run_tf_agent(
     bundle = _collect_tf_bundle(symbol, tf, preview_limit)
     tf_context = _format_tf_context(bundle, tf)
 
+    _emit_market_tool_trace(
+        "analysis",
+        f"TF {tf} analyzing",
+        f"market:llm:{tf}",
+        f"Analyzing {symbol} on {tf} timeframe ({len(tf_context)} chars context)...",
+    )
+
     prompt = f"""You are the Market Analyst for timeframe {tf}.
 
 {instrument_context}
@@ -132,7 +140,16 @@ Produce a concise {tf} timeframe report covering:
 Keep the report focused on what the {tf} timeframe reveals. Preserve concrete values from the tool outputs.
 {get_language_instruction()}"""
 
-    raw_report = _response_text(base_llm.invoke(prompt))
+    with LLM_INVOKE_LOCK:
+        raw_report = _response_text(base_llm.invoke(prompt))
+
+    _emit_market_tool_trace(
+        "analysis",
+        f"TF {tf} complete",
+        f"market:llm:{tf}",
+        f"Completed {tf} analysis ({len(raw_report)} chars).",
+    )
+
     return {"timeframe": tf, "report": raw_report, "bundle": bundle}
 
 
@@ -169,8 +186,20 @@ def create_market_analyst(llm):
                     result = future.result()
                     tf_results[tf] = result["report"]
                     tf_bundles[tf] = result["bundle"]
+                    _emit_market_tool_trace(
+                        "analysis",
+                        f"TF {tf} received",
+                        f"market:tf_done:{tf}",
+                        f"{tf} analysis finished ({len(result['report'])} chars).",
+                    )
                 except Exception as exc:
                     tf_results[tf] = f"[{tf} analysis unavailable: {exc}]"
+                    _emit_market_tool_trace(
+                        "analysis",
+                        f"TF {tf} failed",
+                        f"market:tf_done:{tf}",
+                        f"Error: {exc}",
+                    )
 
         if not tf_bundles:
             raise RuntimeError(
@@ -203,7 +232,22 @@ Synthesize into a unified market report covering:
 
 {get_language_instruction()}{get_structured_evidence_instruction('market')}"""
 
-        raw_report = _response_text(base_llm.invoke(synthesis_prompt))
+        _emit_market_tool_trace(
+            "analysis",
+            "Multi-TF synthesis",
+            "market:synthesis",
+            f"Synthesizing {len(tf_results)} timeframe reports into unified analysis...",
+        )
+
+        with LLM_INVOKE_LOCK:
+            raw_report = _response_text(base_llm.invoke(synthesis_prompt))
+
+        _emit_market_tool_trace(
+            "analysis",
+            "Multi-TF synthesis complete",
+            "market:synthesis",
+            f"Synthesis complete ({len(raw_report)} chars).",
+        )
         report, evidence_items = split_report_and_evidence(
             raw_report,
             agent_key="market",
