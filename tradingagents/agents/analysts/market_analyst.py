@@ -73,17 +73,26 @@ def _emit_market_tool_trace(phase: str, title: str, trace_id: str, content: obje
 def _collect_tf_bundle(symbol: str, tf: str, preview_limit: int) -> dict:
     _emit_market_tool_trace(
         "tool_call",
-        f"bundle:{tf}",
-        f"market:bundle:{tf}",
-        f"get_crypto_bundle({symbol}, {tf}, preview_limit={preview_limit})",
+        f"get_crypto_ohlcv:{tf}",
+        f"market:ohlcv:{tf}",
+        f"get_crypto_ohlcv({symbol}, {tf}, preview_limit={preview_limit})",
+    )
+    _emit_market_tool_trace(
+        "tool_call",
+        f"get_crypto_indicators:{tf}",
+        f"market:indicators:{tf}",
+        f"get_crypto_indicators({symbol}, {tf}, preview_limit={preview_limit})",
     )
     try:
         bundle = get_crypto_bundle(symbol, tf, preview_limit=preview_limit, exchange_name="binance")
-        result_info = f"OHLCV: {len(bundle.get('ohlcv', ''))} chars, indicators: {len(bundle.get('indicators', {}))} items"
-        _emit_market_tool_trace("tool_result", f"bundle:{tf}", f"market:bundle:{tf}", result_info)
+        ohlcv_info = f"OHLCV: {len(bundle.get('ohlcv', ''))} chars"
+        ind_info = f"Indicators: {len(bundle.get('indicators', {}))} items"
+        _emit_market_tool_trace("tool_result", f"get_crypto_ohlcv:{tf}", f"market:ohlcv:{tf}", ohlcv_info)
+        _emit_market_tool_trace("tool_result", f"get_crypto_indicators:{tf}", f"market:indicators:{tf}", ind_info)
         return bundle
     except Exception as exc:
-        _emit_market_tool_trace("tool_result", f"bundle:{tf}", f"market:bundle:{tf}", f"Error: {exc}")
+        _emit_market_tool_trace("tool_result", f"get_crypto_ohlcv:{tf}", f"market:ohlcv:{tf}", f"Error: {exc}")
+        _emit_market_tool_trace("tool_result", f"get_crypto_indicators:{tf}", f"market:indicators:{tf}", f"Error: {exc}")
         raise
 
 

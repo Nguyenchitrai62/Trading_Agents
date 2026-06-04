@@ -439,7 +439,7 @@ function isLiveSourceTraceEntryForGroup(entry = {}, groupKey = "", phases = ["to
     }
     const isWebSearch = isWebSearchTraceEntry(entry);
     if (groupKey === "ccxt") {
-        return title === "get_crypto_ohlcv" || title === "get_crypto_indicators";
+        return title.includes("get_crypto_ohlcv") || title.includes("get_crypto_indicators") || title.includes("get_crypto_bundle");
     }
     if (groupKey === "coinglass") {
         return traceId.startsWith("coinglass:") || title.includes("coinglass");
