@@ -165,11 +165,8 @@ class TursoHistoryStore:
                 return
             statements = [
                 "PRAGMA foreign_keys = ON",
-                "DROP TABLE IF EXISTS analysis_decisions",
-                "DROP TABLE IF EXISTS analysis_sections",
-                "DROP TABLE IF EXISTS analysis_runs",
                 """
-                CREATE TABLE analysis_runs (
+                CREATE TABLE IF NOT EXISTS analysis_runs (
                     id TEXT PRIMARY KEY,
                     symbol TEXT NOT NULL,
                     asset_type TEXT NOT NULL,

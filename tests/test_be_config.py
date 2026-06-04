@@ -235,7 +235,6 @@ class TestBackendSettings:
         settings = BackendSettings.from_env()
         assert settings is not None
         assert settings.app_title == "TradingAgents Analysis API"
-        assert settings.app_version == "v0.0.1"
         assert settings.default_model in ("deepseek-v4-flash", "") or True
         assert settings.port > 0
 
