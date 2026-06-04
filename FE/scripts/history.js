@@ -614,7 +614,7 @@ function renderHistoryPage() {
                                 <th scope="col">Take profit</th>
                                 <th scope="col">Created at</th>
                                 <th scope="col">Research depth</th>
-                                <th scope="col">Lookback day</th>
+                                <th scope="col">Model</th>
                                 <th scope="col">Elapsed time</th>
                             </tr>
                         </thead>
@@ -633,7 +633,7 @@ function renderHistoryPage() {
                                             <td>${escapeHtml(formatHistoryPrice(item.take_profit))}</td>
                                             <td>${escapeHtml(formatHistoryDateTime(item.created_at))}</td>
                                             <td>${escapeHtml(item.research_depth || "-")}</td>
-                                            <td>${escapeHtml(String(item.lookback_days || "-"))}</td>
+                                            <td>${escapeHtml(item.quick_think_model || "-")}</td>
                                             <td>${escapeHtml(formatHistoryElapsedSeconds(item.elapsed_seconds))}</td>
                                         </tr>
                                     `,

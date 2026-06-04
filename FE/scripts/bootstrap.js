@@ -123,15 +123,14 @@ const elements = {
     runFromModalButton: document.getElementById("runFromModalButton"),
     symbolInput: document.getElementById("symbolInput"),
     analysisDateInput: document.getElementById("analysisDateInput"),
-    lookbackPresetSelect: document.getElementById("lookbackPresetSelect"),
-    lookbackDaysField: document.getElementById("lookbackDaysField"),
-    lookbackDaysInput: document.getElementById("lookbackDaysInput"),
     languageInput: document.getElementById("languageInput"),
-    reasoningEffortSelect: document.getElementById("reasoningEffortSelect"),
+    quickModelSelect: document.getElementById("quickModelSelect"),
+    deepModelSelect: document.getElementById("deepModelSelect"),
+    quickReasoningSelect: document.getElementById("quickReasoningSelect"),
+    deepReasoningSelect: document.getElementById("deepReasoningSelect"),
     analystOptions: document.getElementById("analystOptions"),
     depthOptions: document.getElementById("depthOptions"),
     configPreview: document.getElementById("configPreview"),
-    modelSelect: document.getElementById("modelSelect"),
 };
 
 [elements.configModal, elements.detailModal, elements.alertModal].forEach((modal) => {
@@ -247,7 +246,7 @@ function handleServerEvent(event, data) {
             : data.research_depth;
         pushStreamFeed({
             title: "Analysis initialized",
-            content: compactText(`${data.symbol} - ${data.asset_type} - ${depthLabel} depth - ${data.model}`),
+            content: compactText(`${data.symbol} - ${data.asset_type} - ${depthLabel} depth - ${data.quick_think_model || data.deep_think_model || "unknown"}`),
             tone: "progress",
         });
         renderAll();
@@ -529,7 +528,8 @@ function populateLanguageOptions(config) {
 }
 
 function populateReasoningEffortOptions(config) {
-    const defaultValue = config.analysis_defaults.reasoning_effort || "max";
+    const quickDefault = config.analysis_defaults.quick_reasoning_effort || "max";
+    const deepDefault = config.analysis_defaults.deep_reasoning_effort || "max";
     const efforts = config.analysis_options.reasoning_efforts || [
         { value: "low", label: "low" },
         { value: "medium", label: "medium" },
@@ -537,27 +537,27 @@ function populateReasoningEffortOptions(config) {
         { value: "xhigh", label: "xhigh" },
         { value: "max", label: "max" },
     ];
-    if (elements.reasoningEffortSelect instanceof HTMLSelectElement) {
-        elements.reasoningEffortSelect.innerHTML = efforts
-            .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
-            .join("");
-        if (efforts.some((item) => item.value === defaultValue)) {
-            elements.reasoningEffortSelect.value = defaultValue;
+    const optionMarkup = efforts
+        .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
+        .join("");
+
+    [elements.quickReasoningSelect, elements.deepReasoningSelect].forEach((select) => {
+        if (select instanceof HTMLSelectElement) {
+            select.innerHTML = optionMarkup;
         }
+    });
+
+    if (elements.quickReasoningSelect instanceof HTMLSelectElement && efforts.some((item) => item.value === quickDefault)) {
+        elements.quickReasoningSelect.value = quickDefault;
+    }
+    if (elements.deepReasoningSelect instanceof HTMLSelectElement && efforts.some((item) => item.value === deepDefault)) {
+        elements.deepReasoningSelect.value = deepDefault;
     }
 }
 
-function populateLookbackPresets(config) {
-    elements.lookbackPresetSelect.innerHTML = (config.analysis_options.lookback_presets || [])
-        .map(
-            (preset) => `<option value="${escapeHtml(preset.value)}">${escapeHtml(preset.label)}</option>`,
-        )
-        .concat(`<option value="${CUSTOM_LOOKBACK_VALUE}">Custom</option>`)
-        .join("");
-}
-
 function populateModelOptions(config) {
-    const preferredModel = String(config.analysis_defaults.model || config.default_model || "").trim();
+    const quickModel = String(config.analysis_defaults.quick_think_model || config.analysis_defaults.model || config.default_model || "").trim();
+    const deepModel = String(config.analysis_defaults.deep_think_model || config.analysis_defaults.model || config.default_model || "").trim();
     const configuredModels = Array.isArray(config.analysis_options.models) ? config.analysis_options.models : [];
     const options = configuredModels
         .map((item) => {
@@ -571,26 +571,31 @@ function populateModelOptions(config) {
         })
         .filter((item) => item.value && item.label);
 
-    if (preferredModel && !options.some((item) => item.value === preferredModel)) {
-        options.unshift({ value: preferredModel, label: preferredModel });
+    if (quickModel && !options.some((item) => item.value === quickModel)) {
+        options.unshift({ value: quickModel, label: quickModel });
+    }
+    if (deepModel && deepModel !== quickModel && !options.some((item) => item.value === deepModel)) {
+        options.push({ value: deepModel, label: deepModel });
     }
 
     const optionMarkup = options
         .map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
         .join("");
 
-    if (elements.modelSelect instanceof HTMLSelectElement) {
-        elements.modelSelect.innerHTML = optionMarkup;
-        if (preferredModel) {
-            elements.modelSelect.value = preferredModel;
+    [elements.quickModelSelect, elements.deepModelSelect, elements.chatModelSelect].forEach((select) => {
+        if (select instanceof HTMLSelectElement) {
+            select.innerHTML = optionMarkup;
         }
-    }
+    });
 
-    if (elements.chatModelSelect instanceof HTMLSelectElement) {
-        elements.chatModelSelect.innerHTML = optionMarkup;
-        if (preferredModel) {
-            elements.chatModelSelect.value = preferredModel;
-        }
+    if (elements.quickModelSelect instanceof HTMLSelectElement && quickModel) {
+        elements.quickModelSelect.value = quickModel;
+    }
+    if (elements.deepModelSelect instanceof HTMLSelectElement && deepModel) {
+        elements.deepModelSelect.value = deepModel;
+    }
+    if (elements.chatModelSelect instanceof HTMLSelectElement && quickModel) {
+        elements.chatModelSelect.value = quickModel;
     }
 }
 
@@ -628,25 +633,15 @@ function bindConfigInputListeners() {
     [
         elements.symbolInput,
         elements.analysisDateInput,
-        elements.lookbackDaysInput,
         elements.languageInput,
     ].filter(Boolean).forEach((element) => element.addEventListener("input", sync));
-    elements.lookbackPresetSelect.addEventListener("change", () => {
-        if (elements.lookbackPresetSelect.value !== CUSTOM_LOOKBACK_VALUE) {
-            elements.lookbackDaysInput.value = elements.lookbackPresetSelect.value;
-        } else if (!elements.lookbackDaysInput.value) {
-            elements.lookbackDaysInput.value = state.config?.analysis_defaults?.lookback_days || 7;
-        }
-        refreshConfigUi();
-        if (elements.lookbackPresetSelect.value === CUSTOM_LOOKBACK_VALUE) {
-            elements.lookbackDaysInput.focus();
-        }
-    });
     elements.languageInput.addEventListener("input", () => {
         refreshConfigUi();
     });
-    elements.reasoningEffortSelect?.addEventListener("change", sync);
-    elements.modelSelect?.addEventListener("change", sync);
+    elements.quickReasoningSelect?.addEventListener("change", sync);
+    elements.deepReasoningSelect?.addEventListener("change", sync);
+    elements.quickModelSelect?.addEventListener("change", sync);
+    elements.deepModelSelect?.addEventListener("change", sync);
     elements.analystOptions.addEventListener("change", sync);
     elements.depthOptions.addEventListener("change", sync);
 }
@@ -679,8 +674,6 @@ async function loadConfig() {
 
     elements.symbolInput.value = config.analysis_defaults.symbol;
     elements.analysisDateInput.value = config.analysis_defaults.analysis_date;
-    populateLookbackPresets(config);
-    elements.lookbackDaysInput.value = config.analysis_defaults.lookback_days;
     populateLanguageOptions(config);
     populateReasoningEffortOptions(config);
     populateModelOptions(config);
@@ -699,7 +692,7 @@ async function runAnalysis() {
     }
 
     const payload = readConfigForm();
-    if (!payload.symbol || !payload.model) {
+    if (!payload.symbol || (!payload.quick_think_model && !payload.deep_think_model)) {
         throw new Error("Symbol and model are required.");
     }
 

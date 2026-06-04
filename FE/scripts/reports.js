@@ -356,7 +356,6 @@ function renderSmartNotes() {
     const notes = [];
     if (state.run.meta) {
         notes.push(`Market mode: ${state.run.meta.asset_type}`);
-        notes.push(`Lookback window: ${state.run.meta.lookback_days} day(s)`);
         notes.push(`Depth preset: ${getAnalysisDepthLabel(state.run.meta)} (${state.run.meta.depth_rounds} rounds)`);
         notes.push(`Output language: ${state.run.meta.output_language}`);
     }

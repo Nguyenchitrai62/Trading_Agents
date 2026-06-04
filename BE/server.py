@@ -200,11 +200,13 @@ def create_app() -> FastAPI:
             "analysis_defaults": {
                 "symbol": SETTINGS.trading_view_symbol.split(":")[-1].replace("USDT", "-USDT"),
                 "asset_type": SETTINGS.default_asset_type,
-                "lookback_days": SETTINGS.default_analysis_lookback_days,
                 "output_language": SETTINGS.default_output_language,
                 "selected_analysts": list(SETTINGS.default_selected_analysts),
                 "research_depth": SETTINGS.default_research_depth,
-                "model": SETTINGS.default_model,
+                "quick_think_model": SETTINGS.default_model,
+                "deep_think_model": SETTINGS.default_model,
+                "quick_reasoning_effort": "max",
+                "deep_reasoning_effort": "max",
                 "checkpoint_enabled": SETTINGS.default_checkpoint_enabled,
             },
             "analysis_options": {

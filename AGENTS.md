@@ -34,12 +34,12 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
   - History, Chart, Admin, Chat pages
 - Popup config hien ho tro:
   - symbol
-  - analysis date
-  - lookback window
+  - analysis date (hidden, auto today)
   - output language
   - analyst selection
   - research depth
-  - model
+  - quick_think_model + quick_reasoning_effort
+  - deep_think_model + deep_reasoning_effort
   - checkpoint toggle
 - `/api/analyze` la endpoint phan tich streaming chinh.
 - `/api/analyze` stream cac event nhu `analysis_meta`, `analysis_log`, `agent_trace`, `evidence_update`, `status_snapshot`, `section_update`, `debate_update`, `warning`, `complete`, `cancelled`, `error`.
@@ -48,13 +48,13 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 
 ## Current Analysis Flow
 
-1. `BE.models.AnalysisRequest` normalize symbol, date, lookback, selected analysts, depth, model, checkpoint.
+1. `BE.models.AnalysisRequest` normalize symbol, date, selected analysts, depth, quick/ deep model, reasoning effort, checkpoint.
 2. `BE.analysis.AnalysisService.run_trading_analysis()` resolve MiniMax config, reserve runtime slot, emit metadata/status ban dau.
-3. Backend build graph config tu `tradingagents.agent_config.DEFAULT_CONFIG`, override model, language, analysis date, lookback, debate rounds, risk rounds, and MiniMax MCP tool budget.
+3. Backend build graph config tu `tradingagents.agent_config.DEFAULT_CONFIG`, override model, language, analysis date, debate rounds, risk rounds, reasoning effort (split per quick/deep), and MiniMax MCP tool budget.
 4. Backend prefetch CoinGlass snapshot neu configured. Hien tai prefetch toan bo high-value endpoints roi chia thanh package context cho cac role.
 5. `TradingAgentsGraph` tao quick/deep LLM clients, tool nodes, graph setup.
 6. Analyst phase chay 4 branch canonical, mac dinh co the chay song song theo `analyst_concurrency_limit`:
-  - Market Analyst: lay CCXT OHLCV + chi bao ky thuat bang code, sau do goi LLM 1 lan de phan tich.
+  - Market Analyst: multi-timeframe analysis. Backend fetches OHLCV + indicators cho 5 timeframes (15m, 1h, 4h, 1d, 1w) song song qua `get_crypto_bundle()` — moi TF 1 HTTP request, tinh toan bo indicator tu DataFrame chung. Moi TF co 1 sub-agent phan tich rieng, sau do 1 synthesis LLM tong hop bao cao da khung thoi gian thanh `market_report` duy nhat.
   - Onchain Analyst: dung cac endpoint CoinGlass da prefetch; moi endpoint thanh cong duoc LLM phan tich 1 lan, sau do goi LLM 1 lan nua de tong hop.
   - Social Analyst: dung MiniMax MCP `web_search` lam live retrieval path.
   - News Analyst: dung MiniMax MCP `web_search` lam live retrieval path.
@@ -67,7 +67,8 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 
 ## Accuracy And Cost Notes
 
-- FE config hien dang mac dinh `lookbackDays: 30`, `researchDepth: deep`, va all analysts. Day la cau hinh ton LLM/API. Backend default la lookback 7 va depth medium, nhung FE default se override khi nguoi dung chay tu UI.
+- FE config hien dang mac dinh `researchDepth: auto`, va all analysts. Backend default la depth medium, nhung FE default se override khi nguoi dung chay tu UI.
+- Deep mode tang so LLM calls cho debate (5 rounds research + 5 risk). Market analyst multi-timeframe adds 6 LLM calls (5 TF sub-agents + 1 synthesis) regardless of depth.
 - Depth tac dong truc tiep den so LLM calls:
   - quick = 1 research round va 1 risk round.
   - medium = 3 research rounds va 3 risk rounds.
@@ -79,11 +80,12 @@ Muc tieu khong phai giu nguyen CLI cu. Muc tieu la giu va phat trien backend age
 
 ## Data Extraction And Noise Notes
 
-- Crypto OHLCV/indicator tools trong `tradingagents/dataflows/ccxt_crypto.py` fetch full active lookback theo timeframe agent yeu cau, co paginate khi can.
+- Crypto OHLCV/indicator tools trong `tradingagents/dataflows/ccxt_crypto.py` fetch 200 candles moi nhat (50 cho 1w) cho moi timeframe trong `MARKET_TIMEFRAMES`. Moi TF fetch du lieu OHLCV 1 lan duy nhat, sau do tinh toan toan bo indicator tu DataFrame chung qua `get_crypto_bundle()`.
 - Model khong nhin toan bo raw candles. Tool chi tra summary, window metadata, va bang recent rows compact:
   - OHLCV hien thi recent 18 candles.
   - Indicators hien thi recent 12 rows moi indicator.
-- Neu nguoi dung chon lookback qua dai tren timeframe thap, vi du 180 ngay voi 1h, backend van co the fetch hang nghin candles de tinh summary/indicator. Model input khong qua lon, nhung latency/API/noise tang va summary co the pha tron nhieu regime thi truong.
+- Khong con auto-timeframe selection hay `crypto_market_lookback_days`. So luong nen moi TF la co dinh (200 hoac 50 cho 1w), dam bao data window dong nhat va nhat quan.
+- `get_crypto_bundle()` dam bao fetch du nen de tinh indicator (padding 60 rows), nhung chi preview so luong co dinh cho LLM.
 - CoinGlass prefetch dung default limit 42 voi interval 4h cho cac endpoint history, xap xi 7 ngay du lieu. Payload duoc summarize/compact truoc khi dua vao prompt; package context vao agent bi gioi han boi `coinglass_prompt_char_limit` mac dinh 4800 ky tu.
 - MiniMax MCP tool result mac dinh khong bi cat (`MINIMAX_MCP_TOOL_RESULT_CHAR_LIMIT=0`). Neu env nay duoc set > 0 thi tool result se bi truncate truoc khi tra ve model.
 - `ANALYSIS_TRACE_CHAR_LIMIT` chi anh huong noi dung trace gui len FE, khong phai nhat thiet la prompt noi bo cua model.

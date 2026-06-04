@@ -307,6 +307,11 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+#configForm .compact-grid-models {
+    grid-area: secondary;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 #configForm .compact-config-choices {
     grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
     align-items: stretch;
@@ -367,6 +372,7 @@
 
 #configForm .compact-grid-primary,
 #configForm .compact-grid-secondary,
+#configForm .compact-grid-models,
 #configForm .compact-config-choices,
 #configForm .modal-actions,
 #configPreview.compact-config-preview {
@@ -381,6 +387,11 @@
 #configForm .compact-grid-secondary {
     grid-area: secondary;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#configForm .compact-grid-models {
+    grid-area: secondary;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 #configForm .compact-config-choices {

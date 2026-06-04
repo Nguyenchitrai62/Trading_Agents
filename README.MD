@@ -25,7 +25,7 @@ Browser (SSE)  ←  FastAPI Backend  ←  LangGraph Agent Graph
 
 | Stage | Agent(s) | Data |
 |-------|----------|------|
-| 1. Market Analysis | Market Analyst | CCXT OHLCV + technical indicators |
+| 1. Market Analysis | Market Analyst (multi-TF) | CCXT OHLCV + indicators — 15m, 1h, 4h, 1d, 1w timeframes |
 | 2. Onchain Analysis | Onchain Analyst | CoinGlass (reserves, liquidations, funding, OI, flows) |
 | 3. Social Analysis | Social Analyst | Live web search |
 | 4. News Analysis | News Analyst | Live web search |
@@ -34,6 +34,10 @@ Browser (SSE)  ←  FastAPI Backend  ←  LangGraph Agent Graph
 | 7. Portfolio Decision | Portfolio Manager | Full debate history |
 | 8. Verification | Verifier | Decision + live price |
 | 9. Decision Extraction | Decision Extractor | Verified markdown |
+
+**Market Analyst:** Runs 5 timeframe sub-agents in parallel (15m, 1h, 4h, 1d, 1w) — each fetches 200 candles of OHLCV, computes 9 technical indicators locally, and produces a timeframe-specific report. A synthesis LLM then merges all 5 reports into a single multi-timeframe market analysis with confirmed trend alignment, divergence detection, and confluence zones.
+
+**Model config:** Separate quick_think_model + deep_think_model with independent reasoning efforts per model.
 
 **Depth options:** Quick (1 round), Medium (3 rounds), Deep (5 rounds) — affects debate call count.
 

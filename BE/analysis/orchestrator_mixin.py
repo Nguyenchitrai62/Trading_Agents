@@ -55,10 +55,10 @@ class AnalysisOrchestratorMixin:
         cancel_event: threading.Event | None = None,
     ) -> None:
         self.ensure_analysis_runtime_available()
-        provider_settings = resolve_provider_settings(request.model, self.settings)
+        provider_settings = resolve_provider_settings(request.quick_think_model, self.settings)
         if not provider_settings["configured"]:
             provider = provider_settings.get("provider")
-            if is_deepseek_model(request.model):
+            if is_deepseek_model(request.quick_think_model):
                 raise HTTPException(
                     status_code=500,
                     detail="Set DEEPSEEK_API_KEY in .env before running analysis.",
@@ -174,7 +174,6 @@ class AnalysisOrchestratorMixin:
                 "symbol": symbol,
                 "asset_type_mode": request.asset_type,
                 "analysis_date": request.analysis_date,
-                "lookback_days": request.lookback_days,
                 "asset_type": asset_type,
                 "output_language": request.output_language,
                 "research_depth": request.research_depth,
@@ -182,7 +181,8 @@ class AnalysisOrchestratorMixin:
                 "depth_rounds": runtime_profile["effective_rounds"],
                 "mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
                 "auto_escalation_enabled": runtime_profile.get("auto_escalation", False),
-                "model": request.model,
+                "quick_think_model": request.quick_think_model,
+                "deep_think_model": request.deep_think_model,
                 "llm_max_tokens": runtime_profile["llm_max_tokens"],
                 "resource_constrained": self.settings.resource_constrained_mode,
                 "selected_analysts": filtered_analysts,
@@ -211,7 +211,6 @@ class AnalysisOrchestratorMixin:
             requested_asset_type=request.asset_type,
             resolved_asset_type=asset_type,
             selected_analysts=filtered_analysts,
-            lookback_days=request.lookback_days,
             research_depth=request.research_depth,
             effective_research_depth=runtime_profile["effective_depth"],
             effective_depth_rounds=runtime_profile["effective_rounds"],
@@ -305,7 +304,7 @@ class AnalysisOrchestratorMixin:
             "Building TradingAgents graph.",
             "graph_setup",
             provider=provider_settings["provider"],
-            model=request.model,
+            model=request.quick_think_model,
             depth_rounds=runtime_profile["effective_rounds"],
             mcp_max_tool_rounds=runtime_profile["mcp_max_tool_rounds"],
             max_tokens=runtime_profile["llm_max_tokens"],

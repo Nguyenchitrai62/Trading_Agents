@@ -72,23 +72,24 @@ class TradingAgentsGraph:
         os.makedirs(self.config["results_dir"], exist_ok=True)
 
         # Initialize LLMs with provider-specific thinking configuration
-        llm_kwargs = self._get_provider_kwargs()
+        deep_kwargs = self._get_provider_kwargs("deep")
+        quick_kwargs = self._get_provider_kwargs("quick")
 
-        # Add callbacks to kwargs if provided (passed to LLM constructor)
         if self.callbacks:
-            llm_kwargs["callbacks"] = self.callbacks
+            deep_kwargs["callbacks"] = self.callbacks
+            quick_kwargs["callbacks"] = self.callbacks
 
         deep_client = create_llm_client(
             provider=self.config["llm_provider"],
             model=self.config["deep_think_llm"],
             base_url=self.config.get("backend_url"),
-            **llm_kwargs,
+            **deep_kwargs,
         )
         quick_client = create_llm_client(
             provider=self.config["llm_provider"],
             model=self.config["quick_think_llm"],
             base_url=self.config.get("backend_url"),
-            **llm_kwargs,
+            **quick_kwargs,
         )
 
         self.deep_thinking_llm = deep_client.get_llm()
@@ -130,8 +131,12 @@ class TradingAgentsGraph:
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 
-    def _get_provider_kwargs(self) -> Dict[str, Any]:
-        """Get provider-specific kwargs for LLM client creation."""
+    def _get_provider_kwargs(self, role: str = "quick") -> Dict[str, Any]:
+        """Get provider-specific kwargs for LLM client creation.
+
+        Args:
+            role: "quick" or "deep" — selects the appropriate reasoning effort config.
+        """
         kwargs = {}
         provider = self.config.get("llm_provider", "").lower()
         max_tokens = self.config.get("analysis_llm_max_tokens")
@@ -145,12 +150,12 @@ class TradingAgentsGraph:
                 kwargs["thinking_level"] = thinking_level
 
         elif provider == "openai":
-            reasoning_effort = self.config.get("openai_reasoning_effort")
+            reasoning_effort = self.config.get(f"openai_{role}_reasoning_effort")
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
 
         elif provider == "deepseek":
-            kwargs["reasoning_effort"] = self.config.get("openai_reasoning_effort") or "max"
+            kwargs["reasoning_effort"] = self.config.get(f"openai_{role}_reasoning_effort") or "max"
 
         elif provider in ("anthropic", "minimax", "minimax-cn"):
             effort = self.config.get("anthropic_effort")

@@ -210,26 +210,25 @@ class AnalysisService(
         selected_analysts: list[str],
     ) -> dict:
         config = deepcopy(TRADINGAGENTS_DEFAULT_CONFIG)
-        is_deepseek = is_deepseek_model(request.model)
+        is_deepseek = is_deepseek_model(request.quick_think_model)
         analyst_count = len(selected_analysts)
         analyst_parallelism = max(analyst_count, config.get("analyst_concurrency_limit", analyst_count))
         config.update(
             {
                 "llm_provider": provider_settings["provider"],
-                "quick_think_llm": request.model,
-                "deep_think_llm": request.model,
+                "quick_think_llm": request.quick_think_model,
+                "deep_think_llm": request.deep_think_model,
                 "backend_url": provider_settings["base_url"],
                 "output_language": request.output_language,
                 "analysis_date": request.analysis_date,
                 "max_debate_rounds": runtime_profile["effective_rounds"],
                 "max_risk_discuss_rounds": runtime_profile["effective_rounds"],
-                "global_news_lookback_days": request.lookback_days,
-                "crypto_market_lookback_days": request.lookback_days,
                 "analysis_llm_max_tokens": runtime_profile["llm_max_tokens"],
                 "minimax_mcp_max_tool_rounds": runtime_profile["mcp_max_tool_rounds"],
                 "minimax_mcp_enabled": False if is_deepseek else config.get("minimax_mcp_enabled", True),
                 "analyst_concurrency_limit": analyst_parallelism,
-                "openai_reasoning_effort": request.reasoning_effort,
+                "openai_quick_reasoning_effort": request.quick_reasoning_effort,
+                "openai_deep_reasoning_effort": request.deep_reasoning_effort,
                 "checkpoint_enabled": request.checkpoint_enabled,
             }
         )

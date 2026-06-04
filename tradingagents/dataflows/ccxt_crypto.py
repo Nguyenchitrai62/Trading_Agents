@@ -624,6 +624,159 @@ def get_crypto_ohlcv(
                 pass
 
 
+_CRYPTO_INDICATOR_PADDING = 60
+
+
+def fetch_crypto_ohlcv_exact(
+    symbol: str,
+    timeframe: str,
+    preview_limit: int = 200,
+    indicator_padding: int | None = None,
+    exchange_name: str = "binance",
+):
+    if exchange_name.strip().lower() != "binance":
+        raise ValueError("fetch_crypto_ohlcv_exact currently only supports binance")
+    if timeframe not in _CRYPTO_TIMEFRAME_MINUTES:
+        supported = ", ".join(sorted(_CRYPTO_TIMEFRAME_MINUTES))
+        raise ValueError(f"Unsupported timeframe '{timeframe}'. Supported: {supported}")
+
+    padding = indicator_padding if indicator_padding is not None else _CRYPTO_INDICATOR_PADDING
+    fetch_count = preview_limit + padding
+    api_symbol, market_symbol = _normalize_binance_symbol(symbol)
+    analysis_end_ms, analysis_end_label = _resolve_analysis_end_ms()
+
+    candles = _fetch_binance_klines(api_symbol, timeframe, fetch_count, analysis_end_ms)
+    if not isinstance(candles, list) or not candles:
+        raise ValueError(f"No OHLCV data returned for {market_symbol} on binance ({timeframe}).")
+    if isinstance(candles[0], dict):
+        message = candles[0].get("msg") or candles[0]
+        raise ValueError(f"Binance rejected pair '{market_symbol}': {message}")
+
+    frame = pd.DataFrame(
+        candles,
+        columns=[
+            "timestamp_ms",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "close_time_ms",
+            "quote_volume",
+            "trade_count",
+            "taker_buy_base_volume",
+            "taker_buy_quote_volume",
+            "ignore",
+        ],
+    )[["timestamp_ms", "open", "high", "low", "close", "volume"]]
+    frame["timestamp"] = pd.to_datetime(frame["timestamp_ms"], unit="ms", utc=True)
+
+    for column in ["open", "high", "low", "close", "volume"]:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
+    frame = frame[frame["timestamp_ms"] <= analysis_end_ms].tail(preview_limit)
+    if frame.empty:
+        raise ValueError(
+            f"No OHLCV candles remained before analysis cutoff {analysis_end_label} for {market_symbol} ({timeframe})."
+        )
+
+    policy = {
+        "timeframe": timeframe,
+        "preview_limit": preview_limit,
+        "fetch_limit": fetch_count,
+        "padding": padding,
+        "analysis_end_ms": analysis_end_ms,
+        "analysis_end_label": analysis_end_label,
+        "symbol": market_symbol,
+        "exchange": exchange_name,
+    }
+    return frame, policy
+
+
+def get_crypto_bundle(
+    symbol: str,
+    timeframe: str,
+    preview_limit: int = 200,
+    exchange_name: str = "binance",
+) -> dict:
+    if preview_limit < 1:
+        raise ValueError("preview_limit must be a positive integer")
+
+    frame, policy = fetch_crypto_ohlcv_exact(
+        symbol=symbol,
+        timeframe=timeframe,
+        preview_limit=preview_limit,
+        exchange_name=exchange_name,
+    )
+    frame["timestamp_label"] = frame["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    price_columns = ["open", "high", "low", "close"]
+    frame[price_columns] = frame[price_columns].round(6)
+    frame["volume"] = frame["volume"].round(3)
+
+    ohlcv_lines = [
+        f"# Crypto OHLCV for {policy['symbol']} from {exchange_name}",
+        f"# Timeframe: {policy['timeframe']}",
+        f"# Preview limit: {policy['preview_limit']} candles",
+        f"# Fetch depth: {policy['fetch_limit']} candles",
+        f"# Total candles in frame: {len(frame)}",
+        f"# Window start: {frame.iloc[0]['timestamp_label']}",
+        f"# Window end: {frame.iloc[-1]['timestamp_label']}",
+        f"# Analysis cutoff: {policy['analysis_end_label']}",
+        "",
+        "## Summary",
+        *_build_ohlcv_summary(frame),
+        "",
+        f"## Recent candles shown ({min(_CRYPTO_OHLCV_PREVIEW_ROWS, len(frame))} of {len(frame)})",
+        _format_compact_table(
+            frame,
+            ["timestamp_label", "open", "high", "low", "close", "volume"],
+            _CRYPTO_OHLCV_PREVIEW_ROWS,
+        ),
+    ]
+    ohlcv_text = "\n".join(ohlcv_lines)
+
+    enriched = _prepare_indicator_frame(frame)
+    enriched["timestamp_label"] = enriched["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    indicators = {}
+    for name in _CRYPTO_INDICATOR_DESCRIPTIONS:
+        tail = enriched[["timestamp_label", name]].tail(preview_limit).copy()
+        tail[name] = pd.to_numeric(tail[name], errors="coerce").round(6)
+        latest_row = tail.dropna().tail(1)
+        latest_value = "N/A"
+        latest_timestamp = tail.iloc[-1]["timestamp_label"] if not tail.empty else "N/A"
+        if not latest_row.empty:
+            latest_value = latest_row.iloc[0][name]
+            latest_timestamp = latest_row.iloc[0]["timestamp_label"]
+
+        preview_rows = min(_CRYPTO_INDICATOR_PREVIEW_ROWS, len(tail))
+
+        indicators[name] = "\n".join(
+            [
+                f"## {name} for {policy['symbol']} on {exchange_name} ({policy['timeframe']})",
+                f"Indicator computation fetch depth: {policy['fetch_limit']} candles",
+                f"Indicator output window: {preview_limit} candles",
+                f"Analysis cutoff: {policy['analysis_end_label']}",
+                f"Latest candle: {latest_timestamp}",
+                f"Latest value: {latest_value}",
+                f"Description: {_CRYPTO_INDICATOR_DESCRIPTIONS[name]}",
+                "",
+                "### Indicator summary",
+                *_build_indicator_summary(tail, name),
+                "",
+                f"### Recent indicator rows shown ({preview_rows} of {len(tail)})",
+                _format_compact_table(tail, ["timestamp_label", name], _CRYPTO_INDICATOR_PREVIEW_ROWS),
+            ]
+        )
+
+    return {
+        "ohlcv": ohlcv_text,
+        "indicators": indicators,
+        "policy": policy,
+    }
+
+
 def get_crypto_indicators(
     symbol: Annotated[str, "crypto pair such as BTC-USD, BTC-USDT, or BTC/USDT"],
     indicator: Annotated[str, "indicator name such as close_10_ema, rsi, macd, boll, atr, or vwma"],

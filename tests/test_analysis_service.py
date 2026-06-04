@@ -179,20 +179,19 @@ class TestBuildAnalysisConfig:
         "coinglass_owner_analyst": "onchain",
         "coinglass_owner_agent_label": "Onchain Analyst",
         "minimax_mcp_enabled": True,
-        "openai_reasoning_effort": None,
+        "openai_quick_reasoning_effort": "max",
+        "openai_deep_reasoning_effort": "max",
         "checkpoint_enabled": False,
         "max_debate_rounds": 1,
         "max_risk_discuss_rounds": 1,
-        "global_news_lookback_days": 14,
-        "crypto_market_lookback_days": 14,
     })
     @patch("BE.analysis.service.ANALYST_NODE_SPECS", {})
     def test_builds_deepseek_config(self, service):
         req = AnalysisRequest(
             symbol="BTC-USDT",
-            model="deepseek-v4-flash",
+            quick_think_model="deepseek-v4-flash",
+            deep_think_model="deepseek-v4-flash",
             research_depth="quick",
-            lookback_days=30,
             output_language="Vietnamese",
             selected_analysts=["market", "onchain"],
             checkpoint_enabled=True,
@@ -204,7 +203,6 @@ class TestBuildAnalysisConfig:
         assert config["quick_think_llm"] == "deepseek-v4-flash"
         assert config["deep_think_llm"] == "deepseek-v4-flash"
         assert config["output_language"] == "Vietnamese"
-        assert config["crypto_market_lookback_days"] == 30
         assert config["minimax_mcp_enabled"] is False
         assert config["checkpoint_enabled"] is True
         assert config["max_debate_rounds"] == 1
@@ -221,7 +219,8 @@ class TestBuildAnalysisConfig:
         "coinglass_owner_analyst": "market",
         "coinglass_owner_agent_label": "Market Analyst",
         "minimax_mcp_enabled": True,
-        "openai_reasoning_effort": None,
+        "openai_quick_reasoning_effort": "max",
+        "openai_deep_reasoning_effort": "max",
         "checkpoint_enabled": False,
         "max_debate_rounds": 1,
         "max_risk_discuss_rounds": 1,
@@ -232,7 +231,8 @@ class TestBuildAnalysisConfig:
     def test_builds_minimax_config(self, service):
         req = AnalysisRequest(
             symbol="BTC-USDT",
-            model="MiniMax-M2.7",
+            quick_think_model="MiniMax-M2.7",
+            deep_think_model="MiniMax-M2.7",
             research_depth="deep",
             selected_analysts=["market", "onchain", "social"],
         )
@@ -257,7 +257,8 @@ class TestBuildAnalysisConfig:
         "coinglass_owner_analyst": "onchain",
         "coinglass_owner_agent_label": "Onchain Analyst",
         "minimax_mcp_enabled": True,
-        "openai_reasoning_effort": None,
+        "openai_quick_reasoning_effort": "max",
+        "openai_deep_reasoning_effort": "max",
         "checkpoint_enabled": False,
         "max_debate_rounds": 1,
         "max_risk_discuss_rounds": 1,
@@ -268,7 +269,8 @@ class TestBuildAnalysisConfig:
     def test_coinglass_owner_falls_back_when_not_selected(self, service):
         req = AnalysisRequest(
             symbol="BTC-USDT",
-            model="Minimax-M2.7",
+            quick_think_model="Minimax-M2.7",
+            deep_think_model="Minimax-M2.7",
             research_depth="quick",
             selected_analysts=["market", "social"],
         )

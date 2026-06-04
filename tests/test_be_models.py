@@ -32,15 +32,16 @@ class TestAnalysisRequest:
             symbol="BTC-USDT",
             asset_type="crypto",
             analysis_date="2025-01-15",
-            lookback_days=30,
             output_language="Vietnamese",
             selected_analysts=["market", "onchain", "social", "news"],
             research_depth="medium",
-            model="deepseek-v4-flash",
+            quick_think_model="deepseek-v4-flash",
+            deep_think_model="deepseek-v4-pro",
         )
         assert req.symbol == "BTC-USDT"
         assert req.asset_type == "crypto"
-        assert req.lookback_days == 30
+        assert req.quick_think_model == "deepseek-v4-flash"
+        assert req.deep_think_model == "deepseek-v4-pro"
         assert len(req.selected_analysts) == 4
 
     def test_symbol_normalization_adds_usdt(self):
@@ -77,10 +78,6 @@ class TestAnalysisRequest:
         )
         today = realtime_analysis_date()
         assert req.analysis_date == today
-
-    def test_lookback_days_minimum(self):
-        with pytest.raises(ValidationError):
-            AnalysisRequest(symbol="BTC-USDT", lookback_days=0)
 
     def test_default_values(self):
         req = AnalysisRequest(symbol="BTC-USDT")

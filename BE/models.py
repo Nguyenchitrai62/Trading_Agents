@@ -17,15 +17,16 @@ class AnalysisRequest(BaseModel):
     asset_type: Literal["crypto"] = SETTINGS.default_asset_type
     run_id: str | None = Field(default=None, max_length=120)
     analysis_date: str = Field(default_factory=realtime_analysis_date)
-    lookback_days: int = Field(default=SETTINGS.default_analysis_lookback_days, ge=1)
     output_language: str = Field(default=SETTINGS.default_output_language)
     selected_analysts: list[Literal["market", "onchain", "social", "news"]] = Field(
         default_factory=lambda: list(SETTINGS.default_selected_analysts),
         min_length=1,
     )
     research_depth: Literal["auto", "quick", "medium", "deep"] = SETTINGS.default_research_depth
-    model: str = Field(default=SETTINGS.default_model, min_length=1)
-    reasoning_effort: str = Field(default="max", min_length=1)
+    quick_think_model: str = Field(default=SETTINGS.default_model, min_length=1)
+    deep_think_model: str = Field(default=SETTINGS.default_model, min_length=1)
+    quick_reasoning_effort: str = Field(default="max", min_length=1)
+    deep_reasoning_effort: str = Field(default="max", min_length=1)
     checkpoint_enabled: bool = SETTINGS.default_checkpoint_enabled
 
     @field_validator("symbol")

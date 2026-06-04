@@ -114,23 +114,18 @@ function normalizeFrontendConfig() {
             symbol: String(defaults.symbol || "BTC-USDT").trim().toUpperCase(),
             asset_type: "crypto",
             analysis_date: defaults.analysisDate || defaults.analysis_date || todayIsoDate(),
-            lookback_days: Number(defaults.lookbackDays || defaults.lookback_days || 7),
             output_language: defaults.outputLanguage || defaults.output_language || "vietnamese",
             selected_analysts: normalizeAnalystKeys(defaults.selectedAnalysts || defaults.selected_analysts),
             research_depth: defaults.researchDepth || defaults.research_depth || "auto",
-            model: defaultModel,
-            reasoning_effort: String(defaults.reasoningEffort || defaults.reasoning_effort || "max"),
+            quick_think_model: defaults.quickThinkModel || defaults.quick_think_model || defaultModel,
+            deep_think_model: defaults.deepThinkModel || defaults.deep_think_model || defaultModel,
+            quick_reasoning_effort: String(defaults.quickReasoningEffort || defaults.quick_reasoning_effort || "max"),
+            deep_reasoning_effort: String(defaults.deepReasoningEffort || defaults.deep_reasoning_effort || "max"),
             checkpoint_enabled: Boolean(defaults.checkpointEnabled ?? defaults.checkpoint_enabled ?? false),
         },
         analysis_options: {
             analysts: normalizeAnalystOptions(options.analysts),
             asset_types: [{ value: "crypto", label: "Crypto" }],
-            lookback_presets: options.lookbackPresets || options.lookback_presets || [
-                { value: "7", label: "7 days", days: 7 },
-                { value: "14", label: "14 days", days: 14 },
-                { value: "30", label: "30 days", days: 30 },
-                { value: "90", label: "90 days", days: 90 },
-            ],
             output_languages: options.outputLanguages || options.output_languages || ["Vietnamese", "English"],
             models: options.models || [
                 { value: "MiniMax-M2.5", label: "MiniMax M2.5" },
@@ -651,25 +646,18 @@ function getResolvedAssetType() {
     return "crypto";
 }
 
-function getSelectedLookbackDays() {
-    const selectedPreset = elements.lookbackPresetSelect.value;
-    if (selectedPreset && selectedPreset !== CUSTOM_LOOKBACK_VALUE) {
-        return Math.max(1, Number(selectedPreset || 1));
-    }
-    return Math.max(1, Number(elements.lookbackDaysInput.value || 7));
-}
-
 function collectConfigDraft() {
     const depth = getSelectedDepth();
     const payload = {
         symbol: normalizeCryptoSymbol(elements.symbolInput.value),
         asset_type: "crypto",
         analysis_date: todayIsoDate(),
-        lookback_days: getSelectedLookbackDays(),
         output_language: getOutputLanguage(),
         selected_analysts: getCheckedAnalysts(),
-        model: String(elements.modelSelect?.value || "").trim(),
-        reasoning_effort: getReasoningEffort(),
+        quick_think_model: String(elements.quickModelSelect?.value || "").trim(),
+        deep_think_model: String(elements.deepModelSelect?.value || "").trim(),
+        quick_reasoning_effort: getQuickReasoningEffort(),
+        deep_reasoning_effort: getDeepReasoningEffort(),
         checkpoint_enabled: false,
     };
     if (depth !== "auto") {

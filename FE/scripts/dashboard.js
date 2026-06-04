@@ -11,8 +11,12 @@ function getOutputLanguage() {
     return elements.languageInput.value.trim();
 }
 
-function getReasoningEffort() {
-    return String(elements.reasoningEffortSelect?.value || "max").trim();
+function getQuickReasoningEffort() {
+    return String(elements.quickReasoningSelect?.value || "max").trim();
+}
+
+function getDeepReasoningEffort() {
+    return String(elements.deepReasoningSelect?.value || "max").trim();
 }
 
 function readConfigForm() {
@@ -32,28 +36,6 @@ function syncLanguageControls() {
     // No-op: language is now a free-text input.
 }
 
-function syncLookbackPreset() {
-    if (!state.config) {
-        return;
-    }
-    if (elements.lookbackPresetSelect.value === CUSTOM_LOOKBACK_VALUE) {
-        syncLookbackControls();
-        return;
-    }
-    const presets = state.config.analysis_options.lookback_presets || [];
-    const days = Number(elements.lookbackDaysInput.value || 0);
-    const matched = presets.find((preset) => preset.days === days);
-    elements.lookbackPresetSelect.value = matched ? matched.value : CUSTOM_LOOKBACK_VALUE;
-    syncLookbackControls();
-}
-
-function syncLookbackControls() {
-    const isCustom = elements.lookbackPresetSelect.value === CUSTOM_LOOKBACK_VALUE;
-    elements.lookbackDaysField?.classList.toggle("field-muted", !isCustom);
-    elements.lookbackDaysInput.disabled = !isCustom;
-    elements.lookbackDaysInput.required = isCustom;
-}
-
 function syncAnalystAvailability() {
     const onchainInput = elements.analystOptions.querySelector('input[value="onchain"]');
     if (!onchainInput) {
@@ -67,7 +49,6 @@ function syncAnalystAvailability() {
 
 function refreshConfigUi() {
     syncLanguageControls();
-    syncLookbackPreset();
     syncAnalystAvailability();
     renderConfigPreview();
     renderTopNotice();
@@ -104,17 +85,16 @@ function renderTopNotice() {
             : (state.run.meta?.effective_research_depth && state.run.meta.effective_research_depth !== state.run.meta.research_depth
                 ? `${state.run.meta.research_depth || state.run.meta.effective_research_depth || "auto"} / ${state.run.meta.effective_research_depth}`
                 : state.run.meta?.research_depth || payload?.research_depth || state.config.analysis_defaults.research_depth);
-        const lookback = state.run.meta?.lookback_days || payload?.lookback_days || state.config.analysis_defaults.lookback_days;
         const revCount = Number(state.run.revisionCount || 0);
         const revSuffix = revCount > 0 ? ` (Rev ${revCount})` : "";
-        notice = `${symbol} - ${lookback}d - ${depth} depth - ${progress.completed}/${progress.total} tasks${revSuffix}`;
+        notice = `${symbol} - ${depth} depth - ${progress.completed}/${progress.total} tasks${revSuffix}`;
     } else if (state.run.complete) {
         const symbol = state.run.meta?.symbol || payload?.symbol || state.config.analysis_defaults.symbol;
         const signal = state.run.complete.signal || "analysis completed";
         const elapsed = state.run.complete.elapsed_seconds ? ` - ${state.run.complete.elapsed_seconds}s` : "";
         notice = `${symbol} - ${signal}${elapsed}`;
     } else if (payload) {
-        notice = `${payload.symbol || "-"} - ${payload.lookback_days || "-"}d - ${payload.output_language || "-"} - ${payload.selected_analysts.length} analysts`;
+        notice = `${payload.symbol || "-"} - ${payload.output_language || "-"} - ${payload.selected_analysts.length} analysts`;
     }
 
     elements.topNoticeText.textContent = notice;
@@ -275,7 +255,6 @@ function renderConfigPreview() {
         ? ` / ${depthOption.effective_depth}`
         : "";
     const analysts = (payload.selected_analysts || []).map(getConfigAnalystLabel);
-    const lookbackLabel = payload.lookback_days ? `${payload.lookback_days}d` : "-";
 
     elements.configPreview.innerHTML = `
         <div class="config-preview-header">
@@ -284,16 +263,16 @@ function renderConfigPreview() {
         </div>
         <div class="config-summary-grid">
             <div class="config-summary-chip">
-                <span>Lookback</span>
-                <strong>${escapeHtml(lookbackLabel)}</strong>
+                <span>Quick Model</span>
+                <strong>${escapeHtml(`${payload.quick_think_model || "-"} (${payload.quick_reasoning_effort || "max"})`)}</strong>
+            </div>
+            <div class="config-summary-chip">
+                <span>Deep Model</span>
+                <strong>${escapeHtml(`${payload.deep_think_model || "-"} (${payload.deep_reasoning_effort || "max"})`)}</strong>
             </div>
             <div class="config-summary-chip">
                 <span>Depth</span>
                 <strong>${escapeHtml(`${payload.research_depth || "auto"}${effectiveDepth}`)}</strong>
-            </div>
-            <div class="config-summary-chip">
-                <span>Model</span>
-                <strong>${escapeHtml(payload.model || "-")}</strong>
             </div>
             <div class="config-summary-chip">
                 <span>Language</span>

@@ -165,16 +165,19 @@ class TursoHistoryStore:
                 return
             statements = [
                 "PRAGMA foreign_keys = ON",
+                "DROP TABLE IF EXISTS analysis_decisions",
+                "DROP TABLE IF EXISTS analysis_sections",
+                "DROP TABLE IF EXISTS analysis_runs",
                 """
-                CREATE TABLE IF NOT EXISTS analysis_runs (
+                CREATE TABLE analysis_runs (
                     id TEXT PRIMARY KEY,
                     symbol TEXT NOT NULL,
                     asset_type TEXT NOT NULL,
                     analysis_date TEXT NOT NULL,
-                    lookback_days INTEGER NOT NULL,
+                    quick_think_model TEXT NOT NULL,
+                    deep_think_model TEXT NOT NULL,
                     output_language TEXT NOT NULL,
                     research_depth TEXT NOT NULL,
-                    model TEXT NOT NULL,
                     signal TEXT,
                     elapsed_seconds REAL,
                     section_count INTEGER NOT NULL DEFAULT 0,
@@ -545,17 +548,17 @@ class TursoHistoryStore:
             (
                 """
                 INSERT INTO analysis_runs (
-                    id, symbol, asset_type, analysis_date, lookback_days, output_language,
-                    research_depth, model, signal, elapsed_seconds, section_count, user_email, user_sub, created_at
+                    id, symbol, asset_type, analysis_date, quick_think_model, deep_think_model,
+                    output_language, research_depth, signal, elapsed_seconds, section_count, user_email, user_sub, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     symbol = excluded.symbol,
                     asset_type = excluded.asset_type,
                     analysis_date = excluded.analysis_date,
-                    lookback_days = excluded.lookback_days,
+                    quick_think_model = excluded.quick_think_model,
+                    deep_think_model = excluded.deep_think_model,
                     output_language = excluded.output_language,
                     research_depth = excluded.research_depth,
-                    model = excluded.model,
                     signal = excluded.signal,
                     elapsed_seconds = excluded.elapsed_seconds,
                     section_count = excluded.section_count,
@@ -568,10 +571,10 @@ class TursoHistoryStore:
                     symbol,
                     request.asset_type,
                     request.analysis_date,
-                    request.lookback_days,
+                    request.quick_think_model,
+                    request.deep_think_model,
                     request.output_language,
                     request.research_depth,
-                    request.model,
                     signal,
                     elapsed_seconds,
                     len(clean_sections),
@@ -710,8 +713,9 @@ class TursoHistoryStore:
         return self._query_rows(
             """
             SELECT
-                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
+                r.id, r.symbol, r.asset_type, r.analysis_date,
+                r.quick_think_model, r.deep_think_model,
+                r.output_language, r.research_depth,
                 d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
@@ -740,8 +744,9 @@ class TursoHistoryStore:
         return self._query_rows(
             """
             SELECT
-                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
+                r.id, r.symbol, r.asset_type, r.analysis_date,
+                r.quick_think_model, r.deep_think_model,
+                r.output_language, r.research_depth,
                 d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
@@ -766,8 +771,9 @@ class TursoHistoryStore:
         return self._query_rows(
             f"""
             SELECT
-                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
+                r.id, r.symbol, r.asset_type, r.analysis_date,
+                r.quick_think_model, r.deep_think_model,
+                r.output_language, r.research_depth,
                 d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
@@ -858,8 +864,9 @@ class TursoHistoryStore:
         runs = self._query_rows(
             f"""
             SELECT
-                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
+                r.id, r.symbol, r.asset_type, r.analysis_date,
+                r.quick_think_model, r.deep_think_model,
+                r.output_language, r.research_depth,
                 d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
@@ -1026,8 +1033,9 @@ class TursoHistoryStore:
         runs = self._query_rows(
             """
             SELECT
-                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
+                r.id, r.symbol, r.asset_type, r.analysis_date,
+                r.quick_think_model, r.deep_think_model,
+                r.output_language, r.research_depth,
                 d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,
@@ -1059,8 +1067,9 @@ class TursoHistoryStore:
         runs = self._query_rows(
             """
             SELECT
-                r.id, r.symbol, r.asset_type, r.analysis_date, r.lookback_days,
-                r.output_language, r.research_depth, r.model,
+                r.id, r.symbol, r.asset_type, r.analysis_date,
+                r.quick_think_model, r.deep_think_model,
+                r.output_language, r.research_depth,
                 d.signal,
                 d.current_price, d.primary_limit_price, d.secondary_limit_price,
                 d.stop_loss, d.take_profit, d.position_sizing, d.time_horizon,

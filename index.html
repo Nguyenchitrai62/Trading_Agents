@@ -338,34 +338,18 @@
             </div>
 
             <form id="configForm" class="config-form compact-config-form">
-                <div class="config-grid four-up compact-grid-primary">
+                <div class="config-grid compact-grid-primary">
                     <label class="field">
                         <span>Symbol</span>
                         <input id="symbolInput" type="text" placeholder="BTC-USDT">
                     </label>
-                    <input id="analysisDateInput" type="hidden">
                     <label class="field">
-                        <span>Window preset</span>
-                        <select id="lookbackPresetSelect"></select>
-                    </label>
-                    <label id="lookbackDaysField" class="field field-muted">
-                        <span>Lookback days</span>
-                        <input id="lookbackDaysInput" type="number" min="1" step="1" placeholder="Use Custom preset">
-                    </label>
-                </div>
-
-                <div class="config-grid four-up compact-grid-secondary">
-                    <label class="field">
-                        <span>Language</span>
-                        <input id="languageInput" type="text" placeholder="e.g. Vietnamese, English">
+                        <span>Quick Model</span>
+                        <select id="quickModelSelect"></select>
                     </label>
                     <label class="field">
-                        <span>LLM model</span>
-                        <select id="modelSelect"></select>
-                    </label>
-                    <label class="field">
-                        <span>Reasoning effort</span>
-                        <select id="reasoningEffortSelect">
+                        <span>Quick Reasoning</span>
+                        <select id="quickReasoningSelect">
                             <option value="low">low</option>
                             <option value="medium">medium</option>
                             <option value="high">high</option>
@@ -373,6 +357,25 @@
                             <option value="max">max</option>
                         </select>
                     </label>
+                    <label class="field">
+                        <span>Language</span>
+                        <input id="languageInput" type="text" placeholder="e.g. Vietnamese, English">
+                    </label>
+                    <label class="field">
+                        <span>Deep Model</span>
+                        <select id="deepModelSelect"></select>
+                    </label>
+                    <label class="field">
+                        <span>Deep Reasoning</span>
+                        <select id="deepReasoningSelect">
+                            <option value="low">low</option>
+                            <option value="medium">medium</option>
+                            <option value="high">high</option>
+                            <option value="xhigh">xhigh</option>
+                            <option value="max">max</option>
+                        </select>
+                    </label>
+                    <input id="analysisDateInput" type="hidden">
                 </div>
 
                 <div class="config-grid compact-config-choices">

@@ -25,12 +25,13 @@ function getConfigSnapshot() {
             symbol: state.config.analysis_defaults.symbol,
             asset_type: "crypto",
             analysis_date: todayIsoDate(),
-            lookback_days: state.config.analysis_defaults.lookback_days,
             output_language: state.config.analysis_defaults.output_language,
             selected_analysts: state.config.analysis_defaults.selected_analysts,
             research_depth: state.config.analysis_defaults.research_depth,
-            model: state.config.analysis_defaults.model,
-            reasoning_effort: state.config.analysis_defaults.reasoning_effort || "max",
+            quick_think_model: state.config.analysis_defaults.quick_think_model || state.config.analysis_defaults.model,
+            deep_think_model: state.config.analysis_defaults.deep_think_model || state.config.analysis_defaults.model,
+            quick_reasoning_effort: state.config.analysis_defaults.quick_reasoning_effort || "max",
+            deep_reasoning_effort: state.config.analysis_defaults.deep_reasoning_effort || "max",
             checkpoint_enabled: false,
         };
     }

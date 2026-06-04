@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from langchain_core.messages import AIMessage
 
 from tradingagents.agents.utils.agent_utils import (
     build_instrument_context,
-    get_crypto_indicators,
-    get_crypto_ohlcv,
     get_language_instruction,
 )
 from tradingagents.agents.utils.evidence import (
@@ -15,6 +13,7 @@ from tradingagents.agents.utils.evidence import (
     split_report_and_evidence,
 )
 from tradingagents.agents.utils.structured import resolve_structured_base_llm
+from tradingagents.dataflows.ccxt_crypto import get_crypto_bundle
 from tradingagents.dataflows.config import get_config
 from tradingagents.llm_clients.base_client import normalize_content
 
@@ -30,6 +29,9 @@ MARKET_INDICATORS = (
     "vwma",
     "mfi",
 )
+
+MARKET_TIMEFRAMES = ["15m", "1h", "4h", "1d", "1w"]
+TIMEFRAME_PREVIEW_LIMITS = {"15m": 200, "1h": 200, "4h": 200, "1d": 200, "1w": 50}
 
 _MAX_TOOL_BLOCK_CHARS = 4000
 _MAX_MARKET_CONTEXT_CHARS = 40000
@@ -52,14 +54,6 @@ def _trim(value: object, limit: int) -> str:
     return text[: max(0, limit - 14)].rstrip() + "\n[truncated]"
 
 
-def _format_tool_call(tool_name: str, args: dict) -> str:
-    try:
-        return f"{tool_name}({json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)})"
-    except TypeError:
-        items = ", ".join(f"{key}={value}" for key, value in list(args.items())[:6])
-        return f"{tool_name}({items})"
-
-
 def _emit_market_tool_trace(phase: str, title: str, trace_id: str, content: object) -> None:
     callback = get_config().get("analysis_trace_callback")
     if not callable(callback):
@@ -75,67 +69,71 @@ def _emit_market_tool_trace(phase: str, title: str, trace_id: str, content: obje
     )
 
 
-def _invoke_tool(tool, args: dict, trace_id: str) -> str:
-    tool_name = str(getattr(tool, "name", "tool") or "tool")
-    _emit_market_tool_trace("tool_call", tool_name, trace_id, _format_tool_call(tool_name, args))
-    try:
-        raw = tool.invoke(args)
-        result = str(raw) if raw is not None else f"{tool_name} returned empty data"
-    except Exception as exc:
-        result = f"Error: {tool_name} failed: {exc}"
-    _emit_market_tool_trace("tool_result", tool_name, trace_id, result)
-    return result
-
-
-def _collect_market_source_bundle(symbol: str) -> dict[str, object]:
-    ohlcv = _invoke_tool(
-        get_crypto_ohlcv,
-        {
-            "symbol": symbol,
-            "timeframe": "auto",
-            "limit": 96,
-            "exchange_name": "binance",
-        },
-        "market:get_crypto_ohlcv",
+def _collect_tf_bundle(symbol: str, tf: str, preview_limit: int) -> dict:
+    _emit_market_tool_trace(
+        "tool_call",
+        f"bundle:{tf}",
+        f"market:bundle:{tf}",
+        f"get_crypto_bundle({symbol}, {tf}, preview_limit={preview_limit})",
     )
-    indicators = {
-        indicator: _invoke_tool(
-            get_crypto_indicators,
-            {
-                "symbol": symbol,
-                "indicator": indicator,
-                "timeframe": "auto",
-                "limit": 48,
-                "exchange_name": "binance",
-            },
-            f"market:get_crypto_indicators:{indicator}",
-        )
-        for indicator in MARKET_INDICATORS
-    }
-    return {
-        "symbol": symbol,
-        "exchange": "binance",
-        "ohlcv": ohlcv,
-        "indicators": indicators,
-        "indicator_names": list(MARKET_INDICATORS),
-    }
+    try:
+        bundle = get_crypto_bundle(symbol, tf, preview_limit=preview_limit, exchange_name="binance")
+        result_info = f"OHLCV: {len(bundle.get('ohlcv', ''))} chars, indicators: {len(bundle.get('indicators', {}))} items"
+        _emit_market_tool_trace("tool_result", f"bundle:{tf}", f"market:bundle:{tf}", result_info)
+        return bundle
+    except Exception as exc:
+        _emit_market_tool_trace("tool_result", f"bundle:{tf}", f"market:bundle:{tf}", f"Error: {exc}")
+        raise
 
 
-def _format_market_bundle(bundle: dict[str, object]) -> str:
+def _format_tf_context(bundle: dict, tf: str) -> str:
     lines = [
-        "# Market Source Bundle",
-        "",
-        f"Symbol: {bundle.get('symbol')}",
-        f"Exchange: {bundle.get('exchange')}",
+        f"# {tf} Timeframe Data",
         "",
         "## OHLCV",
-        _trim(bundle.get("ohlcv"), _MAX_TOOL_BLOCK_CHARS),
+        _trim(bundle.get("ohlcv", ""), _MAX_TOOL_BLOCK_CHARS),
     ]
     indicators = bundle.get("indicators") or {}
-    if isinstance(indicators, dict):
-        for name, content in indicators.items():
-            lines.extend(["", f"## Indicator: {name}", _trim(content, _MAX_TOOL_BLOCK_CHARS)])
+    for name in MARKET_INDICATORS:
+        if name in indicators:
+            lines.extend(["", f"## Indicator: {name}", _trim(indicators[name], _MAX_TOOL_BLOCK_CHARS)])
     return _trim("\n".join(lines), _MAX_MARKET_CONTEXT_CHARS)
+
+
+def _run_tf_agent(
+    base_llm,
+    symbol: str,
+    tf: str,
+    preview_limit: int,
+    current_date: str,
+    instrument_context: str,
+) -> dict:
+    bundle = _collect_tf_bundle(symbol, tf, preview_limit)
+    tf_context = _format_tf_context(bundle, tf)
+
+    prompt = f"""You are the Market Analyst for timeframe {tf}.
+
+{instrument_context}
+Current analysis date: {current_date}
+
+The backend has collected CCXT OHLCV candles and technical indicators for the {tf} timeframe.
+Do not use web search. Analyze only the {tf} data below.
+
+{tf} Data:
+{tf_context}
+
+Produce a concise {tf} timeframe report covering:
+1. Trend and market structure on {tf}.
+2. Key support/resistance levels visible on {tf}.
+3. Momentum signals (RSI, MACD) and their implications on this timeframe.
+4. Volume and volatility observations.
+5. A brief directional bias (bullish/bearish/neutral) with confidence level.
+
+Keep the report focused on what the {tf} timeframe reveals. Preserve concrete values from the tool outputs.
+{get_language_instruction()}"""
+
+    raw_report = _response_text(base_llm.invoke(prompt))
+    return {"timeframe": tf, "report": raw_report, "bundle": bundle}
 
 
 def create_market_analyst(llm):
@@ -146,30 +144,66 @@ def create_market_analyst(llm):
         asset_type = state.get("asset_type", "crypto")
         symbol = state["company_of_interest"]
         instrument_context = build_instrument_context(symbol, asset_type)
-        market_bundle = _collect_market_source_bundle(symbol)
-        market_context = _format_market_bundle(market_bundle)
 
-        prompt = f"""You are the Market Analyst for this crypto trading workflow.
+        tf_results: dict[str, str] = {}
+        tf_bundles: dict[str, dict] = {}
+
+        with ThreadPoolExecutor(max_workers=len(MARKET_TIMEFRAMES)) as executor:
+            futures = {}
+            for tf in MARKET_TIMEFRAMES:
+                preview_limit = TIMEFRAME_PREVIEW_LIMITS[tf]
+                future = executor.submit(
+                    _run_tf_agent,
+                    base_llm,
+                    symbol,
+                    tf,
+                    preview_limit,
+                    current_date,
+                    instrument_context,
+                )
+                futures[future] = tf
+
+            for future in as_completed(futures):
+                tf = futures[future]
+                try:
+                    result = future.result()
+                    tf_results[tf] = result["report"]
+                    tf_bundles[tf] = result["bundle"]
+                except Exception as exc:
+                    tf_results[tf] = f"[{tf} analysis unavailable: {exc}]"
+
+        if not tf_bundles:
+            raise RuntimeError(
+                f"Market Analyst failed: no timeframe data could be fetched for {symbol}. "
+                f"Timeframes attempted: {MARKET_TIMEFRAMES}"
+            )
+
+        synthesis_prompt = f"""You are the Multi-Timeframe Market Analyst synthesizing reports from sub-analysts across multiple timeframes.
 
 {instrument_context}
 Current analysis date: {current_date}
 
-The market branch is code-first. The backend has already collected CCXT OHLCV candles and calculated technical indicators. Do not use web search. Analyze only the market data below and preserve concrete values from the tool outputs.
+Each sub-analyst has independently analyzed {symbol} on their assigned timeframe using CCXT OHLCV candles and technical indicators. Synthesize their findings into a single unified market report.
 
-Market data:
-{market_context}
+--- Timeframe Reports ---"""
+        for tf in MARKET_TIMEFRAMES:
+            report = tf_results.get(tf, f"[{tf}: no data available]")
+            synthesis_prompt += f"\n### {tf} Timeframe\n{report}\n"
 
-Produce a detailed market report covering:
-1. Trend and market structure.
-2. Momentum and moving-average regime.
-3. Volatility, range, and stop-placement implications.
-4. Volume/flow from exchange-traded data when available.
-5. Support/resistance or invalidation zones supported by the data.
-6. Confidence and data caveats.
-7. A markdown table summarizing the highest-signal market findings.
+        synthesis_prompt += f"""
+---
+Synthesize into a unified market report covering:
+1. Multi-timeframe trend alignment: Where do timeframes agree or disagree on market direction?
+2. Key divergences: Are shorter timeframes showing reversal or counter-trend signals that contradict higher timeframes?
+3. Confluence zones: Price levels or ranges supported by multiple timeframes (strong support/resistance).
+4. Overall market structure: The dominant trend across all timeframes after reconciling conflicts.
+5. Momentum/volume confirmation: Which timeframes show the strongest momentum, and is it confirmed by volume?
+6. Confidence and data caveats: Note any timeframes with missing data and the impact on the analysis.
+7. A markdown table summarizing the highest-signal multi-timeframe findings with concrete values.
+
 {get_language_instruction()}{get_structured_evidence_instruction('market')}"""
 
-        raw_report = _response_text(base_llm.invoke(prompt))
+        raw_report = _response_text(base_llm.invoke(synthesis_prompt))
         report, evidence_items = split_report_and_evidence(
             raw_report,
             agent_key="market",
@@ -178,10 +212,17 @@ Produce a detailed market report covering:
             analysis_date=current_date,
         )
 
+        market_source_bundle = {
+            "symbol": symbol,
+            "exchange": "binance",
+            "timeframes": tf_bundles,
+        }
+
         return {
             "messages": [AIMessage(content=report)],
-            "market_source_bundle": market_bundle,
+            "market_source_bundle": market_source_bundle,
             "market_report": report,
+            "market_tf_reports": tf_results,
             "evidence_items": evidence_items,
         }
 

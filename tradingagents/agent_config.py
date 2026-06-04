@@ -68,9 +68,10 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # being forwarded to Gemini, producing malformed request URLs).
     "backend_url": None,
     # Provider-specific thinking configuration
-    "google_thinking_level": None,      # "high", "minimal", etc.
-    "openai_reasoning_effort": None,    # "medium", "high", "low"
-    "anthropic_effort": None,           # "high", "medium", "low"
+    "google_thinking_level": None,               # "high", "minimal", etc.
+    "openai_quick_reasoning_effort": "max",      # "max", "high", "medium", "low"
+    "openai_deep_reasoning_effort": "max",       # "max", "high", "medium", "low"
+    "anthropic_effort": None,                    # "high", "medium", "low"
     # MiniMax MCP web tools. These are loaded from the MCP server used by
     # _test_call_mcp.py, but credentials and host always come from .env.
     "minimax_mcp_enabled": True,
