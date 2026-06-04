@@ -85,10 +85,16 @@ def _collect_tf_bundle(symbol: str, tf: str, preview_limit: int) -> dict:
     )
     try:
         bundle = get_crypto_bundle(symbol, tf, preview_limit=preview_limit, exchange_name="binance")
-        ohlcv_info = f"OHLCV: {len(bundle.get('ohlcv', ''))} chars"
-        ind_info = f"Indicators: {len(bundle.get('indicators', {}))} items"
-        _emit_market_tool_trace("tool_result", f"get_crypto_ohlcv:{tf}", f"market:ohlcv:{tf}", ohlcv_info)
-        _emit_market_tool_trace("tool_result", f"get_crypto_indicators:{tf}", f"market:indicators:{tf}", ind_info)
+        ohlcv_md = _trim(bundle.get("ohlcv", ""), _MAX_TOOL_BLOCK_CHARS)
+        indicators = bundle.get("indicators") or {}
+        indicator_lines = [f"# Indicators for {symbol} ({tf})", "", f"Computed indicators: {len(indicators)} items", ""]
+        for name in MARKET_INDICATORS:
+            if name in indicators:
+                indicator_lines.append(_trim(indicators[name], _MAX_TOOL_BLOCK_CHARS))
+                indicator_lines.append("")
+        indicators_md = _trim("\n".join(indicator_lines), _MAX_MARKET_CONTEXT_CHARS)
+        _emit_market_tool_trace("tool_result", f"get_crypto_ohlcv:{tf}", f"market:ohlcv:{tf}", ohlcv_md)
+        _emit_market_tool_trace("tool_result", f"get_crypto_indicators:{tf}", f"market:indicators:{tf}", indicators_md)
         return bundle
     except Exception as exc:
         _emit_market_tool_trace("tool_result", f"get_crypto_ohlcv:{tf}", f"market:ohlcv:{tf}", f"Error: {exc}")

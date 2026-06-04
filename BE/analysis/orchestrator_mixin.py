@@ -253,6 +253,21 @@ class AnalysisOrchestratorMixin:
             agent = trace.get("agent") or "Analyst"
             title = trace.get("title") or trace.get("agent") or "Analysis"
             trace_id = trace.get("trace_id") or trace.get("tool_call_id") or ""
+            if phase == "section_ready":
+                report_key = trace.get("report_key") or ""
+                report_content = str(trace.get("content") or "")
+                if report_key and report_content:
+                    emit(
+                        "section_update",
+                        {
+                            "section_key": report_key,
+                            "report": report_content,
+                            "report_markdown": report_content,
+                            "agent": agent,
+                            "stage": "analyst",
+                        },
+                    )
+                return
             source_classification = self._classify_tool_source(agent=agent, title=title) or {}
             source_payload = (
                 {
@@ -815,6 +830,14 @@ class AnalysisOrchestratorMixin:
 
                 try:
                     item = await asyncio.wait_for(queue.get(), timeout=self.settings.stream_heartbeat_seconds)
+                except asyncio.CancelledError:
+                    stream_active.clear()
+                    logger.info(
+                        "analysis stream task cancelled (proxy timeout or client disconnect), analysis continues in background: run_id=%s symbol=%s",
+                        analysis_request.run_id,
+                        analysis_request.symbol,
+                    )
+                    break
                 except asyncio.TimeoutError:
                     if worker_task.done():
                         break

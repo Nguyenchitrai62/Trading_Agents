@@ -407,6 +407,18 @@ def create_parallel_analyst_team(
                         results.setdefault("evidence_items", [])
                         results["evidence_items"].extend(evidence_items)
                     trace_messages.extend(analyst_trace_messages)
+                    _emit_trace(
+                        trace_callback,
+                        {
+                            "agent": spec.agent_node,
+                            "phase": "section_ready",
+                            "title": spec.agent_node,
+                            "trace_id": f"section:{spec.report_key}",
+                            "content": report,
+                            "report_key": spec.report_key,
+                            "report_label": spec.agent_node,
+                        },
+                    )
                     logger.info("%s joined parallel analyst pool.", spec.agent_node)
         except BaseException:
             executor.shutdown(wait=False, cancel_futures=True)
