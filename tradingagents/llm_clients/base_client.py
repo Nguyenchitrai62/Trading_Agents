@@ -32,6 +32,10 @@ class BaseLLMClient(ABC):
         self.base_url = base_url
         self.kwargs = kwargs
 
+    def close(self) -> None:
+        """Release underlying resources (HTTP sessions, connections)."""
+        pass
+
     def get_provider_name(self) -> str:
         """Return the provider name used in warning messages."""
         provider = getattr(self, "provider", None)

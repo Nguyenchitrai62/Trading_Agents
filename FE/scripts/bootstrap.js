@@ -981,7 +981,7 @@ elements.chartSymbolForm.addEventListener("submit", (event) => {
 elements.adminTabUsers?.addEventListener("click", () => {
     state.admin.activeTab = "users";
     renderAdminPage();
-    loadAdminUsers().catch((error) => {
+    loadAdminUsers(true).catch((error) => {
         state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
         renderAdminPage();
     });
@@ -989,7 +989,7 @@ elements.adminTabUsers?.addEventListener("click", () => {
 elements.adminTabProcesses?.addEventListener("click", () => {
     state.admin.activeTab = "processes";
     renderAdminPage();
-    loadAdminProcesses().catch((error) => {
+    loadAdminProcesses(true).catch((error) => {
         state.admin.processesError = error instanceof Error ? error.message : String(error || "Could not load processes.");
         renderAdminPage();
     });

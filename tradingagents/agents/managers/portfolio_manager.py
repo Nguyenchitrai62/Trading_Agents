@@ -66,6 +66,14 @@ def create_portfolio_manager(llm):
     def portfolio_manager_node(state) -> dict:
         instrument_context = build_instrument_context(state["company_of_interest"])
 
+        current_price = state.get("verification_reference_price")
+        current_price_line = (
+            f"\n**Current spot price (ccxt Binance ticker): {current_price:.8g}** — "
+            f"use this as the authoritative reference for trigger levels, limit prices, stop loss, and take profit.\n"
+            if current_price is not None
+            else "\n**Current spot price is unavailable — derive price levels from the latest OHLCV close in the market report below.**\n"
+        )
+
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
         investment_debate_state = state.get("investment_debate_state") or {}
@@ -145,6 +153,7 @@ def create_portfolio_manager(llm):
     - Include position sizing guidance when actionable.
 
 **Context:**
+{current_price_line}
 - Market report:\n{market_report}
 - Onchain report:\n{onchain_report}
 - Social report:\n{social_report}

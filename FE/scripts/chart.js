@@ -1118,7 +1118,7 @@ function switchPage(page) {
     renderPageShell();
     stopPollingInterval();
     if (page === "history") {
-        loadHistoryList().catch((error) => {
+        loadHistoryList(true).catch((error) => {
             state.history.error = error instanceof Error ? error.message : String(error || "Could not load history.");
             renderHistoryPage();
         });
@@ -1128,7 +1128,7 @@ function switchPage(page) {
         loadTradingViewChart();
     }
     if (page === "admin") {
-        loadAdminUsers().catch((error) => {
+        loadAdminUsers(true).catch((error) => {
             state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
             renderAdminPage();
         });

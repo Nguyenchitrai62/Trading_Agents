@@ -262,6 +262,20 @@ class CoinGlassClient:
         self.api_key = api_key.strip()
         self.base_url = (base_url or DEFAULT_COINGLASS_BASE_URL).strip().rstrip("/")
         self.timeout_seconds = max(1.0, float(timeout_seconds or 10.0))
+        self._session: requests.Session | None = None
+
+    def _ensure_session(self) -> requests.Session:
+        if self._session is None:
+            self._session = requests.Session()
+        return self._session
+
+    def close(self) -> None:
+        if self._session is not None:
+            try:
+                self._session.close()
+            except Exception:
+                pass
+            self._session = None
 
     def fetch(self, spec: CoinGlassEndpointSpec, coin_symbol: str, pair_symbol: str, limit: int) -> dict[str, Any]:
         started_at = time.monotonic()
@@ -286,7 +300,7 @@ class CoinGlassClient:
         }
 
         try:
-            response = requests.get(
+            response = self._ensure_session().get(
                 url,
                 params=params,
                 headers={
@@ -389,65 +403,66 @@ def fetch_high_value_snapshot(
         }
 
     client = CoinGlassClient(api_key=api_key, base_url=base_url, timeout_seconds=timeout_seconds)
-    safe_history_limit = max(1, min(MAX_HISTORY_LIMIT, int(history_limit or DEFAULT_LIMIT)))
-    safe_concurrency_limit = max(1, int(concurrency_limit or 1))
-    results_by_index: list[dict[str, Any] | None] = [None] * len(HIGH_VALUE_ENDPOINTS)
+    try:
+        safe_history_limit = max(1, min(MAX_HISTORY_LIMIT, int(history_limit or DEFAULT_LIMIT)))
+        safe_concurrency_limit = max(1, int(concurrency_limit or 1))
+        results_by_index: list[dict[str, Any] | None] = [None] * len(HIGH_VALUE_ENDPOINTS)
 
-    def store_result(index: int, result: dict[str, Any]) -> None:
-        results_by_index[index] = result
-        if on_endpoint_result:
-            on_endpoint_result(result)
+        def store_result(index: int, result: dict[str, Any]) -> None:
+            results_by_index[index] = result
+            if on_endpoint_result:
+                on_endpoint_result(result)
 
-    if safe_concurrency_limit == 1:
-        for index, spec in enumerate(HIGH_VALUE_ENDPOINTS):
-            if cancel_check:
-                cancel_check()
-            result = client.fetch(spec, coin_symbol, pair_symbol, safe_history_limit)
-            store_result(index, result)
-            if request_interval_seconds > 0 and index + 1 < len(HIGH_VALUE_ENDPOINTS):
-                time.sleep(request_interval_seconds)
-    else:
-        # CoinGlass endpoints are independent, so fetch them in a bounded pool
-        # and keep the final snapshot ordered by the static endpoint list.
-        with ThreadPoolExecutor(max_workers=safe_concurrency_limit, thread_name_prefix="coinglass") as executor:
-            future_map = {}
+        if safe_concurrency_limit == 1:
             for index, spec in enumerate(HIGH_VALUE_ENDPOINTS):
                 if cancel_check:
                     cancel_check()
-                future = executor.submit(client.fetch, spec, coin_symbol, pair_symbol, safe_history_limit)
-                future_map[future] = index
+                result = client.fetch(spec, coin_symbol, pair_symbol, safe_history_limit)
+                store_result(index, result)
                 if request_interval_seconds > 0 and index + 1 < len(HIGH_VALUE_ENDPOINTS):
                     time.sleep(request_interval_seconds)
+        else:
+            with ThreadPoolExecutor(max_workers=safe_concurrency_limit, thread_name_prefix="coinglass") as executor:
+                future_map = {}
+                for index, spec in enumerate(HIGH_VALUE_ENDPOINTS):
+                    if cancel_check:
+                        cancel_check()
+                    future = executor.submit(client.fetch, spec, coin_symbol, pair_symbol, safe_history_limit)
+                    future_map[future] = index
+                    if request_interval_seconds > 0 and index + 1 < len(HIGH_VALUE_ENDPOINTS):
+                        time.sleep(request_interval_seconds)
 
-            for future in as_completed(future_map):
-                if cancel_check:
-                    cancel_check()
-                index = future_map[future]
-                store_result(index, future.result())
+                for future in as_completed(future_map):
+                    if cancel_check:
+                        cancel_check()
+                    index = future_map[future]
+                    store_result(index, future.result())
 
-    results = [result for result in results_by_index if result is not None]
+        results = [result for result in results_by_index if result is not None]
 
-    packages = _build_packages(results)
-    successful = sum(1 for result in results if result.get("status") == "ok")
-    failed = len(results) - successful
-    return {
-        "configured": True,
-        "enabled": True,
-        "symbol": coin_symbol,
-        "pair_symbol": pair_symbol,
-        "fetched_at": fetched_at,
-        "base_url": client.base_url,
-        "endpoint_count": len(results),
-        "successful_endpoint_count": successful,
-        "failed_endpoint_count": failed,
-        "packages": packages,
-        "results": results,
-        "warnings": [
-            f"{result.get('title') or result.get('key')} failed: {result.get('error')}"
-            for result in results
-            if result.get("status") != "ok"
-        ],
-    }
+        packages = _build_packages(results)
+        successful = sum(1 for result in results if result.get("status") == "ok")
+        failed = len(results) - successful
+        return {
+            "configured": True,
+            "enabled": True,
+            "symbol": coin_symbol,
+            "pair_symbol": pair_symbol,
+            "fetched_at": fetched_at,
+            "base_url": client.base_url,
+            "endpoint_count": len(results),
+            "successful_endpoint_count": successful,
+            "failed_endpoint_count": failed,
+            "packages": packages,
+            "results": results,
+            "warnings": [
+                f"{result.get('title') or result.get('key')} failed: {result.get('error')}"
+                for result in results
+                if result.get("status") != "ok"
+            ],
+        }
+    finally:
+        client.close()
 
 
 def build_coinglass_prompt_context(

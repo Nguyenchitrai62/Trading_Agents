@@ -535,6 +535,19 @@ function waitForNextPaint() {
     });
 }
 
+const SIGNAL_ICON_MAP = {
+    "Market Buy": { icon: "🟢", label: "Market Buy" },
+    "Limit Buy": { icon: "🔵", label: "Limit Buy" },
+    "Hold": { icon: "⚪", label: "Hold" },
+    "Limit Sell": { icon: "🟠", label: "Limit Sell" },
+    "Market Sell": { icon: "🔴", label: "Market Sell" },
+};
+
+function renderSignalBadge(signal) {
+    const entry = SIGNAL_ICON_MAP[signal] || { icon: "", label: signal || "Completed" };
+    return `<span class="signal-badge signal-badge--${signal ? signal.replace(/\s+/g, "-").toLowerCase() : "unknown"}">${entry.icon} ${escapeHtml(entry.label)}</span>`;
+}
+
 function renderHistoryPage() {
     if (!(elements.historyList instanceof HTMLElement) || !(elements.historyDetail instanceof HTMLElement)) {
         return;
@@ -605,14 +618,14 @@ function renderHistoryPage() {
                         <thead>
                             <tr>
                                 <th scope="col">#</th>
-                                <th scope="col">Symbol</th>
+                                <th scope="col">Created at</th>
                                 <th scope="col">Signal</th>
+                                <th scope="col">Symbol</th>
                                 <th scope="col">Current price</th>
                                 <th scope="col">Primary limit</th>
                                 <th scope="col">Secondary limit</th>
                                 <th scope="col">Stop loss</th>
                                 <th scope="col">Take profit</th>
-                                <th scope="col">Created at</th>
                                 <th scope="col">Research depth</th>
                                 <th scope="col">Model</th>
                                 <th scope="col">Elapsed time</th>
@@ -624,14 +637,14 @@ function renderHistoryPage() {
                                     (item, index) => `
                                         <tr class="history-table-row ${item.id === history.activeId ? "is-active" : ""}" role="button" tabindex="0" data-history-row-id="${escapeHtml(item.id)}" aria-label="Open saved analysis for ${escapeHtml(item.symbol || "analysis")}">
                                             <td>${escapeHtml(String(startIndex + index))}</td>
+                                            <td>${escapeHtml(formatHistoryDateTime(item.created_at))}</td>
+                                            <td>${renderSignalBadge(item.signal)}</td>
                                             <td>${escapeHtml(item.symbol || "-")}</td>
-                                            <td>${escapeHtml(item.signal || "Completed")}</td>
                                             <td>${escapeHtml(formatHistoryPrice(item.current_price))}</td>
                                             <td>${escapeHtml(formatHistoryPrice(item.primary_limit_price))}</td>
                                             <td>${escapeHtml(formatHistoryPrice(item.secondary_limit_price))}</td>
                                             <td>${escapeHtml(formatHistoryPrice(item.stop_loss))}</td>
                                             <td>${escapeHtml(formatHistoryPrice(item.take_profit))}</td>
-                                            <td>${escapeHtml(formatHistoryDateTime(item.created_at))}</td>
                                             <td>${escapeHtml(item.research_depth || "-")}</td>
                                             <td>${escapeHtml(item.quick_think_model || "-")}</td>
                                             <td>${escapeHtml(formatHistoryElapsedSeconds(item.elapsed_seconds))}</td>

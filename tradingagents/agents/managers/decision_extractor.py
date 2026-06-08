@@ -41,7 +41,9 @@ def create_decision_extractor(llm):
 
     def decision_extractor_node(state: dict) -> dict:
         final_markdown = str(state.get("final_trade_decision") or "").strip()
-        current_price = fetch_current_binance_spot_price(state.get("company_of_interest") or "")
+        current_price = state.get("verification_reference_price")
+        if current_price is None:
+            current_price = fetch_current_binance_spot_price(state.get("company_of_interest") or "")
         verification = state.get("verification_report_structured") or {}
         verification_verdict = str(verification.get("verdict") or "").strip()
 

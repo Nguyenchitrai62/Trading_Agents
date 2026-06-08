@@ -26,6 +26,8 @@ class Propagator:
         coinglass_endpoint_results: list[dict[str, Any]] | None = None,
         coinglass_evidence_items: list[dict[str, Any]] | None = None,
         endpoint_summaries: list[dict[str, Any]] | None = None,
+        current_price: float | None = None,
+        current_price_source: str = "",
     ) -> Dict[str, Any]:
         """Create the initial state for the agent graph."""
         return {
@@ -73,8 +75,8 @@ class Propagator:
             "verification_report": "",
             "final_trade_decision_structured": {},
             "verification_report_structured": {},
-            "verification_reference_price": None,
-            "verification_reference_price_source": "",
+            "verification_reference_price": current_price,
+            "verification_reference_price_source": current_price_source,
             "decision_revision_count": 0,
         }
 

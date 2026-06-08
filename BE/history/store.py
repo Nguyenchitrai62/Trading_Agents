@@ -39,6 +39,14 @@ class TursoHistoryStore:
             self._session.mount("http://", adapter)
         return self._session
 
+    def close(self) -> None:
+        if self._session is not None:
+            try:
+                self._session.close()
+            except Exception:
+                pass
+            self._session = None
+
     @staticmethod
     def _extract_md_numeric(markdown: str, labels: list[str]) -> float | None:
         import re

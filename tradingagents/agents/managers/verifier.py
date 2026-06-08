@@ -153,7 +153,9 @@ def _build_effective_decision(decision: dict, markdown: str) -> dict:
 def _build_deterministic_summary(state: dict) -> dict[str, object]:
     decision = state.get("final_trade_decision_structured") or {}
     decision_markdown = str(state.get("final_trade_decision") or "").strip()
-    current_price = fetch_current_binance_spot_price(state.get("company_of_interest") or "")
+    current_price = state.get("verification_reference_price")
+    if current_price is None:
+        current_price = fetch_current_binance_spot_price(state.get("company_of_interest") or "")
     findings: list[str] = []
     warnings: list[str] = []
     blockers: list[str] = []

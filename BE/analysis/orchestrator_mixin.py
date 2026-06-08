@@ -380,6 +380,18 @@ class AnalysisOrchestratorMixin:
         try:
             ensure_not_cancelled()
             past_context = ""
+            emit_analysis_log("Fetching current spot price via ccxt.", "graph_setup")
+            current_price = None
+            current_price_source = ""
+            try:
+                from tradingagents.dataflows.ccxt_crypto import fetch_current_crypto_price
+                current_price = fetch_current_crypto_price(symbol)
+                if current_price is not None:
+                    current_price_source = "ccxt_binance_ticker"
+                    emit_analysis_log(f"Current spot price: {current_price:.8g} (via {current_price_source})", "graph_setup")
+            except Exception:
+                emit_analysis_log("Could not fetch current spot price; will rely on OHLCV latest close.", "graph_setup", "warning")
+
             emit_analysis_log("Creating initial graph state.", "graph_setup")
             init_state = graph.propagator.create_initial_state(
                 symbol,
@@ -391,6 +403,8 @@ class AnalysisOrchestratorMixin:
                 coinglass_endpoint_results=coinglass_endpoint_results,
                 coinglass_evidence_items=coinglass_evidence_items,
                 endpoint_summaries=endpoint_summaries,
+                current_price=current_price,
+                current_price_source=current_price_source,
             )
             previous_snapshot = self.extract_runtime_snapshot(init_state)
             args = graph.propagator.get_graph_args()
@@ -701,12 +715,11 @@ class AnalysisOrchestratorMixin:
                 stdout_redirect.__exit__(None, None, None)
             if log_capture is not None:
                 tradingagents_logger.removeHandler(log_capture)
-            if graph is not None and graph._checkpointer_ctx is not None:
-                graph._checkpointer_ctx.__exit__(None, None, None)
-                graph._checkpointer_ctx = None
-                graph.graph = graph.workflow.compile()
             if graph is not None:
-                graph.curr_state = None
+                try:
+                    graph.close()
+                except Exception:
+                    logger.warning("Failed to close trading graph", exc_info=True)
             final_state.clear()
             previous_snapshot.clear()
             previous_status.clear()
@@ -877,11 +890,26 @@ class AnalysisOrchestratorMixin:
             )
         finally:
             if not worker_task.done():
-                logger.info(
-                    "analysis still running in background after stream ended: run_id=%s symbol=%s",
-                    analysis_request.run_id,
-                    analysis_request.symbol,
-                )
+                if not cancel_event.is_set():
+                    cancel_event.set()
+                    logger.info(
+                        "analysis cancelled after client disconnect: run_id=%s symbol=%s",
+                        analysis_request.run_id,
+                        analysis_request.symbol,
+                    )
+                try:
+                    await asyncio.wait_for(asyncio.shield(worker_task), timeout=30)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "background worker did not stop within 30s after cancel: run_id=%s symbol=%s",
+                        analysis_request.run_id,
+                        analysis_request.symbol,
+                    )
+                except AnalysisCancelled:
+                    pass
+                except BaseException:
+                    pass
+                cleanup_run_once()
             else:
                 cleanup_run_once()
                 try:

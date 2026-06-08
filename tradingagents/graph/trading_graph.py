@@ -131,6 +131,30 @@ class TradingAgentsGraph:
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 
+    def close(self) -> None:
+        """Release LLM clients, compiled graph, and internal state.
+
+        Must be called after each analysis run to prevent resource leaks
+        (TCP connections, graph node references, checkpointer contexts).
+        """
+        if self._checkpointer_ctx is not None:
+            try:
+                self._checkpointer_ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._checkpointer_ctx = None
+        self.graph = None
+        self.workflow = None
+        self.deep_thinking_llm = None
+        self.quick_thinking_llm = None
+        self.curr_state = None
+        self.tool_nodes = None
+        self.conditional_logic = None
+        self.graph_setup = None
+        self.propagator = None
+        self.signal_processor = None
+        self.log_states_dict.clear()
+
     def _get_provider_kwargs(self, role: str = "quick") -> Dict[str, Any]:
         """Get provider-specific kwargs for LLM client creation.
 

@@ -104,6 +104,45 @@ def _resolve_exchange(exchange_name: str):
     return exchange_id, exchange
 
 
+def fetch_current_crypto_price(
+    symbol: str,
+    exchange_name: str = "binance",
+) -> float | None:
+    """Fetch the most recent spot price for a crypto pair via ccxt fetch_ticker.
+
+    Uses the exchange's public ticker endpoint (no authentication required).
+    Returns ``None`` when ccxt is unavailable, the pair is unsupported, or the
+    request fails.
+    """
+    try:
+        import ccxt
+    except ImportError:
+        return None
+    try:
+        exchange_id, exchange = _resolve_exchange(exchange_name)
+    except ValueError:
+        return None
+    try:
+        if exchange_name.strip().lower() == "binance":
+            market_symbol = _normalize_market_symbol(symbol, exchange_id)
+        else:
+            market_symbol = _normalize_market_symbol(symbol, exchange_id)
+        ticker = exchange.fetch_ticker(market_symbol)
+        price = ticker.get("last") if isinstance(ticker, dict) else None
+        if price is not None:
+            return float(price)
+        return None
+    except Exception:
+        return None
+    finally:
+        close_method = getattr(exchange, "close", None)
+        if callable(close_method):
+            try:
+                close_method()
+            except Exception:
+                pass
+
+
 def _normalize_market_symbol(symbol: str, exchange_id: str) -> str:
     normalized = symbol.strip().upper().replace(" ", "")
     if not normalized:

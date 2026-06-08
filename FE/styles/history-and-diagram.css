@@ -127,6 +127,55 @@
     text-align: right;
 }
 
+.history-table .signal-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+}
+
+.history-table .signal-badge--market-buy {
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.history-table .signal-badge--limit-buy {
+    background: rgba(59, 130, 246, 0.12);
+    color: #3b82f6;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.history-table .signal-badge--hold {
+    background: rgba(148, 163, 184, 0.12);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.history-table .signal-badge--limit-sell {
+    background: rgba(249, 115, 22, 0.12);
+    color: #f97316;
+    border: 1px solid rgba(249, 115, 22, 0.3);
+}
+
+.history-table .signal-badge--market-sell {
+    background: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.history-table .signal-badge--unknown {
+    background: rgba(148, 163, 184, 0.06);
+    color: var(--muted);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
 .history-table-control {
     display: grid;
     gap: 5px;
@@ -300,16 +349,19 @@
 
 .history-table th:nth-child(2),
 .history-table td:nth-child(2) {
-    width: 8.75rem;
+    width: 13.5rem;
 }
 
 .history-table th:nth-child(3),
 .history-table td:nth-child(3) {
-    width: 8.5rem;
+    width: 11.5rem;
 }
 
 .history-table th:nth-child(4),
-.history-table td:nth-child(4),
+.history-table td:nth-child(4) {
+    width: 6.5rem;
+}
+
 .history-table th:nth-child(5),
 .history-table td:nth-child(5),
 .history-table th:nth-child(6),
@@ -317,13 +369,10 @@
 .history-table th:nth-child(7),
 .history-table td:nth-child(7),
 .history-table th:nth-child(8),
-.history-table td:nth-child(8) {
-    width: 9.5rem;
-}
-
+.history-table td:nth-child(8),
 .history-table th:nth-child(9),
 .history-table td:nth-child(9) {
-    width: 14.5rem;
+    width: 9.5rem;
 }
 
 .history-table th:nth-child(10),
