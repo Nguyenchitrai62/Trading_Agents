@@ -569,7 +569,10 @@ function updateRowSaveButton(row) {
     const isDirty = state.admin.dirtyEmails.has(email);
     const isSaving = state.admin.savingEmail === email;
     saveBtn.className = isDirty ? "button primary admin-save-button admin-save-dirty" : "button secondary admin-save-button";
-    saveBtn.textContent = isSaving ? "Saving" : isDirty ? "Save *" : "Save";
+    if (isSaving) {
+        saveBtn.classList.add("is-loading");
+    }
+    saveBtn.textContent = isSaving ? "Saving..." : isDirty ? "Save *" : "Save";
     saveBtn.disabled = isSaving;
 }
 
@@ -693,7 +696,8 @@ function renderAdminUsersTab() {
                                 const isSaving = state.admin.savingEmail === email;
                                 const isDirty = state.admin.dirtyEmails.has(email);
                                 const saveClass = isDirty ? "button primary admin-save-button admin-save-dirty" : "button secondary admin-save-button";
-                                const saveText = isSaving ? "Saving" : isDirty ? "Save *" : "Save";
+                                const saveLoadingClass = isSaving ? " is-loading" : "";
+                                const saveText = isSaving ? "Saving..." : isDirty ? "Save *" : "Save";
                                 return `
                                     <tr class="admin-user-row" data-admin-email="${escapeHtml(email)}">
                                         <td class="admin-col-num">${startIndex + index}</td>
@@ -705,7 +709,7 @@ function renderAdminUsersTab() {
                                         <td class="admin-col-toggle ${isAdmin || isSeedAdmin ? "admin-toggle-locked" : ""}" data-admin-field="history_unlimited" data-admin-value="${unlimited ? "true" : "false"}">${adminToggleIcon(unlimited)}</td>
                                         <td class="admin-col-days"><input type="number" min="0" step="1" data-admin-field="history_days" value="${escapeHtml(String(dayValue))}" ${unlimited || isAdmin || isSeedAdmin ? "disabled" : ""}></td>
                                         <td class="admin-col-seen">${escapeHtml(formatHistoryTimestamp(user.last_seen_at || ""))}</td>
-                                        <td class="admin-col-save"><button class="${saveClass}" type="button" data-admin-save-user="${escapeHtml(email)}" ${isSaving ? "disabled" : ""}>${escapeHtml(saveText)}</button></td>
+                                        <td class="admin-col-save"><button class="${saveClass}${saveLoadingClass}" type="button" data-admin-save-user="${escapeHtml(email)}" ${isSaving ? "disabled" : ""}>${escapeHtml(saveText)}</button></td>
                                     </tr>
                                 `;
                             })
@@ -771,7 +775,7 @@ function renderAdminProcessesTab() {
                         </span>
                         <small class="admin-process-elapsed">Elapsed: ${escapeHtml(elapsed)}</small>
                     </div>
-                    <button class="button primary admin-cancel-button" type="button" data-admin-cancel-run="${escapeHtml(run.run_id)}" ${isCancelling ? "disabled" : ""}>${isCancelling ? "Cancelling" : "Cancel Analysis"}</button>
+                    <button class="button primary admin-cancel-button${isCancelling ? " is-loading" : ""}" type="button" data-admin-cancel-run="${escapeHtml(run.run_id)}" ${isCancelling ? "disabled" : ""}>${isCancelling ? "Cancelling..." : "Cancel Analysis"}</button>
                 </article>
             `;
         })
@@ -816,10 +820,11 @@ function refreshProcessesElapsedSilently(runs) {
         if (cancelBtn instanceof HTMLButtonElement) {
             const isCancelling = state.admin.cancellingRunId === runId;
             card.classList.toggle("is-cancelling", isCancelling);
+            cancelBtn.classList.toggle("is-loading", isCancelling);
             if (isCancelling) {
                 cancelBtn.disabled = true;
-                if (cancelBtn.textContent !== "Cancelling") {
-                    cancelBtn.textContent = "Cancelling";
+                if (cancelBtn.textContent !== "Cancelling...") {
+                    cancelBtn.textContent = "Cancelling...";
                 }
             }
         }

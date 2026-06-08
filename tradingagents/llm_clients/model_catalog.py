@@ -57,12 +57,14 @@ _QWEN_MODELS: Dict[str, List[ModelOption]] = {
 # All M2.x models share a 204,800-token context window.
 _MINIMAX_MODELS: Dict[str, List[ModelOption]] = {
     "quick": [
+        ("MiniMax-M3 - Latest M3 flagship, 1M ctx", "MiniMax-M3"),
         ("MiniMax-M2.7-highspeed - Faster M2.7, 204K ctx, ~100 TPS", "MiniMax-M2.7-highspeed"),
         ("MiniMax-M2.5-highspeed - Previous-gen highspeed, 204K ctx", "MiniMax-M2.5-highspeed"),
         ("MiniMax-M2.1-highspeed - M2.1 highspeed, 204K ctx", "MiniMax-M2.1-highspeed"),
         ("Custom model ID", "custom"),
     ],
     "deep": [
+        ("MiniMax-M3 - Latest M3 flagship, 1M ctx", "MiniMax-M3"),
         ("MiniMax-M2.7 - Flagship, SOTA on coding/agent benchmarks, 204K ctx", "MiniMax-M2.7"),
         ("MiniMax-M2.7-highspeed - Same quality as M2.7, ~100 TPS", "MiniMax-M2.7-highspeed"),
         ("MiniMax-M2.5 - Previous-gen flagship, 204K ctx", "MiniMax-M2.5"),

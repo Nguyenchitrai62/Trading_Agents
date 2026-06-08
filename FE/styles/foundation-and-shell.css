@@ -455,6 +455,25 @@ p {
     cursor: not-allowed;
 }
 
+.button.is-loading {
+    position: relative;
+    overflow: hidden;
+    cursor: wait;
+    opacity: 0.85;
+}
+
+.button.is-loading::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.08) 18%, rgba(255, 255, 255, 0.18) 32%, rgba(255, 255, 255, 0.08) 46%, transparent 64%);
+    transform: translateX(-120%);
+    animation: loadingSweep 1.35s linear infinite;
+    pointer-events: none;
+    z-index: 1;
+}
+
 .button {
     padding: 10px 14px;
 }
