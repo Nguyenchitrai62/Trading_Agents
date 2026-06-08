@@ -24,7 +24,7 @@ def get_structured_evidence_instruction(agent_key: str) -> str:
         '{"evidence_items":[{"claim":"...","source":"...","source_type":"ohlcv|indicator|news|social|web|flow|other",'
         '"timestamp":"YYYY-MM-DD or ISO datetime","metric":"...","value":"...","direction":"bullish|bearish|neutral|mixed|unknown",'
         '"confidence":0.0,"freshness":"realtime|recent|stale|historical|unknown","notes":"..."}]}. '
-        f"Set agent='{agent_key}' implicitly by writing evidence for this analyst only. Include up to 8"
+        f"Set agent='{agent_key}' implicitly by writing evidence for this analyst only. Include up to 12"
         " high-signal items. Every item must be directly supported by a tool result, web result,"
         " or prefetched source in this run. Do not invent URLs, timestamps, metrics, or values."
         " If evidence is incomplete or source quality is weak, lower confidence and say why in notes."
@@ -103,7 +103,7 @@ def format_evidence_ledger(items: list[dict[str, Any]] | None, limit: int = 16) 
         direction = _normalize_choice(item.get("direction"), _VALID_DIRECTIONS, "unknown")
         confidence = _coerce_confidence(item.get("confidence"))
         timestamp = _clean_text(item.get("timestamp") or "unknown time", 40)
-        claim = _clean_text(item.get("claim") or "No claim supplied.", 400)
+        claim = _clean_text(item.get("claim") or "No claim supplied.", 600)
         notes = _clean_text(item.get("notes") or "", 140)
         line = (
             f"- [{agent}] {direction} confidence={confidence:.2f}; "
@@ -175,7 +175,7 @@ def _normalize_evidence_items(
     analysis_date: str,
 ) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
-    for item in items[:8]:
+    for item in items[:12]:
         claim = _clean_text(item.get("claim"), 1000)
         if not claim:
             continue

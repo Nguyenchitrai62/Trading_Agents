@@ -300,7 +300,7 @@ def create_verifier(llm):
                 ("Validation Errors", "decision_validation_errors"),
             ],
         )
-        evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=24)
+        evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=30)
         coinglass_context = get_coinglass_context_instruction(
             state,
             packages=get_coinglass_packages_for_role("verifier"),

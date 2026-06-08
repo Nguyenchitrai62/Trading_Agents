@@ -150,7 +150,7 @@ def endpoint_summaries_to_evidence_items(
     owner_agent_key: str,
     owner_agent_label: str,
     analysis_date: str,
-    limit: int = 12,
+    limit: int = 20,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for summary in list(summaries)[: max(1, limit)]:
@@ -158,7 +158,7 @@ def endpoint_summaries_to_evidence_items(
         if direction not in VALID_DIRECTIONS:
             direction = "neutral"
         metrics = summary.get("key_metrics") or {}
-        metric_text = ", ".join(f"{key}={value}" for key, value in list(metrics.items())[:4])
+        metric_text = ", ".join(f"{key}={value}" for key, value in metrics.items())
         bullets = summary.get("summary_bullets") or []
         claim = "; ".join(str(item) for item in bullets[:2]) or f"{summary.get('title') or summary.get('endpoint_name')} summarized."
         items.append(
@@ -185,7 +185,7 @@ def format_endpoint_summaries_for_prompt(
     summaries: Iterable[dict[str, Any]] | None,
     *,
     focus_packages: Iterable[str] | None = None,
-    limit: int = 18,
+    limit: int = 30,
 ) -> str:
     summary_items = [item for item in (summaries or []) if isinstance(item, dict)]
     if focus_packages:
@@ -200,11 +200,11 @@ def format_endpoint_summaries_for_prompt(
         package_label = str(item.get("package_label") or item.get("package") or "source")
         direction = str(item.get("direction") or "neutral")
         confidence = _coerce_float(item.get("confidence"), default=0.0)
-        bullets = "; ".join(str(value) for value in (item.get("summary_bullets") or [])[:3])
+        bullets = "; ".join(str(value) for value in (item.get("summary_bullets") or [])[:6])
         metrics = ", ".join(
-            f"{key}={value}" for key, value in list((item.get("key_metrics") or {}).items())[:4]
+            f"{key}={value}" for key, value in ((item.get("key_metrics") or {}).items())
         )
-        caveats = "; ".join(str(value) for value in (item.get("caveats") or [])[:2])
+        caveats = "; ".join(str(value) for value in (item.get("caveats") or [])[:4])
         line = f"- {title} ({package_label}): direction={direction}, confidence={confidence:.2f}"
         if metrics:
             line += f"; metrics: {metrics}"
@@ -212,7 +212,7 @@ def format_endpoint_summaries_for_prompt(
             line += f"; facts: {bullets}"
         if caveats:
             line += f"; caveats: {caveats}"
-        lines.append(_trim_text(line, 520))
+        lines.append(_trim_text(line, 800))
     if len(summary_items) > limit:
         lines.append(f"- ... {len(summary_items) - limit} more endpoint summaries omitted.")
     return "\n".join(lines)
@@ -225,7 +225,7 @@ def _extract_key_metrics(summary: dict[str, Any]) -> dict[str, object]:
         metrics["rows"] = item_count
     numeric = summary.get("numeric_summary") or {}
     if isinstance(numeric, dict):
-        for key, values in list(numeric.items())[:6]:
+        for key, values in numeric.items():
             if not isinstance(values, dict):
                 continue
             latest = values.get("latest")
@@ -233,7 +233,7 @@ def _extract_key_metrics(summary: dict[str, Any]) -> dict[str, object]:
                 metrics[str(key)] = latest
     fields = summary.get("fields") or summary.get("keys") or []
     if isinstance(fields, list) and fields:
-        metrics["fields"] = ", ".join(str(item) for item in fields[:6])
+        metrics["fields"] = ", ".join(str(item) for item in fields)
     return metrics
 
 
@@ -256,9 +256,9 @@ def _build_summary_bullets(
     if key_metrics:
         bullets.append(
             "key_metrics="
-            + ", ".join(f"{key}={value}" for key, value in list(key_metrics.items())[:4])
+            + ", ".join(f"{key}={value}" for key, value in key_metrics.items())
         )
-    return bullets[:5]
+    return bullets[:8]
 
 
 def _build_caveats(result: dict[str, Any], summary: dict[str, Any]) -> list[str]:
@@ -298,6 +298,9 @@ def _infer_direction(
 
     if "funding" in combined:
         latest = _first_numeric_metric(key_metrics)
+        if latest is None:
+            # Try to parse funding rate from string-embedded values
+            latest = _parse_funding_rate_from_metrics(key_metrics)
         if latest is not None:
             if latest > 0.03:
                 return "bearish"
@@ -318,6 +321,27 @@ def _infer_direction(
         return "mixed"
 
     if any(term in combined for term in ("liquidation", "taker", "option", "open interest", "oi")):
+        return "mixed"
+
+    # Fear & Greed index: "Value" field = index 0-100; <30 = extreme fear (bearish), >70 = greed (bullish)
+    if "fear" in combined or "greed" in combined:
+        value_metric = key_metrics.get("Value")
+        fear_value = _coerce_float(value_metric)
+        if fear_value is not None:
+            if fear_value <= 25:
+                return "bearish"
+            if fear_value >= 65:
+                return "bullish"
+        return "neutral"
+
+    # Coinbase premium index
+    if "premium" in combined:
+        premium = _first_numeric_metric(key_metrics)
+        if premium is not None:
+            if premium > 0:
+                return "bullish"
+            if premium < -0.1:
+                return "bearish"
         return "mixed"
 
     return "neutral"
@@ -347,6 +371,26 @@ def _first_numeric_metric(metrics: dict[str, object]) -> float | None:
         number = _coerce_float(value)
         if number is not None:
             return number
+    return None
+
+
+def _parse_funding_rate_from_metrics(metrics: dict[str, object]) -> float | None:
+    """Try to extract a funding rate value from string-embedded metrics like 'Binance: 0.00373, ...'."""
+    import re as _re
+
+    for key, value in metrics.items():
+        if key in ("rows", "fields"):
+            continue
+        text = str(value)
+        rates: list[float] = []
+        for match in _re.finditer(r'([-]?\d+\.?\d*)\s*$|:\s*([-]?\d+\.?\d*)', text):
+            num_str = match.group(1) or match.group(2)
+            try:
+                rates.append(float(num_str))
+            except (ValueError, TypeError):
+                pass
+        if rates:
+            return sum(rates) / len(rates)
     return None
 
 

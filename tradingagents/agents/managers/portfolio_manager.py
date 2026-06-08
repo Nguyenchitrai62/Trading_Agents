@@ -82,7 +82,7 @@ def create_portfolio_manager(llm):
         onchain_report = state.get("onchain_report", "")
         social_report = state.get("sentiment_report", "")
         news_report = state.get("news_report", "")
-        evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=18)
+        evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=24)
         coinglass_context = get_coinglass_context_instruction(
             state,
             packages=get_coinglass_packages_for_role("portfolio_manager"),

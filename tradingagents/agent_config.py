@@ -108,7 +108,7 @@ DEFAULT_CONFIG = _apply_env_overrides({
     "coinglass_owner_analyst": "onchain",
     "coinglass_owner_agent_label": "Onchain Analyst",
     "onchain_endpoint_llm_concurrency": 3,
-    "coinglass_prompt_char_limit": 12000,
+    "coinglass_prompt_char_limit": 50000,
     "coinglass_preview_sample_rows": 50,
     "coinglass_preview_recent_rows": 50,
     "coinglass_packages_by_role": {

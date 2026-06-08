@@ -15,9 +15,9 @@ from tradingagents.dataflows.config import get_config
 from tradingagents.llm_clients.base_client import normalize_content
 
 
-_MAX_ENDPOINT_PROMPT_CHARS = 8000
-_MAX_CATEGORY_ANALYSIS_CHARS = 3200
-_MAX_AGGREGATE_INPUT_CHARS = 35000
+_MAX_ENDPOINT_PROMPT_CHARS = 20000
+_MAX_CATEGORY_ANALYSIS_CHARS = 5000
+_MAX_AGGREGATE_INPUT_CHARS = 80000
 
 _ONCHAIN_PACKAGES = [
     "exchange_reserves",

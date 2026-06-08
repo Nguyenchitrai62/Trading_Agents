@@ -23,7 +23,7 @@ def create_neutral_debator(llm):
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         onchain_report = state.get("onchain_report", "")
-        evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=14)
+        evidence_ledger = format_evidence_ledger(state.get("evidence_items"), limit=18)
         coinglass_context = get_coinglass_context_instruction(
             state,
             packages=get_coinglass_packages_for_role("neutral_risk"),

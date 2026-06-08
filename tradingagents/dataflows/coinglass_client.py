@@ -596,15 +596,16 @@ def summarize_payload(payload: object) -> dict[str, Any]:
     if isinstance(data, list):
         summary["item_count"] = len(data)
         summary["fields"] = _collect_fields(data)
-        summary["sample_items"] = _compact_json_value(data[:sample_row_limit])
-        summary["latest_items"] = _compact_json_value(data[-recent_row_limit:])
-        numeric = _numeric_summary(data)
+        formatted = _format_timestamps_in_items(data)
+        summary["sample_items"] = _compact_json_value(formatted[:sample_row_limit])
+        summary["latest_items"] = _compact_json_value(formatted[-recent_row_limit:])
+        numeric = _numeric_summary(formatted)
         if numeric:
             summary["numeric_summary"] = numeric
         return summary
 
     if isinstance(data, dict):
-        summary["keys"] = sorted(str(key) for key in list(data.keys())[:40])
+        summary["keys"] = sorted(str(key) for key in data.keys())
         parallel_list_summary = _summarize_parallel_scalar_lists(
             data,
             sample_row_limit=sample_row_limit,
@@ -618,9 +619,10 @@ def summarize_payload(payload: object) -> dict[str, Any]:
             summary["primary_list_key"] = nested_list_key
             summary["item_count"] = len(nested_items)
             summary["fields"] = _collect_fields(nested_items)
-            summary["sample_items"] = _compact_json_value(nested_items[:sample_row_limit])
-            summary["latest_items"] = _compact_json_value(nested_items[-recent_row_limit:])
-            numeric = _numeric_summary(nested_items)
+            formatted_nested = _format_timestamps_in_items(nested_items)
+            summary["sample_items"] = _compact_json_value(formatted_nested[:sample_row_limit])
+            summary["latest_items"] = _compact_json_value(formatted_nested[-recent_row_limit:])
+            numeric = _numeric_summary(formatted_nested)
             if numeric:
                 summary["numeric_summary"] = numeric
         else:
@@ -745,7 +747,7 @@ def _format_coinglass_prompt_result_line(result: dict[str, Any]) -> str:
     if sample_brief:
         parts.append(sample_brief)
 
-    detail = _trim_text("; ".join(part for part in parts if part), 260)
+    detail = _trim_text("; ".join(part for part in parts if part), 800)
     return f"- {title}: {detail}" if detail else f"- {title}: available from `{source}`"
 
 
@@ -753,19 +755,21 @@ def _format_coinglass_field_brief(summary: dict[str, Any]) -> str:
     fields = summary.get("fields") or summary.get("keys") or []
     if not isinstance(fields, list) or not fields:
         return ""
-    labels = [str(field) for field in fields[:4] if str(field).strip()]
+    labels = [str(field) for field in fields if str(field).strip()]
     if not labels:
         return ""
-    suffix = "..." if len(fields) > len(labels) else ""
-    return f"fields={', '.join(labels)}{suffix}"
+    return f"fields={', '.join(labels)}"
 
 
 def _format_coinglass_numeric_brief(numeric_summary: dict[str, Any]) -> str:
     if not isinstance(numeric_summary, dict) or not numeric_summary:
         return ""
     metrics: list[str] = []
-    for key, values in list(numeric_summary.items())[:3]:
+    for key, values in numeric_summary.items():
         if not isinstance(values, dict):
+            continue
+        # Skip time/timestamp fields — meaningless as numeric metrics
+        if _looks_like_time_field(key):
             continue
         latest = values.get("latest")
         if latest in (None, ""):
@@ -793,12 +797,12 @@ def _format_coinglass_sample_brief(summary: dict[str, Any]) -> str:
         value = summary.get("sample_items")
     if value in (None, "", [], {}):
         return ""
-    compact = _compact_json_value(value, max_depth=2, max_items=2)
+    compact = _compact_json_value(value, max_depth=2, max_items=3)
     try:
         text = json.dumps(compact, ensure_ascii=False, sort_keys=True, default=str)
     except TypeError:
         text = str(compact)
-    return f"{label}={_trim_text(text, 120)}" if text else ""
+    return f"{label}={_trim_text(text, 200)}" if text else ""
 
 
 def _format_compact_number(value: object) -> str:
@@ -886,11 +890,69 @@ def _compact_json_value(value: object, max_depth: int = 4, max_items: int = 5) -
     if isinstance(value, list):
         if not value:
             return []
-        # If list of dicts with 'exchange', render as readable string for table
-        if all(isinstance(item, dict) and 'exchange' in item for item in value):
-            return ", ".join(f"{item.get('exchange')}: {item.get('fundingrate', item.get('funding_rate', ''))}" for item in value)
-        return [_compact_json_value(item, max_depth - 1, max_items) for item in value]
+        # Compact exchange-per-row snapshots into a readable short table
+        if all(isinstance(item, dict) and ('exchange' in item or 'exchange_name' in item) for item in value):
+            return _compact_exchange_table(value, max_items)
+        return [_compact_json_value(item, max_depth - 1, max_items) for item in value[:max_items]]
     return _safe_scalar(value)
+
+
+def _compact_exchange_table(items: list[dict], max_exchanges: int) -> str:
+    """Render exchange-per-row list as a compact pipe table with key metrics."""
+    if not items:
+        return ""
+    # Determine the exchange key name
+    ex_key = 'exchange_name' if all('exchange_name' in item for item in items) else 'exchange'
+    # Pick meaningful numeric columns (skip symbol, exchange name, instrument_id)
+    skip_keys = {ex_key, 'symbol', 'instrument_id', 'next_funding_time',
+                 'update_time', 'close_time', 'last_trade_time', 'list_date',
+                 'last_quote_time', 'asset_details', 'fund_type', 'market_status',
+                 'primary_exchange', 'region', 'ticker', 'fund_name', 'cik_code'}
+    # Collect candidate numeric columns and format them
+    all_keys = sorted(set().union(*(d.keys() for d in items)))
+    num_cols: list[str] = []
+    for key in all_keys:
+        if key in skip_keys or key.endswith('_list'):
+            continue
+        sample_vals = [d.get(key) for d in items[:5] if key in d]
+        if sample_vals and all(_coerce_number(v) is not None for v in sample_vals if v is not None):
+            num_cols.append(key)
+    # Build compact rows — show all exchanges
+    rows = []
+    for item in items:
+        ex_name = str(item.get(ex_key, '?'))[:14]
+        cols = [ex_name]
+        for col in num_cols:
+            val = item.get(col)
+            if val is None or val == '':
+                cols.append('-')
+            else:
+                cols.append(_format_compact_number(val))
+        rows.append(' | '.join(cols))
+    header = f"exch({len(items)} rows)"
+    if num_cols:
+        header += f' | {" | ".join(col[:12] for col in num_cols)}'
+    return header + '\n' + '\n'.join(rows)
+
+
+def _format_timestamps_in_items(items: list[dict]) -> list[dict]:
+    """Detect and format timestamp fields in list-of-dict items in-place."""
+    if not items:
+        return items
+    time_keys: set[str] = set()
+    for key in items[0].keys():
+        if _looks_like_time_field(key):
+            time_keys.add(key)
+    if not time_keys:
+        return items
+    for item in items:
+        for key in time_keys:
+            val = item.get(key)
+            if val is not None:
+                formatted = _format_timestamp_value(val)
+                if formatted:
+                    item[key] = formatted
+    return items
 
 
 def _safe_scalar(value: object) -> object:
@@ -1056,7 +1118,7 @@ def _collect_fields(items: list[object]) -> list[str]:
     for item in items[:10]:
         if isinstance(item, dict):
             fields.update(str(key) for key in item.keys())
-    return sorted(fields)[:40]
+    return sorted(fields)
 
 
 def _largest_nested_list(data: dict[str, object]) -> tuple[str | None, list[object] | None]:
@@ -1075,17 +1137,27 @@ def _numeric_summary(items: list[object]) -> dict[str, dict[str, float]]:
         if not isinstance(item, dict):
             continue
         for key, value in item.items():
+            # Skip timestamp/date fields — they are not meaningful as numeric metrics
+            if _looks_like_time_field(key):
+                continue
             number = _coerce_number(value)
             if number is None:
                 continue
             numeric_values.setdefault(str(key), []).append(number)
 
+    # Detect if this is a time-series (has a time field in items) vs snapshot (exchange list)
+    has_time_series_field = False
+    if items and isinstance(items[0], dict):
+        has_time_series_field = any(_looks_like_time_field(k) for k in items[0].keys())
+
     summary: dict[str, dict[str, float]] = {}
-    for key, values in list(numeric_values.items())[:12]:
+    for key, values in numeric_values.items():
         if not values:
             continue
+        # For time-series: latest = most recent (last). For snapshots: first = aggregate/largest.
+        latest_index = -1 if has_time_series_field else 0
         summary[key] = {
-            "latest": round(values[-1], 8),
+            "latest": round(values[latest_index], 8),
             "min": round(min(values), 8),
             "max": round(max(values), 8),
         }
