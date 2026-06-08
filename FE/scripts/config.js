@@ -130,6 +130,7 @@ function normalizeFrontendConfig() {
             models: options.models || [
                 { value: "MiniMax-M2.5", label: "MiniMax M2.5" },
                 { value: "MiniMax-M2.7", label: "MiniMax M2.7" },
+                { value: "MiniMax-M3", label: "MiniMax M3" },
             ],
             research_depths: options.researchDepths || options.research_depths || [
                 { value: "auto", label: "Auto", rounds: 3, effective_depth: "medium", description: "Backend-managed baseline depth." },

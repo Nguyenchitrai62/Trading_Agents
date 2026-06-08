@@ -898,8 +898,8 @@ async function cancelAdminRun(runId) {
         if (!response.ok) {
             throw new Error(await readResponseError(response));
         }
-        await new Promise((r) => setTimeout(r, 500));
         await loadAdminProcesses(true);
+        startPollingInterval("admin");
     } catch (error) {
         state.admin.processesError = error instanceof Error ? error.message : String(error || "Could not cancel analysis.");
     } finally {
