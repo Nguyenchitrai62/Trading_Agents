@@ -425,13 +425,11 @@
     vertical-align: middle;
 }
 
+.history-table tbody td:nth-child(5),
 .history-table tbody td:nth-child(6),
-.history-table tbody td:nth-child(7) {
-    text-align: right;
-}
-
-.history-table tbody td:nth-child(n + 4):nth-child(-n + 8),
-.history-table tbody td:nth-child(11),
+.history-table tbody td:nth-child(7),
+.history-table tbody td:nth-child(8),
+.history-table tbody td:nth-child(9),
 .history-table tbody td:nth-child(12) {
     text-align: right;
     font-variant-numeric: tabular-nums;
