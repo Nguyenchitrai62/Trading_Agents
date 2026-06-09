@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ctypes
 import gc
 import json
 import logging
@@ -43,6 +44,16 @@ except ModuleNotFoundError:
     thread_id = None
     TradingAgentsGraph = None
     ORCHESTRATOR_IMPORT_OK = False
+
+
+def _try_malloc_trim() -> None:
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim.argtypes = [ctypes.c_int]
+        libc.malloc_trim.restype = ctypes.c_int
+        libc.malloc_trim(ctypes.c_int(0))
+    except Exception:
+        pass
 
 
 class AnalysisOrchestratorMixin:
@@ -728,6 +739,7 @@ class AnalysisOrchestratorMixin:
             seen_source_artifacts.clear()
             pending_tool_calls.clear()
             gc.collect()
+            _try_malloc_trim()
 
     async def generate_analysis_stream(
         self,

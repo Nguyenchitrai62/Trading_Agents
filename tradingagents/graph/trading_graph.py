@@ -79,21 +79,21 @@ class TradingAgentsGraph:
             deep_kwargs["callbacks"] = self.callbacks
             quick_kwargs["callbacks"] = self.callbacks
 
-        deep_client = create_llm_client(
+        self._deep_client = create_llm_client(
             provider=self.config["llm_provider"],
             model=self.config["deep_think_llm"],
             base_url=self.config.get("backend_url"),
             **deep_kwargs,
         )
-        quick_client = create_llm_client(
+        self._quick_client = create_llm_client(
             provider=self.config["llm_provider"],
             model=self.config["quick_think_llm"],
             base_url=self.config.get("backend_url"),
             **quick_kwargs,
         )
 
-        self.deep_thinking_llm = deep_client.get_llm()
-        self.quick_thinking_llm = quick_client.get_llm()
+        self.deep_thinking_llm = self._deep_client.get_llm()
+        self.quick_thinking_llm = self._quick_client.get_llm()
 
         # Create tool nodes
         self.tool_nodes = self._create_tool_nodes()
@@ -131,6 +131,32 @@ class TradingAgentsGraph:
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
 
+    @staticmethod
+    def _close_llm(llm: object) -> None:
+        if llm is None:
+            return
+        try:
+            if hasattr(llm, 'client') and llm.client is not None:
+                llm.client.close()
+        except Exception:
+            pass
+        try:
+            if hasattr(llm, 'async_client') and llm.async_client is not None:
+                llm.async_client.close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _close_llm_client(client: object) -> None:
+        if client is None:
+            return
+        try:
+            close_fn = getattr(client, 'close', None)
+            if callable(close_fn):
+                close_fn()
+        except Exception:
+            pass
+
     def close(self) -> None:
         """Release LLM clients, compiled graph, and internal state.
 
@@ -143,10 +169,18 @@ class TradingAgentsGraph:
             except Exception:
                 pass
             self._checkpointer_ctx = None
+
+        self._close_llm(self.deep_thinking_llm)
+        self._close_llm(self.quick_thinking_llm)
+        self._close_llm_client(getattr(self, '_deep_client', None))
+        self._close_llm_client(getattr(self, '_quick_client', None))
+
         self.graph = None
         self.workflow = None
         self.deep_thinking_llm = None
         self.quick_thinking_llm = None
+        self._deep_client = None
+        self._quick_client = None
         self.curr_state = None
         self.tool_nodes = None
         self.conditional_logic = None

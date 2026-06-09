@@ -49,6 +49,26 @@ _MCP_TOOL_ALIAS_TO_CANONICAL = {
 }
 _TOOL_SPEC_CACHE: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
 _CACHE_LOCK = threading.RLock()
+_MAX_TOOL_SPEC_CACHE_SIZE = 8
+
+
+def _cache_tool_specs_put(key: tuple[Any, ...], specs: list[dict[str, Any]]) -> None:
+    with _CACHE_LOCK:
+        if len(_TOOL_SPEC_CACHE) >= _MAX_TOOL_SPEC_CACHE_SIZE:
+            oldest = next(iter(_TOOL_SPEC_CACHE), None)
+            if oldest is not None:
+                _TOOL_SPEC_CACHE.pop(oldest, None)
+        _TOOL_SPEC_CACHE[key] = list(specs)
+
+
+def _cache_tool_specs_get(key: tuple[Any, ...]) -> list[dict[str, Any]] | None:
+    with _CACHE_LOCK:
+        specs = _TOOL_SPEC_CACHE.get(key)
+        if specs is not None:
+            _TOOL_SPEC_CACHE.pop(key, None)
+            _TOOL_SPEC_CACHE[key] = specs
+            return list(specs)
+        return None
 
 
 @dataclass(frozen=True)
@@ -722,9 +742,9 @@ def get_minimax_mcp_tool_specs(settings: MiniMaxMCPSettings) -> list[dict[str, A
     if not settings.enabled:
         return []
     key = settings.cache_key()
-    with _CACHE_LOCK:
-        if key in _TOOL_SPEC_CACHE:
-            return list(_TOOL_SPEC_CACHE[key])
+    cached = _cache_tool_specs_get(key)
+    if cached is not None:
+        return cached
 
     try:
         specs = _run_async_sync(_list_mcp_tool_specs(settings))
@@ -732,8 +752,7 @@ def get_minimax_mcp_tool_specs(settings: MiniMaxMCPSettings) -> list[dict[str, A
         logger.warning("MiniMax MCP tools are unavailable: %s", exc)
         return []
 
-    with _CACHE_LOCK:
-        _TOOL_SPEC_CACHE[key] = list(specs)
+    _cache_tool_specs_put(key, specs)
     return list(specs)
 
 
@@ -741,16 +760,15 @@ async def get_minimax_mcp_tool_specs_async(settings: MiniMaxMCPSettings) -> list
     if not settings.enabled:
         return []
     key = settings.cache_key()
-    with _CACHE_LOCK:
-        if key in _TOOL_SPEC_CACHE:
-            return list(_TOOL_SPEC_CACHE[key])
+    cached = _cache_tool_specs_get(key)
+    if cached is not None:
+        return cached
     try:
         specs = await _list_mcp_tool_specs(settings)
     except Exception as exc:  # pragma: no cover - external MCP failure path
         logger.warning("MiniMax MCP tools are unavailable: %s", exc)
         return []
-    with _CACHE_LOCK:
-        _TOOL_SPEC_CACHE[key] = list(specs)
+    _cache_tool_specs_put(key, specs)
     return list(specs)
 
 
