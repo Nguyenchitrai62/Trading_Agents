@@ -13,21 +13,13 @@ from fastapi.staticfiles import StaticFiles
 
 from .analysis import AnalysisService
 from .auth import AuthService
-from .config import DEFAULT_ANALYSTS, RESEARCH_DEPTH_OPTIONS, SETTINGS, logger, resolve_minimax_settings
+from .config import DEFAULT_ANALYSIS_MODELS, DEFAULT_ANALYSTS, RESEARCH_DEPTH_OPTIONS, SETTINGS, logger, resolve_minimax_settings
 from .history import TursoHistoryStore
 from .models import AdminDefaultModelUpdate, AdminHistoryAccessUpdate, AdminUserAccessUpdate, AnalysisRequest, AuthSessionRequest, ChatRequest
 
-# Models exposed in the admin default-model selector. Not all need to be
-# configured; the PATCH endpoint rejects models whose provider lacks an API key.
-AVAILABLE_ADMIN_MODELS = [
-    "deepseek-v4-flash",
-    "deepseek-v4-pro",
-    "deepseek-chat",
-    "deepseek-reasoner",
-    "minimax-m2.5",
-    "minimax-m2",
-    "minimax-m1",
-]
+# Models exposed in the admin default-model selector. Mirrors the FE model list
+# in FE/config.js. The PATCH endpoint rejects models whose provider is not configured.
+AVAILABLE_ADMIN_MODELS = list(DEFAULT_ANALYSIS_MODELS)
 
 
 history_store = TursoHistoryStore(SETTINGS.turso_database_url, SETTINGS.turso_auth_token, SETTINGS.history_page_size)
@@ -229,6 +221,10 @@ def create_app() -> FastAPI:
                 "checkpoint_enabled": SETTINGS.default_checkpoint_enabled,
             },
             "analysis_options": {
+                "models": [
+                    {"value": value, "label": value}
+                    for value in DEFAULT_ANALYSIS_MODELS
+                ],
                 "analysts": [
                     {
                         "value": value,

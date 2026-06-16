@@ -239,28 +239,49 @@
                     <button id="adminTabProcesses" class="admin-sub-tab" type="button" data-admin-tab="processes">Processes</button>
                 </nav>
                 <div id="adminUsersPanel" class="admin-sub-panel" aria-label="User management">
-                    <div id="adminHistoryPolicyPanel" class="admin-global-panel admin-history-panel" aria-label="Global history access policy">
-                        <label class="admin-switch">
-                            <input id="adminHistoryPublicReadToggle" type="checkbox">
-                            <span>
-                                <strong>Non-admin can read History</strong>
-                                <small>When off, only admin can open History. Per-user delay setting hides recent N days; 0 blocks access.</small>
-                            </span>
-                        </label>
-                        <button id="saveAdminHistoryPolicyButton" class="button secondary admin-save-button" type="button">Save policy</button>
-                    </div>
-                    <div id="adminDefaultModelPanel" class="admin-global-panel admin-model-panel" aria-label="Default analysis model">
-                        <label class="admin-field" for="adminDefaultModelSelect">
-                            <span>
-                                <strong>Default analysis model</strong>
-                                <small>Used for auto-analysis via /health and as the default when the config form is reset. Persisted in DB when Turso is configured; otherwise runtime only.</small>
-                            </span>
-                            <select id="adminDefaultModelSelect" class="admin-select"></select>
-                        </label>
-                        <button id="saveAdminDefaultModelButton" class="button secondary admin-save-button" type="button">Save model</button>
-                        <span id="adminDefaultModelStatus" class="admin-field-status" aria-live="polite"></span>
-                    </div>
-                    <div id="adminUserList" class="admin-user-list" aria-live="polite"></div>
+                    <section class="admin-section">
+                        <h3 class="admin-section-title">Global settings</h3>
+                        <div class="admin-settings-grid">
+                            <div id="adminHistoryPolicyPanel" class="admin-card admin-history-panel" aria-label="Global history access policy">
+                                <div class="admin-card-header">
+                                    <span class="admin-card-icon" aria-hidden="true">🔒</span>
+                                    <div>
+                                        <strong>History access</strong>
+                                        <small>Allow non-admin users to open the History page.</small>
+                                    </div>
+                                </div>
+                                <label class="admin-switch">
+                                    <input id="adminHistoryPublicReadToggle" type="checkbox">
+                                    <span>
+                                        <strong>Non-admin can read History</strong>
+                                        <small>When off, only admin can open History. Per-user delay hides recent N days; 0 blocks access.</small>
+                                    </span>
+                                </label>
+                                <button id="saveAdminHistoryPolicyButton" class="button secondary admin-save-button" type="button">Save policy</button>
+                            </div>
+                            <div id="adminDefaultModelPanel" class="admin-card admin-model-panel" aria-label="Default analysis model">
+                                <div class="admin-card-header">
+                                    <span class="admin-card-icon" aria-hidden="true">🧠</span>
+                                    <div>
+                                        <strong>Default analysis model</strong>
+                                        <small>Used for auto-analysis and as the form reset default. Persisted in DB when Turso is configured.</small>
+                                    </div>
+                                </div>
+                                <div class="admin-model-field">
+                                    <label class="admin-field-label" for="adminDefaultModelSelect">Model</label>
+                                    <select id="adminDefaultModelSelect" class="admin-select"></select>
+                                    <button id="saveAdminDefaultModelButton" class="button secondary admin-save-button" type="button">Save model</button>
+                                </div>
+                                <span id="adminDefaultModelStatus" class="admin-field-status" aria-live="polite"></span>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="admin-section admin-section-grow">
+                        <div class="admin-section-header">
+                            <h3 class="admin-section-title">User permissions</h3>
+                        </div>
+                        <div id="adminUserList" class="admin-user-list" aria-live="polite"></div>
+                    </section>
                 </div>
                 <div id="adminProcessesPanel" class="admin-sub-panel hidden" aria-label="Process management">
                     <div id="adminProcessList" class="admin-process-list" aria-live="polite"></div>

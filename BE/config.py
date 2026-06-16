@@ -22,7 +22,7 @@ CPU_THREAD_ENV_VARS = (
 )
 DEFAULT_ANALYSTS = ("market", "onchain", "social", "news")
 APP_TITLE = "TradingAgents Analysis API"
-APP_VERSION = "v0.0.9"
+APP_VERSION = "v0.0.10"
 DEFAULT_MODEL = "deepseek-v4-flash"
 DEEPSEEK_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
 DEEPSEEK_MODEL_PREFIXES = ("deepseek-v4-flash", "deepseek-v4-pro")
@@ -43,6 +43,13 @@ DEFAULT_TRADING_VIEW_SYMBOLS = (
     "BINANCE:ETHUSDT",
     "BINANCE:SOLUSDT",
     "BINANCE:XRPUSDT",
+)
+DEFAULT_ANALYSIS_MODELS = (
+    "MiniMax-M2.5",
+    "MiniMax-M2.7",
+    "MiniMax-M3",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
 )
 DEFAULT_COINGLASS_BASE_URL = "https://open-api-v4.coinglass.com"
 DEFAULT_COINGLASS_TIMEOUT_SECONDS = 10.0
@@ -528,6 +535,7 @@ if not SETTINGS.auth_session_persistent:
 __all__ = [
     "CPU_THREAD_ENV_VARS",
     "DEFAULT_ADMIN_EMAILS",
+    "DEFAULT_ANALYSIS_MODELS",
     "DEFAULT_ANALYSTS",
     "DEFAULT_COINGLASS_BASE_URL",
     "DEFAULT_COINGLASS_CONCURRENCY_LIMIT",
