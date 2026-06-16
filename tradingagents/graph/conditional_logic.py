@@ -79,7 +79,7 @@ class ConditionalLogic:
         revision_count = int(state.get("decision_revision_count") or 0)
         if verdict == "approved":
             return "Decision Extractor"
-        if revision_count < 2:
+        if revision_count < 3:
             return "Portfolio Manager"
         # Best-effort extraction even after max revisions.
         return "Decision Extractor"

@@ -37,9 +37,34 @@ def _extract_payload(structured_llm, plain_llm, prompt: str, current_price: floa
 
 
 def create_decision_extractor(llm):
+    import logging
+    _logger = logging.getLogger(__name__)
     structured_llm = bind_structured(llm, PortfolioDecision, "Decision Extractor")
 
     def decision_extractor_node(state: dict) -> dict:
+        try:
+            return _decision_extractor_unsafe(state)
+        except Exception as exc:
+            _logger.exception("Decision Extractor crashed; falling back to Portfolio Manager payload.")
+            existing_payload = dict(state.get("final_trade_decision_structured") or {})
+            existing_payload["decision_extraction_fallback"] = True
+            existing_payload["decision_extraction_error"] = str(exc)
+            fallback_errors = list(existing_payload.get("decision_validation_errors") or [])
+            fallback_errors.append(
+                f"Decision Extractor crashed ({exc}); using Portfolio Manager payload."
+            )
+            existing_payload["decision_validation_errors"] = fallback_errors
+            current_price = state.get("verification_reference_price")
+            if current_price is not None:
+                existing_payload["current_price"] = current_price
+            return {
+                "messages": [AIMessage(content=f"Decision extraction skipped due to error: {exc}. Using Portfolio Manager payload.")],
+                "final_trade_decision_structured": existing_payload,
+                "verification_reference_price": current_price,
+                "verification_reference_price_source": "binance_spot" if current_price is not None else "",
+            }
+
+    def _decision_extractor_unsafe(state: dict) -> dict:
         final_markdown = str(state.get("final_trade_decision") or "").strip()
         current_price = state.get("verification_reference_price")
         if current_price is None:
