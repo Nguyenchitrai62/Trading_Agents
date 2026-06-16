@@ -1598,6 +1598,65 @@ p {
     background: rgba(4, 8, 8, 0.34);
 }
 
+.admin-model-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 12px;
+    align-items: center;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(4, 8, 8, 0.34);
+}
+
+.admin-model-panel.is-disabled {
+    opacity: 0.7;
+}
+
+.admin-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    min-width: 0;
+    cursor: default;
+}
+
+.admin-field strong {
+    display: block;
+    font-weight: 600;
+}
+
+.admin-field small {
+    display: block;
+    color: var(--text-tertiary);
+    font-size: 0.85em;
+}
+
+.admin-select {
+    min-width: 180px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(14, 24, 38, 0.86);
+    color: var(--text-primary);
+    font-size: 0.95em;
+}
+
+.admin-field-status {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.admin-field-status.is-success {
+    color: #2ecc71;
+}
+
+.admin-field-status.is-error {
+    color: #ff6b6b;
+}
+
 .admin-switch {
     display: grid;
     grid-template-columns: 18px minmax(0, 1fr);
@@ -1967,7 +2026,14 @@ p {
 
 @media (max-width: 640px) {
     .admin-global-panel,
-    .admin-user-card {
+    .admin-user-card,
+    .admin-model-panel {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 960px) {
+    .admin-model-panel {
         grid-template-columns: 1fr;
     }
 }

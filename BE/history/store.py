@@ -402,6 +402,41 @@ class TursoHistoryStore:
         )
         return bool(enabled)
 
+    def get_app_setting(self, key: str, default: str | None = None) -> str | None:
+        if not self.configured:
+            return default
+        self.ensure_schema()
+        rows = self._query_rows(
+            """
+            SELECT value
+            FROM app_settings
+            WHERE key = ?
+            LIMIT 1
+            """,
+            [key],
+        )
+        if not rows:
+            return default
+        value = str(rows[0].get("value") or "").strip()
+        return value if value else default
+
+    def set_app_setting(self, key: str, value: str) -> bool:
+        if not self.configured:
+            return False
+        self.ensure_schema()
+        now = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        self._execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            [key, str(value), now],
+        )
+        return True
+
     def _format_user_access(
         self,
         row: dict | None,

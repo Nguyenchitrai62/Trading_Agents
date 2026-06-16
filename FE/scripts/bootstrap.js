@@ -60,6 +60,10 @@ const elements = {
     adminHistoryPolicyPanel: document.getElementById("adminHistoryPolicyPanel"),
     adminHistoryPublicReadToggle: document.getElementById("adminHistoryPublicReadToggle"),
     saveAdminHistoryPolicyButton: document.getElementById("saveAdminHistoryPolicyButton"),
+    adminDefaultModelPanel: document.getElementById("adminDefaultModelPanel"),
+    adminDefaultModelSelect: document.getElementById("adminDefaultModelSelect"),
+    saveAdminDefaultModelButton: document.getElementById("saveAdminDefaultModelButton"),
+    adminDefaultModelStatus: document.getElementById("adminDefaultModelStatus"),
     adminUserList: document.getElementById("adminUserList"),
     adminStatusText: document.getElementById("adminStatusText"),
     adminTabUsers: document.getElementById("adminTabUsers"),
@@ -985,6 +989,10 @@ elements.adminTabUsers?.addEventListener("click", () => {
         state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
         renderAdminPage();
     });
+    loadAdminDefaultModel().catch((error) => {
+        state.admin.defaultModelError = error instanceof Error ? error.message : String(error || "Could not load default model.");
+        renderAdminPage();
+    });
 });
 elements.adminTabProcesses?.addEventListener("click", () => {
     state.admin.activeTab = "processes";
@@ -1011,6 +1019,12 @@ elements.adminProcessList?.addEventListener("click", (event) => {
 elements.saveAdminHistoryPolicyButton?.addEventListener("click", () => {
     saveAdminHistoryAccessPolicy().catch((error) => {
         state.admin.error = error instanceof Error ? error.message : String(error || "Could not save history access policy.");
+        renderAdminPage();
+    });
+});
+elements.saveAdminDefaultModelButton?.addEventListener("click", () => {
+    saveAdminDefaultModel().catch((error) => {
+        state.admin.defaultModelError = error instanceof Error ? error.message : String(error || "Could not save default model.");
         renderAdminPage();
     });
 });

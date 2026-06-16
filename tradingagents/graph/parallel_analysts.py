@@ -266,6 +266,19 @@ def create_parallel_analyst_team(
     analyst_nodes = {spec.key: analyst_factories[spec.key]() for spec in specs}
 
     def run_analyst(spec: AnalystNodeSpec, state: dict) -> tuple[str, str, list[dict], list[object], dict[str, object]]:
+        try:
+            return _run_analyst_unsafe(spec, state)
+        except Exception as exc:
+            logger.exception("%s crashed in parallel analyst pool.", spec.agent_node)
+            return (
+                spec.report_key,
+                f"Error: {spec.agent_node} analysis failed: {exc}",
+                [],
+                [],
+                {},
+            )
+
+    def _run_analyst_unsafe(spec: AnalystNodeSpec, state: dict) -> tuple[str, str, list[dict], list[object], dict[str, object]]:
         local_state = _build_local_state(state)
         initial_message_count = len(local_state.get("messages") or [])
         initial_evidence_count = len(local_state.get("evidence_items") or [])
@@ -400,7 +413,27 @@ def create_parallel_analyst_team(
                 for future in done:
                     _check_cancel(cancel_check)
                     spec = futures[future]
-                    report_key, report, evidence_items, analyst_trace_messages, extra_updates = future.result()
+                    try:
+                        report_key, report, evidence_items, analyst_trace_messages, extra_updates = future.result()
+                    except Exception as exc:
+                        logger.exception("Parallel analyst future failed for %s", spec.agent_node)
+                        report_key = spec.report_key
+                        report = f"Error: {spec.agent_node} failed: {exc}"
+                        evidence_items = []
+                        analyst_trace_messages = []
+                        extra_updates = {}
+                        _emit_trace(
+                            trace_callback,
+                            {
+                                "agent": spec.agent_node,
+                                "phase": "warning",
+                                "title": f"{spec.agent_node} failed",
+                                "trace_id": f"warning:analyst_crash:{spec.report_key}",
+                                "content": report,
+                                "report_key": spec.report_key,
+                                "report_label": spec.agent_node,
+                            },
+                        )
                     results[report_key] = report
                     results.update(extra_updates)
                     if evidence_items:

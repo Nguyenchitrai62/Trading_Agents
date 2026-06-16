@@ -69,6 +69,8 @@ class CoinGlassEndpointSpec:
     source_type: str = "flow"
     freshness: str = "realtime"
     filter_symbol_from_payload: bool = False
+    applicable_coins: frozenset[str] | None = None
+    is_macro: bool = False
 
     def params(self, coin_symbol: str, pair_symbol: str, limit: int) -> dict[str, object]:
         return self.params_factory(coin_symbol, pair_symbol, limit)
@@ -186,6 +188,7 @@ HIGH_VALUE_ENDPOINTS: tuple[CoinGlassEndpointSpec, ...] = (
         path="/api/etf/bitcoin/flow-history",
         params_factory=_no_params,
         freshness="recent",
+        applicable_coins=frozenset({"BTC"}),
     ),
     CoinGlassEndpointSpec(
         key="etf_bitcoin_list",
@@ -194,6 +197,7 @@ HIGH_VALUE_ENDPOINTS: tuple[CoinGlassEndpointSpec, ...] = (
         path="/api/etf/bitcoin/list",
         params_factory=_no_params,
         freshness="realtime",
+        applicable_coins=frozenset({"BTC"}),
     ),
     CoinGlassEndpointSpec(
         key="grayscale_holdings_list",
@@ -202,6 +206,7 @@ HIGH_VALUE_ENDPOINTS: tuple[CoinGlassEndpointSpec, ...] = (
         path="/api/grayscale/holdings-list",
         params_factory=_no_params,
         freshness="recent",
+        applicable_coins=frozenset({"BTC"}),
     ),
     CoinGlassEndpointSpec(
         key="option_info",
@@ -229,6 +234,7 @@ HIGH_VALUE_ENDPOINTS: tuple[CoinGlassEndpointSpec, ...] = (
             "interval": DEFAULT_INTERVAL,
             "limit": limit,
         },
+        applicable_coins=frozenset({"BTC"}),
     ),
     CoinGlassEndpointSpec(
         key="fear_greed_history",
@@ -237,6 +243,7 @@ HIGH_VALUE_ENDPOINTS: tuple[CoinGlassEndpointSpec, ...] = (
         path="/api/index/fear-greed-history",
         params_factory=_no_params,
         freshness="recent",
+        is_macro=True,
     ),
     CoinGlassEndpointSpec(
         key="stablecoin_marketcap_history",
@@ -245,6 +252,7 @@ HIGH_VALUE_ENDPOINTS: tuple[CoinGlassEndpointSpec, ...] = (
         path="/api/index/stableCoin-marketCap-history",
         params_factory=_no_params,
         freshness="recent",
+        is_macro=True,
     ),
     CoinGlassEndpointSpec(
         key="stock_flow",
@@ -253,6 +261,7 @@ HIGH_VALUE_ENDPOINTS: tuple[CoinGlassEndpointSpec, ...] = (
         path="/api/index/stock-flow",
         params_factory=_no_params,
         freshness="historical",
+        applicable_coins=frozenset({"BTC"}),
     ),
 )
 
@@ -406,7 +415,12 @@ def fetch_high_value_snapshot(
     try:
         safe_history_limit = max(1, min(MAX_HISTORY_LIMIT, int(history_limit or DEFAULT_LIMIT)))
         safe_concurrency_limit = max(1, int(concurrency_limit or 1))
-        results_by_index: list[dict[str, Any] | None] = [None] * len(HIGH_VALUE_ENDPOINTS)
+        applicable_endpoints = [
+            spec
+            for spec in HIGH_VALUE_ENDPOINTS
+            if spec.applicable_coins is None or coin_symbol in spec.applicable_coins
+        ]
+        results_by_index: list[dict[str, Any] | None] = [None] * len(applicable_endpoints)
 
         def store_result(index: int, result: dict[str, Any]) -> None:
             results_by_index[index] = result
@@ -414,22 +428,22 @@ def fetch_high_value_snapshot(
                 on_endpoint_result(result)
 
         if safe_concurrency_limit == 1:
-            for index, spec in enumerate(HIGH_VALUE_ENDPOINTS):
+            for index, spec in enumerate(applicable_endpoints):
                 if cancel_check:
                     cancel_check()
                 result = client.fetch(spec, coin_symbol, pair_symbol, safe_history_limit)
                 store_result(index, result)
-                if request_interval_seconds > 0 and index + 1 < len(HIGH_VALUE_ENDPOINTS):
+                if request_interval_seconds > 0 and index + 1 < len(applicable_endpoints):
                     time.sleep(request_interval_seconds)
         else:
             with ThreadPoolExecutor(max_workers=safe_concurrency_limit, thread_name_prefix="coinglass") as executor:
                 future_map = {}
-                for index, spec in enumerate(HIGH_VALUE_ENDPOINTS):
+                for index, spec in enumerate(applicable_endpoints):
                     if cancel_check:
                         cancel_check()
                     future = executor.submit(client.fetch, spec, coin_symbol, pair_symbol, safe_history_limit)
                     future_map[future] = index
-                    if request_interval_seconds > 0 and index + 1 < len(HIGH_VALUE_ENDPOINTS):
+                    if request_interval_seconds > 0 and index + 1 < len(applicable_endpoints):
                         time.sleep(request_interval_seconds)
 
                 for future in as_completed(future_map):
@@ -451,6 +465,8 @@ def fetch_high_value_snapshot(
             "fetched_at": fetched_at,
             "base_url": client.base_url,
             "endpoint_count": len(results),
+            "total_available_endpoint_count": len(HIGH_VALUE_ENDPOINTS),
+            "skipped_endpoint_count": len(HIGH_VALUE_ENDPOINTS) - len(applicable_endpoints),
             "successful_endpoint_count": successful,
             "failed_endpoint_count": failed,
             "packages": packages,

@@ -432,6 +432,7 @@ function renderAdminPage() {
         return;
     }
     renderAdminHistoryPolicyControls();
+    renderAdminDefaultModelControls();
     renderAdminSubTabs();
 
     const activeTab = state.admin.activeTab === "processes" ? "processes" : "users";
@@ -946,6 +947,133 @@ async function saveAdminHistoryAccessPolicy() {
     }
 }
 
+function renderAdminDefaultModelControls() {
+    if (!(elements.adminDefaultModelPanel instanceof HTMLElement)) {
+        return;
+    }
+    const select = elements.adminDefaultModelSelect;
+    const button = elements.saveAdminDefaultModelButton;
+    const status = elements.adminDefaultModelStatus;
+    const disabled = !state.auth.isAdmin || state.admin.defaultModelLoading || state.admin.defaultModelSaving;
+
+    elements.adminDefaultModelPanel.classList.toggle("is-disabled", !state.auth.isAdmin);
+    if (select instanceof HTMLSelectElement) {
+        const currentValue = state.admin.defaultModel;
+        const available = Array.isArray(state.admin.defaultModelAvailable) ? state.admin.defaultModelAvailable : [];
+        const optionsHtml = available
+            .map((model) => `<option value="${escapeHtml(model)}" ${model === currentValue ? "selected" : ""}>${escapeHtml(model)}</option>`)
+            .join("");
+        select.innerHTML = optionsHtml || '<option value="">No models available</option>';
+        select.disabled = disabled || available.length === 0;
+    }
+    if (button instanceof HTMLButtonElement) {
+        button.disabled = disabled;
+        button.textContent = state.admin.defaultModelSaving ? "Saving" : "Save model";
+    }
+    if (status instanceof HTMLElement) {
+        const envHint = state.admin.defaultModelEnv ? ` (env default: ${state.admin.defaultModelEnv})` : "";
+        const sourceHint = (() => {
+            const source = state.admin.defaultModelSource;
+            if (source === "db") return " — persisted in DB";
+            if (source === "runtime") return " — runtime only (restart reverts to env)";
+            return "";
+        })();
+        if (state.admin.defaultModelError) {
+            status.textContent = state.admin.defaultModelError;
+            status.className = "admin-field-status is-error";
+        } else if (state.admin.defaultModelSaving) {
+            status.textContent = "Saving...";
+            status.className = "admin-field-status";
+        } else if (state.admin.defaultModel) {
+            status.textContent = `Current: ${state.admin.defaultModel}${envHint}${sourceHint}`;
+            status.className = "admin-field-status is-success";
+        } else {
+            status.textContent = envHint ? `Env default: ${state.admin.defaultModelEnv}` : "";
+            status.className = "admin-field-status";
+        }
+    }
+}
+
+async function loadAdminDefaultModel(force = false) {
+    if (!state.auth.isAdmin) {
+        return;
+    }
+    if (state.admin.defaultModelLoading || (!force && state.admin.defaultModel)) {
+        renderAdminDefaultModelControls();
+        return;
+    }
+    state.admin.defaultModelLoading = true;
+    state.admin.defaultModelError = "";
+    renderAdminDefaultModelControls();
+    try {
+        const response = await apiFetch("/api/admin/default-model", {
+            headers: getAdminAuthHeaders(),
+            cache: "no-store",
+        });
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+        const payload = await response.json();
+        state.admin.defaultModel = String(payload.default_model || "");
+        state.admin.defaultModelSource = String(payload.default_model_source || "");
+        state.admin.defaultModelEnv = String(payload.env_default_model || "");
+        state.admin.defaultModelDb = payload.db_default_model ? String(payload.db_default_model) : "";
+        state.admin.defaultModelAvailable = Array.isArray(payload.available_models) ? payload.available_models : [];
+        state.admin.defaultModelError = "";
+    } catch (error) {
+        state.admin.defaultModelError = error instanceof Error ? error.message : String(error || "Could not load default model.");
+    } finally {
+        state.admin.defaultModelLoading = false;
+        renderAdminDefaultModelControls();
+    }
+}
+
+async function saveAdminDefaultModel() {
+    if (!state.auth.isAdmin || !(elements.adminDefaultModelSelect instanceof HTMLSelectElement)) {
+        return;
+    }
+    const model = elements.adminDefaultModelSelect.value;
+    if (!model) {
+        state.admin.defaultModelError = "Please select a model.";
+        renderAdminDefaultModelControls();
+        return;
+    }
+    state.admin.defaultModelSaving = true;
+    state.admin.defaultModelError = "";
+    renderAdminDefaultModelControls();
+    try {
+        const response = await apiFetch("/api/admin/default-model", {
+            method: "PATCH",
+            headers: {
+                ...getAdminAuthHeaders(),
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ default_model: model }),
+        });
+        if (!response.ok) {
+            throw new Error(await readResponseError(response));
+        }
+        const payload = await response.json();
+        state.admin.defaultModel = String(payload.default_model || "");
+        state.admin.defaultModelSource = String(payload.default_model_source || "");
+        state.admin.defaultModelEnv = String(payload.env_default_model || "");
+        state.admin.defaultModelDb = payload.db_default_model ? String(payload.db_default_model) : "";
+        state.admin.defaultModelAvailable = Array.isArray(payload.available_models) ? payload.available_models : [];
+        state.admin.defaultModelError = "";
+        if (state.config) {
+            state.config.default_model = state.admin.defaultModel;
+            state.config.analysis_defaults = state.config.analysis_defaults || {};
+            state.config.analysis_defaults.quick_think_model = state.admin.defaultModel;
+            state.config.analysis_defaults.deep_think_model = state.admin.defaultModel;
+        }
+    } catch (error) {
+        state.admin.defaultModelError = error instanceof Error ? error.message : String(error || "Could not save default model.");
+    } finally {
+        state.admin.defaultModelSaving = false;
+        renderAdminDefaultModelControls();
+    }
+}
+
 async function loadAdminUsers(force = false, silent = false) {
     if (!state.auth.isAdmin) {
         if (silent) return;
@@ -1135,6 +1263,10 @@ function switchPage(page) {
     if (page === "admin") {
         loadAdminUsers(true).catch((error) => {
             state.admin.error = error instanceof Error ? error.message : String(error || "Could not load users.");
+            renderAdminPage();
+        });
+        loadAdminDefaultModel().catch((error) => {
+            state.admin.defaultModelError = error instanceof Error ? error.message : String(error || "Could not load default model.");
             renderAdminPage();
         });
         startPollingInterval("admin");

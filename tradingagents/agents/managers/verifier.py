@@ -20,6 +20,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_language_instruction,
 )
 from tradingagents.agents.utils.decision import (
+    _allows_breakout_buy,
     active_limit_prices,
     coerce_float,
     validate_portfolio_decision,
@@ -192,7 +193,17 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
         if take_profit is None:
             blockers.append("Limit Buy is missing a take-profit.")
         if current_price is not None and primary is not None and primary > current_price:
-            blockers.append("Limit Buy primary limit price is above current spot price without breakout confirmation.")
+            rationale_text = " ".join([
+                str(decision.get("execution_summary") or ""),
+                str(decision.get("market_context") or ""),
+                str(decision.get("investment_thesis") or ""),
+                decision_markdown,
+            ]).lower()
+            if not _allows_breakout_buy(rationale_text):
+                blockers.append(
+                    "Limit Buy primary limit price is above current spot price without breakout confirmation. "
+                    "If this is a breakout entry, the decision prose must explicitly mention breakout, confirmation, trigger, reclaim, or momentum entry."
+                )
         if secondary is not None and primary is not None and secondary > primary:
             warnings.append("Secondary Limit Buy is above the primary limit; scale-in ladders usually step lower.")
         reference_entry = min(value for value in (primary, secondary) if value is not None) if primary is not None or secondary is not None else None
@@ -249,6 +260,10 @@ def _build_deterministic_summary(state: dict) -> dict[str, object]:
             blockers.append("Market Sell is missing a stop-loss or invalidation level.")
         if take_profit is None:
             blockers.append("Market Sell is missing a take-profit or next exit objective.")
+        if current_price is not None and stop_loss is not None and stop_loss <= current_price:
+            blockers.append("Market Sell stop-loss / invalidation level must be above current spot price.")
+        if current_price is not None and take_profit is not None and take_profit >= current_price:
+            blockers.append("Market Sell take-profit / next exit objective must be below current spot price.")
 
     summary_lines = []
     summary_lines.append("Deterministic findings:")

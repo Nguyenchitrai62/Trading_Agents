@@ -73,12 +73,13 @@ class ConditionalLogic:
         return "Aggressive Analyst"
 
     def should_continue_portfolio_verification(self, state: AgentState) -> str:
-        """Route verifier output to revision or completion."""
+        """Route verifier output to revision, extraction, or best-effort extraction."""
         verification = state.get("verification_report_structured") or {}
         verdict = str(verification.get("verdict") or "").strip().lower()
         revision_count = int(state.get("decision_revision_count") or 0)
         if verdict == "approved":
-            return END
+            return "Decision Extractor"
         if revision_count < 2:
             return "Portfolio Manager"
-        return END
+        # Best-effort extraction even after max revisions.
+        return "Decision Extractor"

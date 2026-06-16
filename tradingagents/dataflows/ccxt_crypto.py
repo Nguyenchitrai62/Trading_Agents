@@ -680,6 +680,8 @@ def fetch_crypto_ohlcv_exact(
         raise ValueError(f"Unsupported timeframe '{timeframe}'. Supported: {supported}")
 
     padding = indicator_padding if indicator_padding is not None else _CRYPTO_INDICATOR_PADDING
+    # Ensure enough historical candles for long-period indicators (e.g. SMA200).
+    padding = max(padding, _CRYPTO_INDICATOR_WINDOWS.get("close_200_sma", 200))
     fetch_count = preview_limit + padding
     api_symbol, market_symbol = _normalize_binance_symbol(symbol)
     analysis_end_ms, analysis_end_label = _resolve_analysis_end_ms()
@@ -717,6 +719,20 @@ def fetch_crypto_ohlcv_exact(
     if frame.empty:
         raise ValueError(
             f"No OHLCV candles remained before analysis cutoff {analysis_end_label} for {market_symbol} ({timeframe})."
+        )
+
+    frame = frame.sort_values("timestamp_ms").reset_index(drop=True)
+    expected_interval_ms = _CRYPTO_TIMEFRAME_MINUTES[timeframe] * 60 * 1000
+    gap_count = int((frame["timestamp_ms"].diff().dropna() > expected_interval_ms * 1.5).sum())
+    if gap_count > 0:
+        policy["data_gap_warning"] = (
+            f"{gap_count} gap(s) detected in {timeframe} candles; "
+            "indicator continuity may be compromised."
+        )
+    if len(frame) < preview_limit:
+        policy["candle_shortfall_warning"] = (
+            f"Requested {preview_limit} {timeframe} candles but received {len(frame)}; "
+            "indicator windows may be truncated."
         )
 
     policy = {

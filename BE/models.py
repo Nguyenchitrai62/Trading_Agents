@@ -106,3 +106,7 @@ class AdminUserAccessUpdate(BaseModel):
 
 class AdminHistoryAccessUpdate(BaseModel):
     history_public_read: bool
+
+
+class AdminDefaultModelUpdate(BaseModel):
+    default_model: str = Field(min_length=1)

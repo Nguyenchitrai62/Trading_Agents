@@ -22,7 +22,7 @@ CPU_THREAD_ENV_VARS = (
 )
 DEFAULT_ANALYSTS = ("market", "onchain", "social", "news")
 APP_TITLE = "TradingAgents Analysis API"
-APP_VERSION = "v0.0.8"
+APP_VERSION = "v0.0.9"
 DEFAULT_MODEL = "deepseek-v4-flash"
 DEEPSEEK_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
 DEEPSEEK_MODEL_PREFIXES = ("deepseek-v4-flash", "deepseek-v4-pro")
@@ -50,6 +50,7 @@ DEFAULT_COINGLASS_CONTEXT_CHAR_LIMIT = 0
 DEFAULT_COINGLASS_PACKAGE_CONTEXT_CHAR_LIMIT = 0
 DEFAULT_COINGLASS_REQUEST_INTERVAL_SECONDS = 0.05
 DEFAULT_COINGLASS_CONCURRENCY_LIMIT = 4
+DEFAULT_ANALYSIS_GLOBAL_TIMEOUT_SECONDS = 600.0
 RESEARCH_DEPTH_OPTIONS = {
     "auto": {
         "label": "Auto",
@@ -337,6 +338,7 @@ class BackendSettings:
     trading_view_interval: str
     trading_view_symbols: tuple[str, ...]
     port: int
+    analysis_global_timeout_seconds: float
 
     @classmethod
     def from_env(cls) -> "BackendSettings":
@@ -437,6 +439,10 @@ class BackendSettings:
             coinglass_concurrency_limit=max(
                 1,
                 _env_int("COINGLASS_CONCURRENCY_LIMIT", DEFAULT_COINGLASS_CONCURRENCY_LIMIT),
+            ),
+            analysis_global_timeout_seconds=max(
+                60.0,
+                _env_float("ANALYSIS_GLOBAL_TIMEOUT_SECONDS", DEFAULT_ANALYSIS_GLOBAL_TIMEOUT_SECONDS),
             ),
             trading_view_symbol=os.getenv("TRADING_VIEW_SYMBOL", DEFAULT_TRADING_VIEW_SYMBOL),
             trading_view_interval=os.getenv("TRADING_VIEW_INTERVAL", DEFAULT_TRADING_VIEW_INTERVAL),

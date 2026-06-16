@@ -154,6 +154,10 @@ def validate_portfolio_decision(
             errors.append("Market Sell requires stop_loss for remaining long exposure or execution invalidation.")
         if take_profit is None:
             errors.append("Market Sell requires take_profit as a next exit objective or profit-protection level.")
+        if current_price is not None and stop_loss is not None and stop_loss <= current_price:
+            errors.append("Market Sell stop_loss must be above current price.")
+        if current_price is not None and take_profit is not None and take_profit >= current_price:
+            errors.append("Market Sell take_profit must be below current price.")
 
     if signal in SELL_SIGNALS and _mentions_short_exposure(decision_text):
         errors.append("Sell signals represent long-only reduction/exit and must not describe new short exposure.")

@@ -5,6 +5,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
 from tradingagents.agents import *
+from tradingagents.agents.managers.decision_extractor import create_decision_extractor
 from tradingagents.agents.utils.agent_states import AgentState
 
 from .analyst_execution import build_analyst_execution_plan
@@ -70,6 +71,7 @@ class GraphSetup:
         conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
         portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
         verifier_node = create_verifier(self.deep_thinking_llm)
+        decision_extractor_node = create_decision_extractor(self.deep_thinking_llm)
 
         # Create workflow
         workflow = StateGraph(AgentState)
@@ -104,6 +106,7 @@ class GraphSetup:
         workflow.add_node("Conservative Analyst", conservative_analyst)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
         workflow.add_node("Verifier", verifier_node)
+        workflow.add_node("Decision Extractor", decision_extractor_node)
 
         # Define edges
         if use_parallel_analysts:
@@ -181,8 +184,9 @@ class GraphSetup:
             self.conditional_logic.should_continue_portfolio_verification,
             {
                 "Portfolio Manager": "Portfolio Manager",
-                END: END,
+                "Decision Extractor": "Decision Extractor",
             },
         )
+        workflow.add_edge("Decision Extractor", END)
 
         return workflow

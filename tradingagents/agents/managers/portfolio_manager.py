@@ -192,7 +192,7 @@ Portfolio Manager decision markdown:
             )
             if parsed is not None:
                 payload = parsed.model_dump(mode="json")
-                validation_errors = validate_portfolio_decision(payload)
+                validation_errors = validate_portfolio_decision(payload, current_price=current_price)
                 if validation_errors:
                     payload["decision_validation_status"] = "invalid"
                     payload["decision_validation_errors"] = validation_errors

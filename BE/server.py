@@ -15,7 +15,19 @@ from .analysis import AnalysisService
 from .auth import AuthService
 from .config import DEFAULT_ANALYSTS, RESEARCH_DEPTH_OPTIONS, SETTINGS, logger, resolve_minimax_settings
 from .history import TursoHistoryStore
-from .models import AdminHistoryAccessUpdate, AdminUserAccessUpdate, AnalysisRequest, AuthSessionRequest, ChatRequest
+from .models import AdminDefaultModelUpdate, AdminHistoryAccessUpdate, AdminUserAccessUpdate, AnalysisRequest, AuthSessionRequest, ChatRequest
+
+# Models exposed in the admin default-model selector. Not all need to be
+# configured; the PATCH endpoint rejects models whose provider lacks an API key.
+AVAILABLE_ADMIN_MODELS = [
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "deepseek-chat",
+    "deepseek-reasoner",
+    "minimax-m2.5",
+    "minimax-m2",
+    "minimax-m1",
+]
 
 
 history_store = TursoHistoryStore(SETTINGS.turso_database_url, SETTINGS.turso_auth_token, SETTINGS.history_page_size)
@@ -128,9 +140,12 @@ def create_app() -> FastAPI:
 
             try:
                 run_id = f"auto-{uuid.uuid4().hex[:12]}"
+                default_model = analysis_service.get_default_model()
                 request = AnalysisRequest(
                     symbol=AUTO_ANALYSIS_SYMBOL,
                     run_id=run_id,
+                    quick_think_model=default_model,
+                    deep_think_model=default_model,
                 )
                 analysis_service.run_analysis_background(request, on_complete=_on_auto_complete)
                 logger.info("auto-analysis triggered via health check: run_id=%s symbol=%s", run_id, AUTO_ANALYSIS_SYMBOL)
@@ -139,12 +154,15 @@ def create_app() -> FastAPI:
                 with _auto_analysis_lock:
                     _auto_analysis_active = False
 
+        current_default_model = analysis_service.get_default_model()
         return {
             "status": "healthy",
             "title": SETTINGS.app_title,
             "version": SETTINGS.app_version,
             "configured": minimax_settings["configured"],
             "provider": minimax_settings["provider"],
+            "default_model": current_default_model,
+            "default_model_source": analysis_service.get_default_model_source(),
             "resource_constrained": SETTINGS.resource_constrained_mode,
             "analysis_limits": {
                 "cpu_threads": SETTINGS.analysis_cpu_threads,
@@ -169,10 +187,11 @@ def create_app() -> FastAPI:
     @app.get("/api/config")
     async def public_config() -> dict:
         minimax_settings = resolve_minimax_settings(SETTINGS)
+        runtime_default_model = analysis_service.get_default_model()
         return {
             "configured": minimax_settings["configured"],
             "provider": minimax_settings["provider"] or "minimax",
-            "default_model": SETTINGS.default_model,
+            "default_model": runtime_default_model,
             "chat": {
                 "max_tokens": SETTINGS.analysis_llm_max_tokens,
             },
@@ -203,8 +222,8 @@ def create_app() -> FastAPI:
                 "output_language": SETTINGS.default_output_language,
                 "selected_analysts": list(SETTINGS.default_selected_analysts),
                 "research_depth": SETTINGS.default_research_depth,
-                "quick_think_model": SETTINGS.default_model,
-                "deep_think_model": SETTINGS.default_model,
+                "quick_think_model": runtime_default_model,
+                "deep_think_model": runtime_default_model,
                 "quick_reasoning_effort": "max",
                 "deep_reasoning_effort": "max",
                 "checkpoint_enabled": SETTINGS.default_checkpoint_enabled,
@@ -410,6 +429,48 @@ def create_app() -> FastAPI:
             SETTINGS.admin_emails,
         )
         return {"item": user}
+
+    @app.get("/api/admin/default-model")
+    async def get_admin_default_model(http_request: Request) -> dict:
+        await auth_service.require_admin_user(http_request)
+        db_default_model = None
+        if history_store.configured:
+            try:
+                db_default_model = await asyncio.to_thread(history_store.get_app_setting, "default_model")
+            except Exception as exc:
+                logger.warning("could not read persisted default model: %s", exc)
+        return {
+            "default_model": analysis_service.get_default_model(),
+            "default_model_source": analysis_service.get_default_model_source(),
+            "env_default_model": SETTINGS.default_model,
+            "db_default_model": db_default_model,
+            "available_models": AVAILABLE_ADMIN_MODELS,
+        }
+
+    @app.patch("/api/admin/default-model")
+    async def update_admin_default_model(payload: AdminDefaultModelUpdate, http_request: Request) -> dict:
+        await auth_service.require_admin_user(http_request)
+        if not analysis_service.set_default_model(payload.default_model):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Model '{payload.default_model}' is empty or its provider is not configured. "
+                    "Add the matching API key to .env before selecting this model."
+                ),
+            )
+        db_default_model = None
+        if history_store.configured:
+            try:
+                db_default_model = await asyncio.to_thread(history_store.get_app_setting, "default_model")
+            except Exception as exc:
+                logger.warning("could not read persisted default model: %s", exc)
+        return {
+            "default_model": analysis_service.get_default_model(),
+            "default_model_source": analysis_service.get_default_model_source(),
+            "env_default_model": SETTINGS.default_model,
+            "db_default_model": db_default_model,
+            "available_models": AVAILABLE_ADMIN_MODELS,
+        }
 
     @app.post("/api/chat")
     async def chat_completion(request: ChatRequest, http_request: Request):

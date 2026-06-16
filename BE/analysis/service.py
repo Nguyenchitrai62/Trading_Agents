@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from copy import deepcopy
 
 from fastapi import HTTPException
 
-from ..config import RESEARCH_DEPTH_OPTIONS, BackendSettings, logger, resolve_provider_settings, is_deepseek_model
+from ..config import DEFAULT_MODEL, RESEARCH_DEPTH_OPTIONS, BackendSettings, logger, resolve_provider_settings, is_deepseek_model
 from ..history import TursoHistoryStore
 from ..models import AnalysisRequest
 
@@ -57,6 +58,10 @@ class AnalysisService(
         self.active_analysis_count = 0
         self.active_analyses: dict[str, dict] = {}
         self._active_analyses_lock = threading.Lock()
+        self._default_model_lock = threading.Lock()
+        self._runtime_default_model: str = getattr(settings, "default_model", DEFAULT_MODEL)
+        self._default_model_source: str = "env"
+        self._load_default_model_from_store()
 
     def ensure_analysis_runtime_available(self) -> None:
         if ANALYSIS_RUNTIME_IMPORT_ERROR is None:
@@ -148,6 +153,55 @@ class AnalysisService(
     def has_active_runs(self) -> bool:
         with self._active_analyses_lock:
             return len(self.active_analyses) > 0
+
+    def _load_default_model_from_store(self) -> None:
+        try:
+            if not self.history_store or not getattr(self.history_store, "configured", False):
+                return
+            stored = self.history_store.get_app_setting("default_model")
+            if not stored:
+                return
+            provider_settings = resolve_provider_settings(stored, self.settings)
+            if not provider_settings.get("configured"):
+                logger.warning(
+                    "stored default model '%s' provider is not configured; keeping env default '%s'",
+                    stored,
+                    self._runtime_default_model,
+                )
+                return
+            with self._default_model_lock:
+                self._runtime_default_model = stored
+                self._default_model_source = "db"
+        except Exception:
+            logger.exception("failed to load persisted default model from app_settings")
+
+    def get_default_model(self) -> str:
+        with self._default_model_lock:
+            return self._runtime_default_model
+
+    def get_default_model_source(self) -> str:
+        with self._default_model_lock:
+            return self._default_model_source
+
+    def set_default_model(self, model: str) -> bool:
+        model = str(model or "").strip()
+        if not model:
+            return False
+        provider_settings = resolve_provider_settings(model, self.settings)
+        if not provider_settings.get("configured"):
+            return False
+        with self._default_model_lock:
+            self._runtime_default_model = model
+            self._default_model_source = "runtime"
+        try:
+            if self.history_store and getattr(self.history_store, "configured", False):
+                if self.history_store.set_app_setting("default_model", model):
+                    with self._default_model_lock:
+                        self._default_model_source = "db"
+        except Exception:
+            logger.exception("failed to persist default model '%s' to app_settings", model)
+        logger.info("runtime default model updated to %s (source=%s)", model, self._default_model_source)
+        return True
 
     def run_analysis_background(self, request: AnalysisRequest, on_complete: Callable[[], None] | None = None) -> str:
         run_id = request.run_id or ""

@@ -105,10 +105,26 @@ Return a corrected PortfolioDecision. If a field is not explicitly supported by 
             else:
                 validation_errors = repaired_errors or validation_errors
 
+        existing_payload = state.get("final_trade_decision_structured") or {}
         if payload:
             payload["decision_validation_status"] = "invalid" if validation_errors else "valid"
             payload["decision_validation_errors"] = validation_errors
             payload["extracted_after_verification"] = True
+            if verification_verdict.lower() == "revise":
+                payload["extracted_after_max_revision_warning"] = True
+            if current_price is not None:
+                payload["current_price"] = current_price
+        elif existing_payload:
+            # Fall back to the Portfolio Manager payload if extraction fails,
+            # but mark it clearly so downstream knows it did not go through
+            # the dedicated extractor.
+            payload = dict(existing_payload)
+            payload["decision_extraction_fallback"] = True
+            fallback_errors = list(existing_payload.get("decision_validation_errors") or [])
+            fallback_errors.append(
+                "Decision Extractor could not re-extract; using Portfolio Manager payload."
+            )
+            payload["decision_validation_errors"] = fallback_errors
             if current_price is not None:
                 payload["current_price"] = current_price
 

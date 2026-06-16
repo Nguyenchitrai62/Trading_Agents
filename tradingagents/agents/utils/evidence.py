@@ -175,7 +175,7 @@ def _normalize_evidence_items(
     analysis_date: str,
 ) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
-    for item in items[:12]:
+    for item in items[:8]:
         claim = _clean_text(item.get("claim"), 1000)
         if not claim:
             continue

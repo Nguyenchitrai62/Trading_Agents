@@ -428,11 +428,17 @@ class AnalysisOrchestratorMixin:
             chunk_index = 0
             last_announced_agent = current_agent
             auto_depth_evaluated = False
+            global_timeout_seconds = getattr(self.settings, "analysis_global_timeout_seconds", 600.0)
+            global_timeout_deadline = started_at + global_timeout_seconds
             emit_analysis_log("Graph stream started.", "stream", current_agent=current_agent)
             final_state.update(init_state)
             final_state["messages"] = []
             for chunk in graph.graph.stream(init_state, **args):
                 ensure_not_cancelled()
+                if time.time() > global_timeout_deadline:
+                    raise TimeoutError(
+                        f"Analysis exceeded global timeout of {global_timeout_seconds}s"
+                    )
                 for node_name, update in self.iter_graph_state_updates(chunk):
                     chunk_index += 1
                     updated_keys = self.merge_graph_state_update(final_state, update)
