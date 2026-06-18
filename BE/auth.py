@@ -14,6 +14,43 @@ from fastapi import HTTPException, Request
 from .config import BackendSettings, logger
 from .history import TursoHistoryStore
 
+# Module-level shared session for Google token verification.
+# Single connection pool reused across all _verify_google_id_token calls.
+_GOOGLE_VERIFY_SESSION: requests.Session | None = None
+_GOOGLE_VERIFY_SESSION_LOCK = threading.Lock()
+
+
+def _get_google_verify_session() -> requests.Session:
+    """Return the module-level Google-verification session, creating it lazily."""
+    global _GOOGLE_VERIFY_SESSION  # noqa: PLW0603
+    if _GOOGLE_VERIFY_SESSION is not None:
+        return _GOOGLE_VERIFY_SESSION
+    with _GOOGLE_VERIFY_SESSION_LOCK:
+        if _GOOGLE_VERIFY_SESSION is not None:
+            return _GOOGLE_VERIFY_SESSION
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=2,
+            pool_maxsize=4,
+            max_retries=0,
+        )
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        _GOOGLE_VERIFY_SESSION = session
+        return session
+
+
+def close_google_verify_session() -> None:
+    """Close the module-level Google-verification session."""
+    global _GOOGLE_VERIFY_SESSION  # noqa: PLW0603
+    with _GOOGLE_VERIFY_SESSION_LOCK:
+        if _GOOGLE_VERIFY_SESSION is not None:
+            try:
+                _GOOGLE_VERIFY_SESSION.close()
+            except Exception:
+                pass
+            _GOOGLE_VERIFY_SESSION = None
+
 try:
     from google.auth.transport import requests as google_auth_requests
     from google.oauth2 import id_token as google_id_token
@@ -97,7 +134,7 @@ class AuthService:
                 raise HTTPException(status_code=401, detail="Could not verify Google sign-in token.") from exc
 
         try:
-            response = requests.get(
+            response = _get_google_verify_session().get(
                 self.settings.google_tokeninfo_url,
                 params={"id_token": token},
                 timeout=8,

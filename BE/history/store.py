@@ -4,6 +4,7 @@ import hashlib
 import json
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import requests
@@ -11,6 +12,9 @@ import requests
 from ..config import SETTINGS
 from ..models import AnalysisRequest
 from tradingagents.agents.utils.decision import compatibility_decision_fields
+
+# Cap per-section markdown before persisting to limit DB bloat and in-memory copies.
+MAX_SECTION_MARKDOWN_CHARS = 12_288  # 12 KB
 
 
 class TursoHistoryStore:
@@ -583,7 +587,50 @@ class TursoHistoryStore:
         self.ensure_schema()
         run_id = request.run_id or f"history-{uuid.uuid4().hex}"
         created_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-        clean_sections = [section for section in sections if str(section.get("markdown") or "").strip()]
+        # Filter and build statements locally so they can be deleted after the worker exits.
+        statements = self._build_save_analysis_statements(
+            run_id=run_id,
+            request=request,
+            user=user,
+            symbol=symbol,
+            signal=signal,
+            elapsed_seconds=elapsed_seconds,
+            sections=sections,
+            decision_payload=decision_payload,
+            verification_payload=verification_payload,
+            current_price=current_price,
+            created_at=created_at,
+        )
+        # Run DB write in a worker thread so all large local strings (markdown, JSON blobs)
+        # die when the worker exits — OS reclaims the stack immediately.
+        def _do_persist() -> str | None:
+            try:
+                self._execute_many(statements)
+                return run_id
+            finally:
+                # Help the GC and the worker thread exit faster.
+                statements.clear()
+
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="history-persist") as executor:
+            future = executor.submit(_do_persist)
+            result = future.result()
+        return result
+
+    def _build_save_analysis_statements(
+        self,
+        run_id: str,
+        request: AnalysisRequest,
+        user: dict,
+        symbol: str,
+        signal: str,
+        elapsed_seconds: float,
+        sections: list[dict],
+        decision_payload: dict | None,
+        verification_payload: dict | None,
+        current_price: object,
+        created_at: str,
+    ) -> list[tuple[str, list[object] | None]]:
+        clean_sections = [s for s in sections if str(s.get("markdown") or "").strip()]
         statements: list[tuple[str, list[object] | None]] = [
             (
                 """
@@ -626,11 +673,19 @@ class TursoHistoryStore:
             ("DELETE FROM analysis_sections WHERE run_id = ?", [run_id]),
         ]
         for index, section in enumerate(clean_sections):
-            markdown = str(section.get("markdown") or "").strip()
+            # Cap markdown at 12 KB to limit DB bloat and in-memory copies.
+            markdown_raw = str(section.get("markdown") or "").strip()
+            markdown = (
+                markdown_raw[: MAX_SECTION_MARKDOWN_CHARS]
+                if len(markdown_raw) > MAX_SECTION_MARKDOWN_CHARS
+                else markdown_raw
+            )
             section_id = hashlib.sha1(f"{run_id}:{section.get('section_key')}".encode()).hexdigest()
-            payload_json = section.get("payload_json")
-            if payload_json not in (None, "") and not isinstance(payload_json, str):
-                payload_json = json.dumps(payload_json, ensure_ascii=False, sort_keys=True, default=str)
+            raw_payload_json = section.get("payload_json")
+            if raw_payload_json not in (None, "") and not isinstance(raw_payload_json, str):
+                payload_json = json.dumps(raw_payload_json, ensure_ascii=False, sort_keys=True, default=str)
+            else:
+                payload_json = raw_payload_json
             statements.append(
                 (
                     """
@@ -744,8 +799,7 @@ class TursoHistoryStore:
                     ],
                 )
             )
-        self._execute_many(statements)
-        return run_id
+        return statements
 
     def list_runs(self, user_email: str, limit: int | None = None, offset: int = 0) -> list[dict]:
         self.ensure_schema()

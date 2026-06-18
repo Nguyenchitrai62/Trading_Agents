@@ -216,9 +216,9 @@ class AnalysisChatMixin:
         return text, thinking, input_tokens, output_tokens, total_tokens
 
     async def generate_chat_stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        client = self.get_minimax_client()
         try:
             start_time = time.time()
-            client = self.get_minimax_client()
             system_message = self.build_chat_system_message(request)
             anthropic_messages = self.build_anthropic_chat_messages(request)
             use_mcp_chat_tools = bool(self.get_chat_tool_routing_flags(request)["needs_tool_assistance"])
@@ -377,10 +377,12 @@ class AnalysisChatMixin:
 
         except Exception as exc:
             yield self._sse("error", {"error": str(exc)})
+        finally:
+            await client.close()
 
     async def generate_non_streaming_chat(self, request: ChatRequest) -> dict:
+        client = self.get_minimax_client()
         try:
-            client = self.get_minimax_client()
             system_message = self.build_chat_system_message(request)
             anthropic_messages = self.build_anthropic_chat_messages(request)
             chat_max_tokens = self.resolve_chat_max_tokens(request)
@@ -443,3 +445,5 @@ class AnalysisChatMixin:
             }
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            await client.close()

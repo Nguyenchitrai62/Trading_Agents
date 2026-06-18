@@ -205,6 +205,8 @@ class AnalysisFormattingMixin:
             ).encode("utf-8", errors="ignore")
         ).hexdigest()[:12]
         section_key = f"source_{classification['flow_group']}_{cls._slugify_artifact_key(tool_name)}_{fingerprint}"
+        # Cap content to avoid holding unbounded strings in final_state.
+        capped_content = cls._trim_text(raw_content, 32_768)
         markdown = "\n".join(
             [
                 f"# {classification['label']} - {tool_name}",
@@ -220,7 +222,7 @@ class AnalysisFormattingMixin:
                 "```",
                 "",
                 "## Result",
-                raw_content,
+                capped_content,
             ]
         )
         return {
@@ -235,13 +237,21 @@ class AnalysisFormattingMixin:
             "source_kind": classification["source_kind"],
             "source_key": source_key,
             "summary": call_text or source_key,
-            "payload_json": {
-                "agent": agent_label,
-                "tool": tool_name,
-                "trace_id": source_key,
-                "call": call_text,
-                "content": raw_content,
-            },
+            "payload_json": cls._trim_text(
+                json.dumps(
+                    {
+                        "agent": agent_label,
+                        "tool": tool_name,
+                        "trace_id": source_key,
+                        "call": call_text,
+                        "content": capped_content,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ),
+                32_768,
+            ),
         }
 
     @classmethod
@@ -253,13 +263,16 @@ class AnalysisFormattingMixin:
             return None
         payload = result.get("payload")
         markdown_payload = cls._build_coinglass_tool_result_payload(result).get("answer") or ""
-        raw_payload = ""
+        # Cap raw payload to 32 KB to prevent memory bloat in final_state.
+        raw_payload_str = ""
         if payload not in (None, "", [], {}):
-            raw_payload = "\n".join(
+            json_str = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str)
+            capped_json_str = cls._trim_text(json_str, 32_768)
+            raw_payload_str = "\n".join(
                 [
                     "## Raw endpoint response",
                     "```json",
-                    json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str),
+                    capped_json_str,
                     "```",
                 ]
             )
@@ -268,9 +281,26 @@ class AnalysisFormattingMixin:
             for part in [
                 f"# CoinGlass Data - {result.get('title') or endpoint_key}",
                 markdown_payload,
-                raw_payload,
+                raw_payload_str,
             ]
             if str(part or "").strip()
+        )
+        # Serialize payload_json to string once; cap at 32 KB to keep final_state lean.
+        payload_summary = result.get("summary") or {}
+        inner_payload = {
+            "endpoint": endpoint_key,
+            "title": result.get("title"),
+            "source": result.get("source"),
+            "status": result.get("status"),
+            "http_status": result.get("http_status"),
+            "elapsed_ms": result.get("elapsed_ms"),
+            "summary": payload_summary,
+            "payload": payload,
+            "error": result.get("error") or "",
+        }
+        capped_inner_payload = cls._trim_text(
+            json.dumps(inner_payload, ensure_ascii=False, sort_keys=True, default=str),
+            32_768,
         )
         return {
             "section_key": f"source_coinglass_data_{cls._slugify_artifact_key(endpoint_key)}",
@@ -284,17 +314,8 @@ class AnalysisFormattingMixin:
             "source_kind": "coinglass",
             "source_key": endpoint_key,
             "summary": str(result.get("source") or endpoint_key),
-            "payload_json": {
-                "endpoint": endpoint_key,
-                "title": result.get("title"),
-                "source": result.get("source"),
-                "status": result.get("status"),
-                "http_status": result.get("http_status"),
-                "elapsed_ms": result.get("elapsed_ms"),
-                "summary": result.get("summary") or {},
-                "payload": payload,
-                "error": result.get("error") or "",
-            },
+            # Always store as string — never keep a dict reference alongside the rendered string.
+            "payload_json": capped_inner_payload,
         }
 
     @staticmethod
