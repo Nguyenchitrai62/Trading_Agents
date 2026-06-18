@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import logging
 import os
@@ -169,6 +170,27 @@ def _shutdown_session_entry(entry: _MCPSessionEntry) -> None:
 # Module-level pool: cache_key → _MCPSessionEntry
 _SESSION_POOL: dict[tuple[Any, ...], _MCPSessionEntry] = {}
 _POOL_LOCK = threading.Lock()
+
+
+def _shutdown_pool() -> None:
+    """Close all MCP sessions in the pool and stop their event loops.
+
+    Called automatically via atexit when the process exits. Can also be called
+    manually during FastAPI shutdown to release resources before worker restart.
+    """
+    with _POOL_LOCK:
+        pool_copy = list(_SESSION_POOL.items())
+        _SESSION_POOL.clear()
+
+    for key, entry in pool_copy:
+        try:
+            _shutdown_session_entry(entry)
+        except Exception:
+            pass
+        logger.debug("MCP session pool shutdown: key=%s", key)
+
+
+atexit.register(_shutdown_pool)
 
 
 def _get_pooled_session(

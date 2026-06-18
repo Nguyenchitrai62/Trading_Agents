@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import asyncio
 import base64
 import hashlib
@@ -50,6 +51,9 @@ def close_google_verify_session() -> None:
             except Exception:
                 pass
             _GOOGLE_VERIFY_SESSION = None
+
+
+atexit.register(close_google_verify_session)
 
 try:
     from google.auth.transport import requests as google_auth_requests

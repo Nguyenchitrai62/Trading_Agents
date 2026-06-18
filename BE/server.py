@@ -87,6 +87,16 @@ def create_app() -> FastAPI:
             history_store._schema_error = str(exc)
             logger.exception("Turso history database bootstrap failed; history persistence will retry lazily.")
 
+    @app.on_event("shutdown")
+    async def cleanup_resources() -> None:
+        from .auth import close_google_verify_session
+        from tradingagents.llm_clients.minimax_mcp import _shutdown_pool
+
+        close_google_verify_session()
+        _shutdown_pool()
+        history_store.close()
+        logger.info("Cleanup complete.")
+
     @app.get("/", response_class=HTMLResponse)
     async def serve_index() -> HTMLResponse:
         return HTMLResponse(SETTINGS.index_file.read_text(encoding="utf-8"))

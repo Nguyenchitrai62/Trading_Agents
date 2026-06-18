@@ -15,45 +15,6 @@ import requests
 
 from tradingagents.dataflows.endpoint_summary import format_endpoint_summaries_for_prompt
 
-# Module-level shared session: one connection pool reused across all
-# CoinGlassClient instances in this process.  Created lazily under lock,
-# closed via atexit or when explicitly requested.
-_SHARED_SESSION: requests.Session | None = None
-_SHARED_SESSION_LOCK = threading.Lock()
-
-
-def _get_shared_session() -> requests.Session:
-    """Return the module-level shared session, creating it lazily (thread-safe)."""
-    global _SHARED_SESSION  # noqa: PLW0603
-    if _SHARED_SESSION is not None:
-        return _SHARED_SESSION
-    with _SHARED_SESSION_LOCK:
-        if _SHARED_SESSION is not None:
-            return _SHARED_SESSION
-        session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(
-            pool_connections=4,
-            pool_maxsize=8,
-            max_retries=0,
-        )
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        _SHARED_SESSION = session
-        return session
-
-
-def close_shared_session() -> None:
-    """Close the module-level shared session and drop the reference."""
-    global _SHARED_SESSION  # noqa: PLW0603
-    with _SHARED_SESSION_LOCK:
-        if _SHARED_SESSION is not None:
-            try:
-                _SHARED_SESSION.close()
-            except Exception:
-                pass
-            _SHARED_SESSION = None
-
-
 DEFAULT_COINGLASS_BASE_URL = "https://open-api-v4.coinglass.com"
 DEFAULT_EXCHANGE_LIST = "Binance,OKX,Bybit"
 DEFAULT_PRIMARY_EXCHANGE = "Binance"
@@ -310,12 +271,33 @@ class CoinGlassClient:
         self.api_key = api_key.strip()
         self.base_url = (base_url or DEFAULT_COINGLASS_BASE_URL).strip().rstrip("/")
         self.timeout_seconds = max(1.0, float(timeout_seconds or 10.0))
+        self._session: requests.Session | None = None
+        self._session_lock = threading.Lock()
 
     def _ensure_session(self) -> requests.Session:
-        return _get_shared_session()
+        if self._session is None:
+            with self._session_lock:
+                if self._session is None:
+                    session = requests.Session()
+                    adapter = requests.adapters.HTTPAdapter(
+                        pool_connections=4,
+                        pool_maxsize=8,
+                        max_retries=0,
+                    )
+                    session.mount("https://", adapter)
+                    session.mount("http://", adapter)
+                    self._session = session
+        return self._session
 
     def close(self) -> None:
-        pass  # Shared session is managed at module level.
+        if self._session is not None:
+            with self._session_lock:
+                if self._session is not None:
+                    try:
+                        self._session.close()
+                    except Exception:
+                        pass
+                    self._session = None
 
     def fetch(self, spec: CoinGlassEndpointSpec, coin_symbol: str, pair_symbol: str, limit: int) -> dict[str, Any]:
         started_at = time.monotonic()
