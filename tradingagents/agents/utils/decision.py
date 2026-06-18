@@ -177,7 +177,31 @@ def _decision_text(decision: dict[str, Any]) -> str:
 
 
 def _allows_breakout_buy(text: str) -> bool:
-    return any(term in text for term in ("breakout", "confirmation", "trigger", "reclaim", "momentum entry"))
+    """Check if decision prose describes a breakout-style entry.
+
+    Supports English and Vietnamese. A breakout buy is one where the entry is
+    above the current price and the rationale explicitly mentions a momentum /
+    confirmation / breakout trigger, not just a passive limit order.
+    """
+    breakout_terms = (
+        # English
+        "breakout", "break out", "break-out",
+        "confirmation", "confirmed",
+        "trigger", "triggered",
+        "reclaim", "reclaimed",
+        "momentum entry", "momentum long",
+        "trend continuation", "bullish continuation",
+        "resistance break", "resistance flip",
+        # Vietnamese
+        "phá vỡ", "bứt phá", "đột phá", "vượt ngưỡng",
+        "xác nhận", "đã xác nhận",
+        "kích hoạt", "đã kích hoạt",
+        "lấy lại", "giành lại",
+        "theo đà", "vào lệnh theo đà",
+        "tiếp tục xu hướng",
+        "phá kháng cự", "vượt kháng cự",
+    )
+    return any(term in text for term in breakout_terms)
 
 
 def _mentions_short_exposure(text: str) -> bool:

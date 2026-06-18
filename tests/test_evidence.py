@@ -126,7 +126,7 @@ class TestSplitReportAndEvidence:
         assert len(items) == 1
         assert items[0]["value"] == "missing"
 
-    def test_split_truncates_to_8_items(self):
+    def test_split_truncates_to_12_items(self):
         evidence_items = [
             {
                 "claim": f"Claim {i}",
@@ -146,7 +146,7 @@ class TestSplitReportAndEvidence:
             report_section="news_report",
             analysis_date="2025-01-15",
         )
-        assert len(items) == 8
+        assert len(items) == 12
 
     def test_split_items_without_claim_skipped(self):
         evidence_items = [
