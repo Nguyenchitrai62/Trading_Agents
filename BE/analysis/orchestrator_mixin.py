@@ -6,6 +6,7 @@ import ctypes
 import gc
 import json
 import logging
+import queue
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
@@ -433,12 +434,51 @@ class AnalysisOrchestratorMixin:
             emit_analysis_log("Graph stream started.", "stream", current_agent=current_agent)
             final_state.update(init_state)
             final_state["messages"] = []
-            for chunk in graph.graph.stream(init_state, **args):
-                ensure_not_cancelled()
+
+            # Background thread feeds graph chunks into a queue so the main thread
+            # can poll cancel_event between each chunk without blocking indefinitely.
+            graph_queue: queue.Queue[dict | None] = queue.Queue(maxsize=1)
+            graph_error: dict | None = None
+
+            def _stream_graph() -> None:
+                nonlocal graph_error
+                try:
+                    for chunk in graph.graph.stream(init_state, **args):
+                        if cancel_event.is_set():
+                            return
+                        graph_queue.put(chunk)
+                    graph_queue.put(None)  # sentinel: stream finished normally
+                except BaseException as exc:
+                    graph_error = {"type": type(exc).__name__, "exc": exc}
+                    with contextlib.suppress(Exception):
+                        graph_queue.put(None)
+
+            stream_thread = threading.Thread(target=_stream_graph, name="graph-stream", daemon=True)
+            stream_thread.start()
+
+            while True:
+                # Poll every 250ms so cancel is responsive without burning CPU.
+                if cancel_event.is_set():
+                    emit_analysis_log("Analysis cancellation requested; stopping active graph run.", "cancelled", "warning")
+                    raise AnalysisCancelled()
                 if time.time() > global_timeout_deadline:
                     raise TimeoutError(
                         f"Analysis exceeded global timeout of {global_timeout_seconds}s"
                     )
+                try:
+                    chunk = graph_queue.get(timeout=0.25)
+                except queue.Empty:
+                    continue  # keep polling cancel_event
+
+                if graph_error is not None:
+                    exc = graph_error["exc"]
+                    if isinstance(exc, AnalysisCancelled):
+                        raise
+                    raise exc
+
+                if chunk is None:
+                    break  # stream finished
+
                 for node_name, update in self.iter_graph_state_updates(chunk):
                     chunk_index += 1
                     updated_keys = self.merge_graph_state_update(final_state, update)
@@ -908,11 +948,12 @@ class AnalysisOrchestratorMixin:
                 analysis_request.symbol,
             )
         finally:
-            # NOTE: do NOT set cancel_event here. The analysis is decoupled from the
-            # SSE stream — client disconnection only stops the HTTP response; the worker
-            # continues running in the background and will save results to DB normally.
-            # Cleanup is still needed (remove from active runs, release slot) but must
-            # not interrupt the in-flight graph execution.
+            # Setting cancel_event signals the graph-stream thread to stop on its next
+            # poll (≤ 250 ms).  The cancelled event will be emitted if the SSE client
+            # reconnects before the worker finishes.  cleanup_run_once() is still called
+            # so that Admin-cancel works if the user refreshes before the worker ends.
+            if not cancel_event.is_set():
+                cancel_event.set()
             cleanup_run_once()
             release_slot_once()
             if not worker_task.done():
@@ -921,8 +962,3 @@ class AnalysisOrchestratorMixin:
                     analysis_request.run_id,
                     analysis_request.symbol,
                 )
-                # Let the worker finish naturally. Nothing to wait on here — the result
-                # will be persisted to DB by the worker once the graph completes.
-            else:
-                cleanup_run_once()
-                release_slot_once()
