@@ -657,6 +657,7 @@ class AnalysisOrchestratorMixin:
                         decision_payload=final_state.get("final_trade_decision_structured") or {},
                         verification_payload=verification_payload,
                         current_price=final_state.get("verification_reference_price"),
+                        asset_type=asset_type,
                     )
                     if history_id:
                         emit_analysis_log(
@@ -907,32 +908,21 @@ class AnalysisOrchestratorMixin:
                 analysis_request.symbol,
             )
         finally:
+            # NOTE: do NOT set cancel_event here. The analysis is decoupled from the
+            # SSE stream — client disconnection only stops the HTTP response; the worker
+            # continues running in the background and will save results to DB normally.
+            # Cleanup is still needed (remove from active runs, release slot) but must
+            # not interrupt the in-flight graph execution.
+            cleanup_run_once()
+            release_slot_once()
             if not worker_task.done():
-                if not cancel_event.is_set():
-                    cancel_event.set()
-                    logger.info(
-                        "analysis cancelled after client disconnect: run_id=%s symbol=%s",
-                        analysis_request.run_id,
-                        analysis_request.symbol,
-                    )
-                try:
-                    await asyncio.wait_for(asyncio.shield(worker_task), timeout=30)
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "background worker did not stop within 30s after cancel: run_id=%s symbol=%s",
-                        analysis_request.run_id,
-                        analysis_request.symbol,
-                    )
-                except AnalysisCancelled:
-                    pass
-                except BaseException:
-                    pass
-                cleanup_run_once()
+                logger.info(
+                    "SSE stream closed; analysis continues in background: run_id=%s symbol=%s",
+                    analysis_request.run_id,
+                    analysis_request.symbol,
+                )
+                # Let the worker finish naturally. Nothing to wait on here — the result
+                # will be persisted to DB by the worker once the graph completes.
             else:
                 cleanup_run_once()
-                try:
-                    await asyncio.shield(worker_task)
-                except AnalysisCancelled:
-                    pass
-                except BaseException:
-                    pass
+                release_slot_once()

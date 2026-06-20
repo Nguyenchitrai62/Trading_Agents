@@ -581,14 +581,23 @@ class TursoHistoryStore:
         decision_payload: dict | None = None,
         verification_payload: dict | None = None,
         current_price: object = None,
+        asset_type: str | None = None,
     ) -> str | None:
         if not self.configured or not sections:
             return None
         self.ensure_schema()
+        # Use the explicitly passed asset_type (resolved upstream) rather than
+        # request.asset_type, which may not be set correctly when the request
+        # body omits it and Pydantic falls back to the model default.
+        resolved_asset_type = (
+            str(asset_type or "").strip().lower()
+            if asset_type is not None
+            else str(getattr(request, "asset_type", "") or "").strip().lower()
+        )
         # Always re-fetch the live spot price for crypto assets so the history
         # table records the current value at save time rather than a stale or
         # NULL value from upstream. Never block DB persistence on failure.
-        if str(getattr(request, "asset_type", "") or "").strip().lower() == "crypto":
+        if resolved_asset_type == "crypto":
             current_price = None
             try:
                 from tradingagents.agents.utils.market_price import fetch_reference_price
