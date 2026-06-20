@@ -1121,6 +1121,7 @@ async def run_anthropic_mcp_message_loop(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     temperature: float | None = None,
+    thinking: dict | None = None,
     on_tool_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> MiniMaxMCPMessageLoopResult:
     active_messages = list(messages)
@@ -1138,6 +1139,8 @@ async def run_anthropic_mcp_message_loop(
         }
         if temperature is not None:
             request_kwargs["temperature"] = temperature
+        if thinking is not None:
+            request_kwargs["thinking"] = thinking
 
         response = await client.messages.create(**request_kwargs)
         assistant_content, tool_uses = _extract_response_tool_uses(response, tool_names)
@@ -1208,6 +1211,8 @@ async def run_anthropic_mcp_message_loop(
     }
     if temperature is not None:
         request_kwargs["temperature"] = temperature
+    if thinking is not None:
+        request_kwargs["thinking"] = thinking
     return MiniMaxMCPMessageLoopResult(
         response=await client.messages.create(**request_kwargs),
         tool_events=tuple(tool_events),

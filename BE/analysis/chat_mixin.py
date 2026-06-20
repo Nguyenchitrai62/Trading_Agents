@@ -200,6 +200,7 @@ class AnalysisChatMixin:
             system=full_system_message,
             messages=anthropic_messages,
             tools=mcp_tools,
+            thinking={"type": "max"},
             on_tool_event=on_tool_event,
         )
 

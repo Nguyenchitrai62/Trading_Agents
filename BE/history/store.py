@@ -585,6 +585,18 @@ class TursoHistoryStore:
         if not self.configured or not sections:
             return None
         self.ensure_schema()
+        # Always re-fetch the live spot price for crypto assets so the history
+        # table records the current value at save time rather than a stale or
+        # NULL value from upstream. Never block DB persistence on failure.
+        if str(getattr(request, "asset_type", "") or "").strip().lower() == "crypto":
+            current_price = None
+            try:
+                from tradingagents.agents.utils.market_price import fetch_reference_price
+                recovered_price, _source = fetch_reference_price(symbol)
+                if recovered_price is not None:
+                    current_price = recovered_price
+            except Exception:
+                pass
         run_id = request.run_id or f"history-{uuid.uuid4().hex}"
         created_at = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
         # Filter and build statements locally so they can be deleted after the worker exits.
