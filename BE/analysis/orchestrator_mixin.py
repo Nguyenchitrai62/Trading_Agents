@@ -948,14 +948,10 @@ class AnalysisOrchestratorMixin:
                 analysis_request.symbol,
             )
         finally:
-            # Setting cancel_event signals the graph-stream thread to stop on its next
-            # poll (≤ 250 ms).  The cancelled event will be emitted if the SSE client
-            # reconnects before the worker finishes.  cleanup_run_once() is still called
-            # so that Admin-cancel works if the user refreshes before the worker ends.
-            if not cancel_event.is_set():
-                cancel_event.set()
-            cleanup_run_once()
-            release_slot_once()
+            # NOTE: do NOT call cleanup_run_once() or release_slot_once() here.
+            # Those belong to worker() only.  Clearing stream_active stops SSE emission.
+            # The worker continues in the background — it will persist results to DB normally.
+            stream_active.clear()
             if not worker_task.done():
                 logger.info(
                     "SSE stream closed; analysis continues in background: run_id=%s symbol=%s",
